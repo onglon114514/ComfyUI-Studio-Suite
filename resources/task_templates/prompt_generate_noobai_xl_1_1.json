@@ -1,0 +1,9 @@
+{
+  "task_type": "expand_anime_tags",
+  "target_profile": "noobai_xl_1_1",
+  "style_hint": "danbooru tags, noobai xl 1.1, quality tags at end, use readable space-separated tags",
+  "purpose": "把输入内容扩写并整理成适合 NoobAI XL 1.1 的 prompt。使用 Danbooru tag 体系，质量词放在最后段，并把下划线转换成可读空格。",
+  "input_field": "raw_tags",
+  "fixed_inputs": {}
+}
+

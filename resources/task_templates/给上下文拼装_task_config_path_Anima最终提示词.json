@@ -1,0 +1,10 @@
+{
+  "task_type": "expand_anime_tags",
+  "target_profile": "anima_v1",
+  "style_hint": "anime, danbooru tags with short natural-language support, galgame portrait, clean sdxl style",
+  "purpose": "把输入内容扩写成适合 Anima 使用的混合 prompt。保留 Danbooru 标签骨架，同时补足必要的自然语言描述。",
+  "input_field": "raw_tags",
+  "fixed_inputs": {
+    "prompt_mode": "anima_hybrid"
+  }
+}

@@ -1,0 +1,48 @@
+# Python / editor noise
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.vscode/
+.idea/
+
+# Local runtime state
+runtime/*.kcpps
+runtime/*.log
+runtime/images/
+runtime/koboldcpp/
+runtime/llama.cpp/
+runtime/python_libs/
+*.local.json
+*.local.txt
+
+# Local machine config
+config/backend_profiles.json
+config/task_agent_config.local.json
+task_agent_bundle_root.local.txt
+
+# Large optional Danbooru/resource files.
+# Host these on Hugging Face or another release asset store instead.
+resources/danbooru_character_aliases.generated.json
+resources/danbooru_character_webui.normalized.jsonl
+resources/danbooru_character_webui.xlsx
+resources/danbooru_tags_cooccurrence.csv
+resources/danbooru_artist_wildcard-D站画师列表.txt
+resources/tag count.xlsx
+resources/tag_count_tags_统计.json
+resources/tag_count_tags_统计.jsonl
+resources/tag_count_channels_统计.json
+resources/tag_count_channels_统计.jsonl
+
+# Internal handoff/planning notes with local paths.
+docs/HANDOFF_*.md
+docs/*HANDOFF*.md
+docs/MAIN_WORKFLOW_FILL_GUIDE.md
+docs/RESOURCE_LOADER_PLAN.md
+docs/RESOURCE_PATH_INDEX.md
+
+# Build outputs
+dist/
+*.zip
+*.7z

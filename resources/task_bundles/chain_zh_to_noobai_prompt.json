@@ -1,0 +1,22 @@
+{
+  "task_modules": [
+    {
+      "type": "translate_anime_tags",
+      "direction": "zh_to_en_tags"
+    },
+    {
+      "type": "expand_anime_tags"
+    },
+    {
+      "type": "normalize_anime_tags"
+    }
+  ],
+  "format_module": {
+    "type": "noobai_xl_1_1"
+  },
+  "task_defaults": {
+    "style_hint": "danbooru tags, noobai xl 1.1, readable space-separated tags, quality tags at end",
+    "purpose": "把中文描述转成适合 NoobAI XL 1.1 的最终提示词。使用 Danbooru tag 体系，角色 tag 保持规范，质量词放在最后。"
+  },
+  "fixed_inputs": {}
+}

@@ -1,0 +1,30 @@
+{
+  "gemma4_e4b_q4": {
+    "display_name": "Gemma 4 E4B Q4",
+    "model_name": "gemma4-e4b-q4-local",
+    "model_path": "models/gemma-4-e4b-q4/gemma-4-E4B-it-uncensored-Q4_K_M.gguf",
+    "template_kcpps": "config/gemma4_e4b_managed.kcpps",
+    "default_context_size": 4096,
+    "port": 5001,
+    "supports_vision": false
+  },
+  "gemma4_e4b_q8_vision": {
+    "display_name": "Gemma 4 E4B Q8 Vision",
+    "model_name": "gemma4-e4b-q8-vision-local",
+    "model_path": "models/gemma-4-e4b-vision/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-Q8_K_P.gguf",
+    "mmproj_path": "models/gemma-4-e4b-vision/mmproj-Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-f16.gguf",
+    "template_kcpps": "config/gemma4_e4b_managed.kcpps",
+    "default_context_size": 4096,
+    "port": 5001,
+    "supports_vision": true
+  },
+  "gemma4_26b_q4": {
+    "display_name": "Gemma 4 26B A4B Q4",
+    "model_name": "gemma4-26b-q4-local",
+    "model_path": "models/gemma-4-26b-q4/gemma-4-26B-A4B-it-uncensored-Q4_K_M.gguf",
+    "template_kcpps": "config/gemma4_e4b_managed.kcpps",
+    "default_context_size": 4096,
+    "port": 5001,
+    "supports_vision": false
+  }
+}

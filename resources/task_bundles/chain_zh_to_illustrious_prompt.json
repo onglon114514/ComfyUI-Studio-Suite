@@ -1,0 +1,22 @@
+{
+  "task_modules": [
+    {
+      "type": "translate_anime_tags",
+      "direction": "zh_to_en_tags"
+    },
+    {
+      "type": "expand_anime_tags"
+    },
+    {
+      "type": "normalize_anime_tags"
+    }
+  ],
+  "format_module": {
+    "type": "illustrious_xl_v01"
+  },
+  "task_defaults": {
+    "style_hint": "danbooru tags, illustrious xl, canonical tags, quality tags at end",
+    "purpose": "把中文描述转成适合 Illustrious XL 的最终提示词。保留 canonical Danbooru tag 写法，质量词放在最后。"
+  },
+  "fixed_inputs": {}
+}

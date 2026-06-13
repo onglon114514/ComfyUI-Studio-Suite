@@ -1,0 +1,8 @@
+{
+  "task_type": "normalize_anime_tags",
+  "target_profile": "anima_v1",
+  "style_hint": "normalize danbooru-like anime tags, keep canonical tags, prepare anima-friendly prompt skeleton",
+  "purpose": "规范化已有 tag，去重、纠正角色 tag，并整理成适合 Anima 使用的 tag 骨架。",
+  "input_field": "raw_tags",
+  "fixed_inputs": {}
+}

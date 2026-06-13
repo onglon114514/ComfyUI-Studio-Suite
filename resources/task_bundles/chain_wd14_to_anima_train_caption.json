@@ -1,0 +1,20 @@
+{
+  "task_modules": [
+    {
+      "type": "refine_wd14_tags"
+    },
+    {
+      "type": "generate_natural_caption"
+    }
+  ],
+  "format_module": {
+    "type": "anima_train_v1"
+  },
+  "task_defaults": {
+    "style_hint": "training caption, keep reliable wd14 tags, add concise natural-language description line",
+    "purpose": "保留 WD14 可用标签，只让 LLM 做补充、校正和自然语言训练描述。输出不要加入绘图质量词。"
+  },
+  "fixed_inputs": {
+    "caption_mode": "training_tag_plus_nl"
+  }
+}

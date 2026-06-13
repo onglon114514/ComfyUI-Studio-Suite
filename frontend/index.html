@@ -1,0 +1,424 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Gemma4 E4B Task Agent Baseline</title>
+  <style>
+    body { font-family: "Segoe UI", sans-serif; margin: 24px; background: #111827; color: #f3f4f6; }
+    .row { display: flex; gap: 16px; align-items: flex-start; }
+    .col { flex: 1; min-width: 0; }
+    textarea, input, select { width: 100%; box-sizing: border-box; padding: 10px; border-radius: 8px; border: 1px solid #374151; background: #1f2937; color: #f9fafb; }
+    textarea { min-height: 90px; resize: vertical; }
+    button { padding: 10px 14px; border: 0; border-radius: 8px; background: #2563eb; color: white; cursor: pointer; }
+    button.secondary { background: #374151; }
+    pre { white-space: pre-wrap; word-break: break-word; background: #0b1220; border: 1px solid #374151; padding: 12px; border-radius: 8px; }
+    .muted { color: #9ca3af; }
+    .card { background: #111827; border: 1px solid #374151; border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+    label { display: block; font-weight: 600; margin: 10px 0 6px; }
+    .inline { display: inline-flex; gap: 8px; align-items: center; margin-right: 16px; }
+  </style>
+</head>
+<body>
+  <h1>Gemma4 E4B Task Agent Baseline</h1>
+  <p class="muted">先测试第一环节角色设计任务。当前后端是 task gateway，模型后端是 koboldcpp + gemma4 e4b。</p>
+
+  <div class="card">
+    <div style="display:flex; gap:12px; flex-wrap:wrap;">
+      <button id="statusBtn" class="secondary">刷新状态</button>
+      <button id="loadBtn">加载后端</button>
+      <button id="unloadBtn" class="secondary">卸载后端</button>
+    </div>
+    <div class="row" style="margin-top:12px;">
+      <div class="col">
+        <label>后端模型 Profile</label>
+        <select id="backend_profile">
+          <option value="gemma4_e4b_q4">gemma4_e4b_q4</option>
+          <option value="qwen35_4b_q8">qwen35_4b_q8</option>
+          <option value="gemma4_26b_q4">gemma4_26b_q4</option>
+          <option value="qwen35_27b_q4">qwen35_27b_q4</option>
+        </select>
+      </div>
+      <div class="col">
+        <label>上下文长度</label>
+        <input id="context_size" value="16384">
+      </div>
+    </div>
+    <label>状态</label>
+    <pre id="statusBox">等待刷新状态...</pre>
+  </div>
+
+  <div class="card">
+    <h2>generate_character_design</h2>
+    <div class="row">
+      <div class="col">
+        <label>项目背景</label>
+        <textarea id="project_background">现代校园恋爱视觉小说，偏日系二次元，立绘需要方便后续做多表情差分与训练数据构建。</textarea>
+
+        <label>题材 / 类型</label>
+        <input id="genre" value="galgame, anime, visual novel">
+
+        <label>目标受众</label>
+        <input id="target_audience" value="二次元男性向，喜欢高辨识度角色设计">
+
+        <label>视觉风格</label>
+        <textarea id="visual_style">clean anime line art, polished sdxl style, readable silhouette, vivid but controlled color palette</textarea>
+      </div>
+
+      <div class="col">
+        <label>角色原型</label>
+        <textarea id="role_archetype">外冷内热、责任感很强、嘴硬但会在熟人面前露出笨拙关心的学生会副会长。</textarea>
+
+        <label>约束</label>
+        <textarea id="constraints">避免过度性感；需要适合半身与全身立绘；设计要能稳定做出多种galgame常见表情；服装与发型需要有明确辨识度。</textarea>
+
+        <label>参考说明</label>
+        <textarea id="reference_notes">请用二次元角色设计逻辑思考，输出适合绘图模型理解的英文 prompt 和 tag_list，同时保留中文设计说明。</textarea>
+
+        <label>温度 / 最大输出</label>
+        <div class="row">
+          <div class="col"><input id="temperature" value="0.7"></div>
+          <div class="col"><input id="max_tokens" value="1200"></div>
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top:12px;">
+      <label class="inline"><input type="checkbox" id="auto_load_backend" checked> 自动加载后端</label>
+      <label class="inline"><input type="checkbox" id="unload_after_run"> 任务完成后卸载后端</label>
+    </div>
+
+    <div style="margin-top:12px;">
+      <button id="runBtn">执行任务</button>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="col card">
+      <h3>格式化正向 Prompt</h3>
+      <pre id="positiveBox">尚未执行</pre>
+    </div>
+    <div class="col card">
+      <h3>格式化负向 Prompt</h3>
+      <pre id="negativeBox">尚未执行</pre>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="col card">
+      <h3>解析后的 JSON</h3>
+      <pre id="jsonBox">尚未执行</pre>
+    </div>
+    <div class="col card">
+      <h3>原始文本</h3>
+      <pre id="rawBox">尚未执行</pre>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>基础调试任务：tag 扩写 / 翻译</h2>
+    <div class="row">
+      <div class="col">
+        <label>tag 原文 / 短描述</label>
+        <textarea id="tag_input">1girl, student council vice president, black long hair, stern expression, school uniform</textarea>
+
+        <label>风格提示</label>
+        <textarea id="tag_style_hint">anime, galgame, clean sdxl style, readable character design</textarea>
+
+        <label>用途</label>
+        <input id="tag_purpose" value="用于角色立绘设计 prompt 调试">
+      </div>
+      <div class="col">
+        <label>翻译方向</label>
+        <select id="translate_direction">
+          <option value="zh_to_en_tags">中文 -> 英文 tags</option>
+          <option value="en_to_zh_explain">英文 tags -> 中文解释</option>
+        </select>
+
+        <label>目标模型范式</label>
+        <select id="target_profile">
+          <option value="generic_tag_model">generic_tag_model</option>
+          <option value="anima_v1">anima_v1</option>
+          <option value="illustrious_xl_v01">illustrious_xl_v01</option>
+          <option value="noobai_xl_1_1">noobai_xl_1_1</option>
+          <option value="newbie_exp01">newbie_exp01</option>
+        </select>
+
+        <label class="inline"><input type="checkbox" id="mini_auto_load" checked> 自动加载后端</label>
+        <label class="inline"><input type="checkbox" id="mini_unload_after_run"> 任务完成后卸载后端</label>
+      </div>
+    </div>
+
+    <div style="margin-top:12px; display:flex; gap:12px; flex-wrap:wrap;">
+      <button id="expandTagsBtn">执行 tag 扩写</button>
+      <button id="translateTagsBtn" class="secondary">执行 tag 翻译</button>
+      <button id="normalizeTagsBtn" class="secondary">执行 tag 归一化</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>generate_outfit_tags</h2>
+    <div class="row">
+      <div class="col">
+        <label>角色描述</label>
+        <textarea id="outfit_character_description">高中少女，黑色中长发，冷静认真但有一点笨拙的温柔感。</textarea>
+
+        <label>性格 / 气质</label>
+        <textarea id="outfit_personality_traits">克制、知性、责任感强，带一点不擅长表达的温柔。</textarea>
+
+        <label>使用场景</label>
+        <textarea id="outfit_scene">放学后去排练室前的日常常服立绘。</textarea>
+
+        <label>季节</label>
+        <input id="outfit_season" value="春季">
+      </div>
+      <div class="col">
+        <label>风格倾向</label>
+        <textarea id="outfit_style_direction">学院感、清爽、日系少女感，不要过于制式校服。</textarea>
+
+        <label>额外约束</label>
+        <textarea id="outfit_design_constraints">保持少女感，不要成熟写实，不要过度暴露；上下装不要冲突。</textarea>
+
+        <label>补充参考</label>
+        <textarea id="outfit_reference_notes">优先使用 Danbooru 服装 tag，利用服装词典做合理选择，不要机械复制模板。</textarea>
+
+        <label>目标模型范式</label>
+        <select id="outfit_target_profile">
+          <option value="anima_v1">anima_v1</option>
+          <option value="illustrious_xl_v01">illustrious_xl_v01</option>
+          <option value="noobai_xl_1_1">noobai_xl_1_1</option>
+          <option value="newbie_exp01">newbie_exp01</option>
+          <option value="generic_tag_model">generic_tag_model</option>
+        </select>
+
+        <label>温度 / 最大输出</label>
+        <div class="row">
+          <div class="col"><input id="outfit_temperature" value="0.55"></div>
+          <div class="col"><input id="outfit_max_tokens" value="1200"></div>
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top:12px;">
+      <label class="inline"><input type="checkbox" id="outfit_auto_load" checked> 自动加载后端</label>
+      <label class="inline"><input type="checkbox" id="outfit_unload_after_run"> 任务完成后卸载后端</label>
+    </div>
+
+    <div style="margin-top:12px;">
+      <button id="runOutfitBtn">执行服装生成任务</button>
+    </div>
+  </div>
+
+  <script>
+    async function requestJson(url, options = {}) {
+      const resp = await fetch(url, options);
+      const data = await resp.json();
+      if (!resp.ok) {
+        throw new Error(JSON.stringify(data, null, 2));
+      }
+      return data;
+    }
+
+    async function refreshStatus() {
+      const box = document.getElementById("statusBox");
+      box.textContent = "刷新中...";
+      try {
+        const data = await requestJson("/backend/status");
+        box.textContent = JSON.stringify(data, null, 2);
+      } catch (err) {
+        box.textContent = String(err);
+      }
+    }
+
+    async function loadBackend() {
+      const box = document.getElementById("statusBox");
+      box.textContent = "加载中...";
+      try {
+        const data = await requestJson("/backend/load", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            backend_profile: document.getElementById("backend_profile").value,
+            context_size: parseInt(document.getElementById("context_size").value || "0", 10)
+          })
+        });
+        box.textContent = JSON.stringify(data, null, 2);
+      } catch (err) {
+        box.textContent = String(err);
+      }
+    }
+
+    async function unloadBackend() {
+      const box = document.getElementById("statusBox");
+      box.textContent = "卸载中...";
+      try {
+        const data = await requestJson("/backend/unload", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({})
+        });
+        box.textContent = JSON.stringify(data, null, 2);
+      } catch (err) {
+        box.textContent = String(err);
+      }
+    }
+
+    async function runTask() {
+      document.getElementById("positiveBox").textContent = "执行中...";
+      document.getElementById("negativeBox").textContent = "执行中...";
+      document.getElementById("jsonBox").textContent = "执行中...";
+      document.getElementById("rawBox").textContent = "执行中...";
+
+      const payload = {
+        task_type: "generate_character_design",
+        backend_profile: document.getElementById("backend_profile").value,
+        context_size: parseInt(document.getElementById("context_size").value || "0", 10),
+        auto_load_backend: document.getElementById("auto_load_backend").checked,
+        unload_after_run: document.getElementById("unload_after_run").checked,
+        temperature: parseFloat(document.getElementById("temperature").value || "0.7"),
+        max_tokens: parseInt(document.getElementById("max_tokens").value || "1200", 10),
+        inputs: {
+          project_background: document.getElementById("project_background").value,
+          genre: document.getElementById("genre").value,
+          target_audience: document.getElementById("target_audience").value,
+          visual_style: document.getElementById("visual_style").value,
+          role_archetype: document.getElementById("role_archetype").value,
+          constraints: document.getElementById("constraints").value,
+          reference_notes: document.getElementById("reference_notes").value
+        }
+      };
+
+      try {
+        const data = await requestJson("/run_task", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        document.getElementById("positiveBox").textContent = data.json_result?.formatted_prompt || "";
+        document.getElementById("negativeBox").textContent = data.json_result?.formatted_negative_prompt || "";
+        document.getElementById("jsonBox").textContent = JSON.stringify(data.json_result, null, 2);
+        document.getElementById("rawBox").textContent = data.raw_text || "";
+        await refreshStatus();
+      } catch (err) {
+        document.getElementById("positiveBox").textContent = "";
+        document.getElementById("negativeBox").textContent = "";
+        document.getElementById("jsonBox").textContent = String(err);
+        document.getElementById("rawBox").textContent = "";
+      }
+    }
+
+    async function runMiniTask(taskType) {
+      document.getElementById("positiveBox").textContent = "执行中...";
+      document.getElementById("negativeBox").textContent = "执行中...";
+      document.getElementById("jsonBox").textContent = "执行中...";
+      document.getElementById("rawBox").textContent = "执行中...";
+
+      let inputs;
+      if (taskType === "expand_anime_tags") {
+        inputs = {
+          raw_tags: document.getElementById("tag_input").value,
+          style_hint: document.getElementById("tag_style_hint").value,
+          purpose: document.getElementById("tag_purpose").value,
+          target_profile: document.getElementById("target_profile").value
+        };
+      } else if (taskType === "normalize_anime_tags") {
+        inputs = {
+          raw_tags: document.getElementById("tag_input").value,
+          style_hint: document.getElementById("tag_style_hint").value,
+          purpose: document.getElementById("tag_purpose").value,
+          target_profile: document.getElementById("target_profile").value
+        };
+      } else {
+        inputs = {
+          raw_text: document.getElementById("tag_input").value,
+          direction: document.getElementById("translate_direction").value,
+          target_profile: document.getElementById("target_profile").value
+        };
+      }
+
+      const payload = {
+        task_type: taskType,
+        backend_profile: document.getElementById("backend_profile").value,
+        context_size: parseInt(document.getElementById("context_size").value || "0", 10),
+        auto_load_backend: document.getElementById("mini_auto_load").checked,
+        unload_after_run: document.getElementById("mini_unload_after_run").checked,
+        temperature: 0.4,
+        max_tokens: 900,
+        inputs
+      };
+
+      try {
+        const data = await requestJson("/run_task", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        document.getElementById("positiveBox").textContent = data.json_result?.formatted_prompt || "";
+        document.getElementById("negativeBox").textContent = data.json_result?.formatted_negative_prompt || "";
+        document.getElementById("jsonBox").textContent = JSON.stringify(data.json_result, null, 2);
+        document.getElementById("rawBox").textContent = data.raw_text || "";
+        await refreshStatus();
+      } catch (err) {
+        document.getElementById("positiveBox").textContent = "";
+        document.getElementById("negativeBox").textContent = "";
+        document.getElementById("jsonBox").textContent = String(err);
+        document.getElementById("rawBox").textContent = "";
+      }
+    }
+
+    async function runOutfitTask() {
+      document.getElementById("positiveBox").textContent = "执行中...";
+      document.getElementById("negativeBox").textContent = "执行中...";
+      document.getElementById("jsonBox").textContent = "执行中...";
+      document.getElementById("rawBox").textContent = "执行中...";
+
+      const payload = {
+        task_type: "generate_outfit_tags",
+        backend_profile: document.getElementById("backend_profile").value,
+        context_size: parseInt(document.getElementById("context_size").value || "0", 10),
+        auto_load_backend: document.getElementById("outfit_auto_load").checked,
+        unload_after_run: document.getElementById("outfit_unload_after_run").checked,
+        temperature: parseFloat(document.getElementById("outfit_temperature").value || "0.55"),
+        max_tokens: parseInt(document.getElementById("outfit_max_tokens").value || "1200", 10),
+        inputs: {
+          character_description: document.getElementById("outfit_character_description").value,
+          personality_traits: document.getElementById("outfit_personality_traits").value,
+          outfit_scene: document.getElementById("outfit_scene").value,
+          season: document.getElementById("outfit_season").value,
+          style_direction: document.getElementById("outfit_style_direction").value,
+          design_constraints: document.getElementById("outfit_design_constraints").value,
+          reference_notes: document.getElementById("outfit_reference_notes").value,
+          target_profile: document.getElementById("outfit_target_profile").value
+        }
+      };
+
+      try {
+        const data = await requestJson("/run_task", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        document.getElementById("positiveBox").textContent = data.json_result?.formatted_prompt || "";
+        document.getElementById("negativeBox").textContent = data.json_result?.formatted_negative_prompt || "";
+        document.getElementById("jsonBox").textContent = JSON.stringify(data.json_result, null, 2);
+        document.getElementById("rawBox").textContent = data.raw_text || "";
+        await refreshStatus();
+      } catch (err) {
+        document.getElementById("positiveBox").textContent = "";
+        document.getElementById("negativeBox").textContent = "";
+        document.getElementById("jsonBox").textContent = String(err);
+        document.getElementById("rawBox").textContent = "";
+      }
+    }
+
+    document.getElementById("statusBtn").addEventListener("click", refreshStatus);
+    document.getElementById("loadBtn").addEventListener("click", loadBackend);
+    document.getElementById("unloadBtn").addEventListener("click", unloadBackend);
+    document.getElementById("runBtn").addEventListener("click", runTask);
+    document.getElementById("expandTagsBtn").addEventListener("click", () => runMiniTask("expand_anime_tags"));
+    document.getElementById("translateTagsBtn").addEventListener("click", () => runMiniTask("translate_anime_tags"));
+    document.getElementById("normalizeTagsBtn").addEventListener("click", () => runMiniTask("normalize_anime_tags"));
+    document.getElementById("runOutfitBtn").addEventListener("click", runOutfitTask);
+    refreshStatus();
+  </script>
+</body>
+</html>

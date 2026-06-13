@@ -1,0 +1,106 @@
+{
+  "danbooru_cooccurrence_csv": {
+    "path": "resources/danbooru_tags_cooccurrence.csv",
+    "type": "csv",
+    "purpose": "Danbooru tag 共现统计，用于后续 tag 补全、归一化、共现建议。",
+    "required_by": [
+      "future_danbooru_tag_tools",
+      "future_expand_anime_tags_with_dictionary"
+    ]
+  },
+  "danbooru_character_aliases": {
+    "path": "resources/danbooru_character_aliases.json",
+    "type": "json",
+    "purpose": "角色别名到 Danbooru 规范角色 tag 的映射，用于避免 LLM 自行误译角色名。",
+    "required_by": [
+      "expand_anime_tags",
+      "translate_anime_tags",
+      "normalize_anime_tags"
+    ]
+  },
+  "danbooru_character_webui_xlsx": {
+    "path": "resources/danbooru_character_webui.xlsx",
+    "type": "xlsx",
+    "purpose": "24 万项角色角色词典源表，包含角色 tag、中文翻译、作品、trigger tag、core tags、热度统计和 Danbooru URL。",
+    "required_by": [
+      "build_character_aliases_from_xlsx.py"
+    ]
+  },
+  "danbooru_character_aliases_generated": {
+    "path": "resources/danbooru_character_aliases.generated.json",
+    "type": "json",
+    "purpose": "由角色源表自动生成的大规模角色别名字典；运行时优先用于常见角色匹配，再由手工覆盖层修正社区常用别称。",
+    "required_by": [
+      "expand_anime_tags",
+      "translate_anime_tags",
+      "normalize_anime_tags"
+    ]
+  },
+  "character_alias_safety": {
+    "path": "resources/character_alias_safety.json",
+    "type": "json",
+    "purpose": "角色 alias 安全过滤规则，屏蔽 meme/站点/版权名误命中，并限制低热度单英文别名在自由文本中的自动角色识别。",
+    "required_by": [
+      "expand_anime_tags",
+      "translate_anime_tags",
+      "normalize_anime_tags",
+      "generate_outfit_tags"
+    ]
+  },
+  "danbooru_clothing_hierarchy_text_2026_05_26": {
+    "path": "resources/Danbooru服装查询资源_层级版_2026-05-26.txt",
+    "type": "txt",
+    "purpose": "Danbooru 服装与时尚风格层级知识库文本版，适合本地检索、RAG 和直接喂给 LLM 作为服装查询说明资源。",
+    "required_by": [
+      "future_clothing_tag_query",
+      "future_outfit_tag_rag",
+      "future_expand_anime_tags_with_clothing_knowledge"
+    ]
+  },
+  "danbooru_clothing_local_jsonl_2026_05_26": {
+    "path": "resources/Danbooru服装查询资源_本地版_2026-05-26.jsonl",
+    "type": "jsonl",
+    "purpose": "Danbooru 服装与时尚风格本地结构化词典，包含层级、tag、定义、关键词、路径等字段，适合节点内查询和后续服装 tag 生成。",
+    "required_by": [
+      "future_clothing_tag_query",
+      "future_outfit_tag_rag",
+      "future_generate_outfit_tags"
+    ]
+  },
+  "legacy_outfit_system_template": {
+    "path": "resources/服装生成模板_system_legacy.md",
+    "type": "md",
+    "purpose": "旧版服装生成 system 模板，用作规则层参考和约束摘录，不再直接整份喂给模型。",
+    "required_by": [
+      "generate_outfit_tags"
+    ]
+  },
+  "danbooru_artist_wildcard_text": {
+    "path": "resources/danbooru_artist_wildcard-D站画师列表.txt",
+    "type": "txt",
+    "purpose": "Danbooru 画师列表 / wildcard 文本资源，适合给 LLM 参考画师 tag、风格归属和画师候选补全。",
+    "required_by": [
+      "future_artist_tag_reference",
+      "future_prompt_style_reference",
+      "TaskAgentResourceLoaderNode"
+    ]
+  },
+  "tag_count_xlsx": {
+    "path": "resources/tag count.xlsx",
+    "type": "xlsx",
+    "purpose": "Danbooru tag 统计源表，可用于后续构建更精确的 tag 热度、优先级和筛选规则。",
+    "required_by": [
+      "future_tag_statistics_builder"
+    ],
+    "note": "当前主要作为本地源表保留，不建议直接作为纯文本资源喂给上下文拼装；后续应先转换成 JSON/CSV/索引结构再使用。"
+  },
+  "task_templates_directory": {
+    "path": "resources/task_templates",
+    "type": "directory",
+    "purpose": "任务代理统一执行器的现成任务模板集合，供上下文拼装节点按路径加载并驱动标签扩写、规范化、翻译和 prompt 生成。",
+    "required_by": [
+      "TaskAgentContextComposerNode",
+      "TaskAgentTagUtilityNode"
+    ]
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "task_type": "normalize_anime_tags",
+  "target_profile": "noobai_xl_1_1",
+  "style_hint": "normalize to danbooru-like anime tags, remove noise, keep canonical character tags, output noobai-friendly formatting",
+  "purpose": "规范化已有标签，去重、纠正角色 tag，并整理成适合 NoobAI XL 1.1 的格式。",
+  "input_field": "raw_tags",
+  "fixed_inputs": {}
+}
+

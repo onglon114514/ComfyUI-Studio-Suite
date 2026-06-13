@@ -1,0 +1,22 @@
+{
+  "generic_tag_model": {
+    "type": "generic",
+    "notes_cn": "通用 tag 模型格式。"
+  },
+  "anima_v1": {
+    "type": "anima_v1",
+    "notes_cn": "按 Anima 模型卡规则：小写、空格 tag、score tags 保留下划线、推荐前后缀。"
+  },
+  "illustrious_xl_v01": {
+    "type": "illustrious_xl_v01",
+    "notes_cn": "按 Illustrious XL v0.1：Danbooru tags，保留下划线，quality tags 放最后段。"
+  },
+  "noobai_xl_1_1": {
+    "type": "noobai_xl_1_1",
+    "notes_cn": "按 NoobAI XL 1.1：Danbooru tags，不保留下划线，quality tags 放最后段。"
+  },
+  "newbie_exp01": {
+    "type": "newbie_exp01",
+    "notes_cn": "按 NewBie-image Exp0.1：支持自然语言、tags、XML；多角色推荐 XML。"
+  }
+}

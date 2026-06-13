@@ -1,0 +1,10 @@
+{
+  "task_type": "expand_anime_tags",
+  "target_profile": "generic_tag_model",
+  "style_hint": "anime, danbooru tags, clean tag structure, keep canonical character tags, avoid off-topic tags",
+  "purpose": "只做 Anima 前置 tag 扩写。输出应以 Danbooru tag 骨架为主，不负责最终混合自然语言格式。",
+  "input_field": "raw_tags",
+  "fixed_inputs": {
+    "prompt_mode": "tag_only"
+  }
+}

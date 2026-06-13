@@ -1,0 +1,9 @@
+{
+  "task_type": "translate_anime_tags",
+  "target_profile": "generic_tag_model",
+  "translate_direction": "zh_to_en_tags",
+  "purpose": "把中文绘图描述或中文 tag 转换为英文 anime / Danbooru 风格标签。",
+  "input_field": "raw_text",
+  "fixed_inputs": {}
+}
+

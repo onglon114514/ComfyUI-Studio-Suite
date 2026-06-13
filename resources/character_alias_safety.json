@@ -1,0 +1,42 @@
+{
+  "blocked_canonical_tags": [
+    "blobcat",
+    "grape-flavored_blobcat"
+  ],
+  "blocked_aliases": [
+    "blobcat",
+    "grape",
+    "grape-flavored blobcat",
+    "grape-flavored_blobcat",
+    "danbooru",
+    "danbooru (site)",
+    "kemono friends",
+    "indie virtual youtuber"
+  ],
+  "blocked_generic_noun_aliases": [
+    "hood",
+    "jewelry",
+    "coat",
+    "shirt",
+    "dress",
+    "skirt",
+    "jacket",
+    "blouse",
+    "glasses",
+    "headphones",
+    "hairpin",
+    "ribbon",
+    "bracelet",
+    "necklace",
+    "earrings",
+    "boots",
+    "shoes",
+    "hat"
+  ],
+  "suspicious_copyright_tags": [
+    "original",
+    "danbooru_(site)",
+    "indie_virtual_youtuber"
+  ],
+  "single_word_ascii_min_count": 50
+}

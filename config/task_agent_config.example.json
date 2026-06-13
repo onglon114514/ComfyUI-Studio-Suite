@@ -1,0 +1,35 @@
+{
+  "gateway": {
+    "host": "127.0.0.1",
+    "port": 8765
+  },
+  "backend": {
+    "mode": "managed_process",
+    "provider": "koboldcpp",
+    "base_url": "http://127.0.0.1:5001",
+    "koboldcpp_exe": "runtime/koboldcpp/koboldcpp.exe",
+    "llama_cpp_server_exe": "runtime/llama.cpp/llama-server.exe",
+    "kcpps_config": "config/gemma4_e4b_managed.kcpps",
+    "default_profile": "gemma4_e4b_q4",
+    "startup_timeout_sec": 180,
+    "health_path": "/api/extra/version",
+    "default_unload_after_run": false,
+    "llama_cpp_n_gpu_layers": -1,
+    "llama_cpp_threads": "",
+    "llama_cpp_use_jinja": true,
+    "llama_cpp_extra_args": "",
+    "llama_cpp_python_n_gpu_layers": 0,
+    "llama_cpp_python_threads": "",
+    "llama_cpp_python_n_batch": 512,
+    "llama_cpp_python_chat_format": "",
+    "llama_cpp_python_verbose": false,
+    "llama_cpp_python_prefer_private": true
+  },
+  "model": {
+    "name": "gemma4-e4b-baseline"
+  },
+  "task_defaults": {
+    "temperature": 0.7,
+    "max_tokens": 1200
+  }
+}

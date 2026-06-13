@@ -1,0 +1,8 @@
+{
+  "task_type": "expand_anime_tags",
+  "target_profile": "anima_v1",
+  "style_hint": "anime, danbooru tag expansion for anima hybrid prompts",
+  "purpose": "先做适合 Anima 的 tag 扩写，保留 Danbooru tag 骨架，为后续混合 prompt 生成打底。",
+  "input_field": "raw_tags",
+  "fixed_inputs": {}
+}

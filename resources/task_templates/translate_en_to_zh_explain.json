@@ -1,0 +1,8 @@
+{
+  "task_type": "translate_anime_tags",
+  "target_profile": "generic_tag_model",
+  "translate_direction": "en_to_zh_explain",
+  "purpose": "把英文 tag 或 prompt 解释成中文，便于检查含义和调试。",
+  "input_field": "raw_text",
+  "fixed_inputs": {}
+}

@@ -1,0 +1,9 @@
+{
+  "task_type": "expand_anime_tags",
+  "target_profile": "generic_tag_model",
+  "style_hint": "anime, danbooru tags, clean tag structure, avoid off-topic tags",
+  "purpose": "扩写基础绘图标签，补全画面要素，同时保持 Danbooru 风格的标签表达。",
+  "input_field": "raw_tags",
+  "fixed_inputs": {}
+}
+

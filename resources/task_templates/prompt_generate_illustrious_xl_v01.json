@@ -1,0 +1,9 @@
+{
+  "task_type": "expand_anime_tags",
+  "target_profile": "illustrious_xl_v01",
+  "style_hint": "danbooru tags, illustrious xl, quality tags at end, keep underscores where canonical tags need them",
+  "purpose": "把输入内容扩写并整理成适合 Illustrious XL 的 Danbooru prompt，质量词统一放在最后段。",
+  "input_field": "raw_tags",
+  "fixed_inputs": {}
+}
+

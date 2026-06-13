@@ -1,0 +1,24 @@
+{
+  "task_modules": [
+    {
+      "type": "translate_anime_tags",
+      "direction": "zh_to_en_tags"
+    },
+    {
+      "type": "expand_anime_tags"
+    },
+    {
+      "type": "normalize_anime_tags"
+    }
+  ],
+  "format_module": {
+    "type": "anima_v1"
+  },
+  "task_defaults": {
+    "style_hint": "anime, danbooru tags with short natural-language support, galgame portrait, clean sdxl style",
+    "purpose": "把中文描述转成适合 Anima 使用的混合 prompt。保留 Danbooru tag 骨架，并补充必要的短自然语言。"
+  },
+  "fixed_inputs": {
+    "prompt_mode": "anima_hybrid"
+  }
+}
