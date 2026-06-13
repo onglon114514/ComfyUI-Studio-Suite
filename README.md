@@ -132,6 +132,40 @@ See:
 - `resources/README.md`
 - `docs/HUGGINGFACE_RESOURCES.md`
 
+## Downloading Large Resources
+
+If you only want to test the node core, the bundled lightweight resources are enough.
+
+You should download the large optional resource bundle when you need:
+
+- broader Danbooru character alias coverage
+- large character-table lookups
+- tag-count or co-occurrence assisted workflows
+- artist wildcard reference resources
+- expanded clothing lookup resources
+
+Download source:
+
+- `https://huggingface.co/datasets/onglon114514/ComfyUI-Studio-Suite-Resources`
+
+After downloading, place the files into:
+
+```text
+ComfyUI/custom_nodes/comfyui_studio_suite/resources
+```
+
+Keep the original filenames unchanged.
+
+Typical examples:
+
+- `danbooru_character_aliases.generated.json`
+- `danbooru_character_webui.normalized.jsonl`
+- `danbooru_tags_cooccurrence.csv`
+- `danbooru_artist_wildcard-D站画师列表.txt`
+- `tag_count_tags_统计.jsonl`
+
+The built-in resource loader will detect them automatically if the filenames match.
+
 ## Backend Modes
 
 Supported execution directions:

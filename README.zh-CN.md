@@ -132,6 +132,40 @@ python scripts/doctor_release.py
 - `resources/README.md`
 - `docs/HUGGINGFACE_RESOURCES.md`
 
+## 大资源下载与放置
+
+如果你只是先测试节点核心功能，仓库自带的轻量资源已经够用。
+
+当你需要下面这些能力时，再去下载大资源包：
+
+- 更完整的 Danbooru 角色 alias 覆盖
+- 大型角色表检索
+- tag 热度 / 共现辅助工作流
+- 画师 wildcard 参考资源
+- 更完整的服装查询资源
+
+下载地址：
+
+- `https://huggingface.co/datasets/onglon114514/ComfyUI-Studio-Suite-Resources`
+
+下载后，把文件放到：
+
+```text
+ComfyUI/custom_nodes/comfyui_studio_suite/resources
+```
+
+文件名不要改。
+
+常见需要放回去的文件包括：
+
+- `danbooru_character_aliases.generated.json`
+- `danbooru_character_webui.normalized.jsonl`
+- `danbooru_tags_cooccurrence.csv`
+- `danbooru_artist_wildcard-D站画师列表.txt`
+- `tag_count_tags_统计.jsonl`
+
+只要文件名一致，内置的资源加载器就会自动识别。
+
 ## 后端模式
 
 当前支持的执行方向：
