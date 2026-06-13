@@ -1,34 +1,36 @@
 # ComfyUI Studio Suite
 
-ComfyUI Studio Suite is a preview ComfyUI custom node package for prompt editing, LLM-assisted Danbooru tag workflows, image captioning helpers, independent prompt queues, and image fill/crop/resize utilities.
+English | [简体中文](README.zh-CN.md)
 
-Current status: `v0.1-preview`
+ComfyUI Studio Suite is a preview custom-node bundle for ComfyUI focused on prompt editing, LLM-assisted anime tag workflows, local caption generation, workflow queue helpers, and image prep utilities.
 
-This is usable for early testing, but it is not yet a polished public release. Expect config files and model paths to be edited manually.
+Current release status: `v0.1-preview`
 
-## Main Features
+This repository is intended for early testing and integration. The core workflows are usable, but some parts are still being hardened for a broader public release.
 
-- Task Agent nodes for tag translation, expansion, normalization, and caption generation.
-- Modular context composition with task bundles, resource bundles, system prompts, character cards, world-book style notes, and regex rules.
-- Direct local LLM execution through `llama_cpp_python_inproc`.
-- Optional backend adapters for KoboldCpp, llama.cpp server, LM Studio, vLLM, and OpenAI-compatible endpoints.
-- Prompt Studio editor frontend for prompt writing and prompt text output.
-- Independent prompt queue nodes for folder-based batch workflows.
-- Smart fill/crop/resize helper node.
+## What It Does
 
-## Recommended First Use
+- Prompt and tag generation for anime / Danbooru-style workflows
+- Chinese-to-English tag translation, tag expansion, and model-specific normalization
+- WD14 + LLM-assisted caption generation for training datasets
+- Local GGUF execution through `llama_cpp_python_inproc`
+- Optional backend adapters for KoboldCpp, llama.cpp server, LM Studio, vLLM, and OpenAI-compatible APIs
+- Folder-based queue helpers for image/text batch workflows
+- Fill / crop / resize image helper nodes
 
-For the current preview, the most tested path is:
+## Recommended Current Setup
 
-- Text-only prompt/tag tasks: Gemma 4 E4B GGUF Q4.
-- Vision-assisted caption tasks: Gemma 4 E4B vision GGUF plus its matching `mmproj`.
-- Backend provider: `llama_cpp_python_inproc`.
+The most tested path in this preview is:
 
-Qwen and larger models may work, but they have not been polished to the same level as the Gemma 4 E4B test path.
+- Text tasks: `Gemma 4 E4B GGUF Q4`
+- Vision tasks: `Gemma 4 E4B Vision GGUF` plus matching `mmproj`
+- Backend provider: `llama_cpp_python_inproc`
+
+Qwen-based paths may work, but the Gemma 4 E4B route is currently the safest recommendation.
 
 ## Installation
 
-1. Copy this folder into:
+1. Put this folder under:
 
 ```text
 ComfyUI/custom_nodes/comfyui_studio_suite
@@ -36,112 +38,166 @@ ComfyUI/custom_nodes/comfyui_studio_suite
 
 2. Restart ComfyUI.
 
-3. Copy the example backend profile:
+3. Create your local backend profile file:
 
 ```text
 config/backend_profiles.example.json -> config/backend_profiles.json
 ```
 
-4. Edit `config/backend_profiles.json` and point `model_path` / `mmproj_path` to your local GGUF files.
+4. Edit `config/backend_profiles.json` and set your local `model_path` and `mmproj_path`.
 
-5. Open one of the example workflows in:
+5. Open one of the example workflows from:
 
 ```text
 examples/workflows
 ```
 
-6. Run:
+6. Run the release/install self-check from the node root:
 
 ```powershell
 python scripts/doctor_release.py
 ```
 
-The doctor script checks required files, common path mistakes, and release packaging risks.
+## Quick Start
+
+### 1. First text-only smoke test
+
+Use:
+
+- `examples/workflows/noob_zh_to_en_expand_preview.json`
+
+This workflow is the recommended first-run validation for:
+
+- task bundle composition
+- resource loading
+- local text LLM execution
+- NoobAI-oriented prompt formatting
+
+### 2. First vision caption test
+
+Use:
+
+- `examples/workflows/tagging_wd14_llm_anima_train_preview.json`
+
+This workflow combines:
+
+- image queue input
+- WD14 base tags
+- image-path bridging
+- vision-capable local LLM refinement
+- Anima-style training caption formatting
 
 ## Example Workflows
 
 - `examples/workflows/noob_zh_to_en_expand_preview.json`
-  - Chinese text to NoobAI XL 1.1 style English Danbooru prompt.
-  - Text-only.
-  - Best first smoke test.
+  - Chinese description -> English Danbooru-style prompt
+  - NoobAI XL 1.1 oriented formatting
+  - text-only
 
 - `examples/workflows/tagging_wd14_llm_anima_train_preview.json`
-  - WD14 tags plus vision LLM natural-language caption for Anima-style training captions.
-  - Requires a vision model and `mmproj`.
-  - Intended for dataset captioning workflows.
+  - WD14 tags + local vision LLM caption refinement
+  - intended for training-caption workflows
+  - requires a vision-capable GGUF and `mmproj`
 
-See `examples/workflows/README.md` for detailed notes.
+Detailed notes are in:
 
-## Resources
+- `examples/workflows/README.md`
 
-The GitHub repository should only include lightweight resources by default:
+## Resource Policy
+
+This repository keeps Git-tracked resources lightweight by default.
+
+Bundled resources include:
 
 - `resources/danbooru_character_aliases.json`
 - `resources/character_alias_safety.json`
 - `resources/task_templates`
 - `resources/task_bundles`
-- clothing helper resources, if their license allows redistribution
+- lightweight clothing helper resources
 
-Large optional resources should be hosted separately, for example on Hugging Face Datasets or release assets:
+Large optional resources should be distributed separately, for example through Hugging Face Datasets or release assets:
 
-- generated Danbooru character alias dictionary
-- Danbooru character JSONL / XLSX source tables
-- tag count statistics
-- tag co-occurrence CSV
+- generated character alias dictionaries
+- large Danbooru character tables
+- tag-count statistics
+- tag co-occurrence CSV files
 - artist wildcard lists
 
-After downloading large resources, place them under `resources/` with the filenames referenced by `resources/README.md`.
+See:
+
+- `resources/README.md`
 
 ## Backend Modes
 
-Supported directions:
+Supported execution directions:
 
 - `llama_cpp_python_inproc`
-  - Runs GGUF inference inside the ComfyUI Python process.
-  - Best for avoiding a separate KoboldCpp window.
+  - runs GGUF inference inside the ComfyUI Python process
+  - current recommended default
 
 - `koboldcpp`
-  - Managed local backend.
-  - Useful if you already prefer KoboldCpp performance and behavior.
+  - managed local backend
 
 - `llama_cpp_server`
-  - Managed llama.cpp server backend.
+  - managed llama.cpp server backend
 
-- `lm_studio`, `vllm`, `custom_openai_compat`
-  - Attach to an already-running OpenAI-compatible endpoint.
+- `lm_studio`
+- `vllm`
+- `custom_openai_compat`
+  - attach to an existing OpenAI-compatible endpoint
 
-## Project Layout
+## Repository Layout
 
-- `__init__.py`
-  - ComfyUI node package entry.
 - `task_agent_core/`
-  - Task Agent node definitions.
+  - Task Agent nodes and execution-side logic
 - `task_agent_gateway.py`
-  - Backend adapter and task execution core.
+  - backend adapter and task runtime core
 - `queue_nodes.py`
-  - Independent prompt queue helpers.
+  - independent prompt queue helpers
 - `smart_fill_crop_resize_node.py`
-  - Image prep helper.
+  - image fill/crop/resize helper
 - `frontend/`, `web/`
-  - Prompt Studio and frontend assets.
-- `resources/`
-  - Lightweight bundled resources and optional large-resource slots.
+  - frontend assets
 - `examples/workflows/`
-  - Example workflows.
+  - tested preview workflows
+- `resources/`
+  - bundled lightweight resources and optional large-resource slots
 - `docs/`
-  - Setup, backend, and release documentation.
+  - setup, backend, migration, and release notes
 - `scripts/`
-  - Packaging, diagnostics, and setup helpers.
+  - packaging, diagnostics, and helper scripts
 
-## Release Notes
+## Known Scope
 
-This preview intentionally keeps task definitions modular. Users can add their own JSON task bundles, prompt templates, resource files, and backend profiles without modifying the node core.
+This preview is best described as:
 
-Before publishing a release, run:
+- stable enough for internal use and early external testing
+- not yet a finished “install once and forget” public release
+
+The main remaining friction points are:
+
+- model-path setup still requires manual editing
+- large optional resources are intentionally not bundled
+- some Prompt Studio and extended workflows are still under active refinement
+
+## Attribution
+
+This repository integrates and rebuilds functionality from several development lines. See:
+
+- `docs/ATTRIBUTION.md`
+
+## Release Preparation
+
+Before packaging or publishing updates:
 
 ```powershell
 python scripts/doctor_release.py
 python scripts/build_release_preview.py
 ```
 
-Then check that the preview package does not include local model paths, private keys, runtime cache files, or large resources that should be hosted separately.
+This checks for:
+
+- missing required files
+- local-path leakage
+- large-resource packaging mistakes
+- release structure problems
