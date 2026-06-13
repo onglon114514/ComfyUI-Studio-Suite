@@ -123,9 +123,14 @@ Large optional resources should be distributed separately, for example through H
 - tag co-occurrence CSV files
 - artist wildcard lists
 
+Primary dataset link:
+
+- `https://huggingface.co/datasets/onglon114514/ComfyUI-Studio-Suite-Resources`
+
 See:
 
 - `resources/README.md`
+- `docs/HUGGINGFACE_RESOURCES.md`
 
 ## Backend Modes
 

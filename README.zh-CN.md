@@ -123,9 +123,14 @@ python scripts/doctor_release.py
 - tag 共现 CSV
 - 画师 wildcard 资源
 
+当前主资源仓库地址：
+
+- `https://huggingface.co/datasets/onglon114514/ComfyUI-Studio-Suite-Resources`
+
 详见：
 
 - `resources/README.md`
+- `docs/HUGGINGFACE_RESOURCES.md`
 
 ## 后端模式
 
