@@ -62,6 +62,9 @@ def resolve_project_dir():
 
 
 PROJECT_DIR = resolve_project_dir()
+RUNTIME_DIR = PROJECT_DIR / "runtime"
+RUNTIME_LOG_DIR = RUNTIME_DIR / "logs"
+RUNTIME_TEMP_DIR = RUNTIME_DIR / "temp"
 BACKEND_PROFILES_PATH = PROJECT_DIR / "config" / "backend_profiles.json"
 GATEWAY_CONFIG_PATH = PROJECT_DIR / "config" / "task_agent_config.local.json"
 GATEWAY_SCRIPT_PATH = PROJECT_DIR / "task_agent_gateway.py"
@@ -72,6 +75,31 @@ _DIRECT_GATEWAY_MODULE = None
 _DIRECT_GATEWAY_MODULE_KEY = None
 _DIRECT_BACKENDS = {}
 _DIRECT_BACKENDS_LOCK = threading.Lock()
+
+
+def runtime_temp_env(subdir):
+    temp_dir = RUNTIME_TEMP_DIR / str(subdir or "default")
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    env = os.environ.copy()
+    env["TEMP"] = str(temp_dir)
+    env["TMP"] = str(temp_dir)
+    env["TMPDIR"] = str(temp_dir)
+    return env
+
+
+def load_cleanup_utils():
+    cleanup_path = PROJECT_DIR / "cleanup_utils.py"
+    spec = importlib.util.spec_from_file_location("studio_suite_cleanup_utils", str(cleanup_path))
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Failed to load cleanup utils from {cleanup_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_CLEANUP_UTILS = load_cleanup_utils()
+cleanup_comfy_resources = _CLEANUP_UTILS.cleanup_comfy_resources
+get_combined_memory_snapshot = _CLEANUP_UTILS.get_combined_memory_snapshot
 
 
 def load_backend_profiles():
@@ -110,6 +138,7 @@ BACKEND_PROFILE_OPTIONS = get_backend_profile_options()
 DEFAULT_BACKEND_PROFILE = BACKEND_PROFILE_OPTIONS[0]
 BACKEND_PROVIDER_OPTIONS = [
     "config_default",
+    "isolated_worker",
     "llama_cpp_python_inproc",
     "transformers_inproc",
     "clip_reuse",
@@ -143,6 +172,10 @@ def normalize_backend_provider_choice(choice):
 
 def default_base_url_for_provider(provider_choice):
     return DEFAULT_ATTACH_BASE_URLS.get(normalize_backend_provider_choice(provider_choice), "")
+
+
+def provider_uses_isolated_worker(provider_choice):
+    return normalize_backend_provider_choice(provider_choice) == "isolated_worker"
 
 
 def post_json(url, payload, timeout=600):
@@ -248,6 +281,92 @@ def resolve_backend_base_url(gateway_url, backend_provider):
     return default_base_url_for_provider(backend_provider)
 
 
+TRANSIENT_BACKEND_ERROR_MARKERS = (
+    "connection refused",
+    "actively refused",
+    "积极拒绝",
+    "failed to become healthy",
+    "launcher process is gone",
+    "connection reset",
+    "timed out",
+    "timeout",
+    "broken pipe",
+    "remote end closed connection",
+    "winerror 10061",
+    "winerror 10054",
+)
+
+
+def is_transient_backend_error(error):
+    text = str(error or "").lower()
+    return any(marker in text for marker in TRANSIENT_BACKEND_ERROR_MARKERS)
+
+
+def run_task_isolated_worker(
+    *,
+    gateway_url,
+    task_type,
+    inputs,
+    temperature,
+    max_tokens,
+    auto_load_backend,
+    unload_after_run,
+    backend_profile,
+    context_size,
+    custom_model_path,
+    custom_mmproj_path,
+    runtime_options=None,
+):
+    ensure_gateway_available(gateway_url, auto_start=True, timeout_sec=45)
+    runtime_options = runtime_options or {}
+    payload = {
+        "task_type": task_type,
+        "inputs": inputs,
+        "temperature": float(temperature),
+        "max_tokens": int(max_tokens),
+        "auto_load_backend": bool(auto_load_backend),
+        "unload_after_run": bool(unload_after_run),
+        "backend_profile": backend_profile,
+        "context_size": int(context_size),
+        "runtime_options": runtime_options,
+    }
+    if str(custom_model_path or "").strip():
+        payload["custom_model_path"] = str(custom_model_path).strip()
+    if str(custom_mmproj_path or "").strip():
+        payload["custom_mmproj_path"] = str(custom_mmproj_path).strip()
+    timeout_sec = int(runtime_options.get("isolated_worker_timeout_sec") or 420)
+    print(
+        "[TaskAgent] isolated_worker request start "
+        f"task={task_type} profile={backend_profile} ctx={int(context_size)} "
+        f"max_tokens={int(max_tokens)} timeout={timeout_sec}s unload_after_run={bool(unload_after_run)}",
+        flush=True,
+    )
+    try:
+        result = post_json(gateway_url.rstrip("/") + "/run_task", payload, timeout=timeout_sec)
+        print(
+            "[TaskAgent] isolated_worker request done "
+            f"task={task_type} status={result.get('status')} backend_mode={result.get('backend_mode')} "
+            f"unload_result={result.get('unload_result')}",
+            flush=True,
+        )
+        return result
+    except Exception as error:
+        status_payload = None
+        try:
+            status_payload = fetch_gateway_status(gateway_url, timeout=8)
+        except Exception as status_error:
+            status_payload = {"status_error": str(status_error)}
+        print(
+            "[TaskAgent] isolated_worker request failed "
+            f"task={task_type} error={error} backend_status={json.dumps(status_payload, ensure_ascii=False)[:6000]}",
+            flush=True,
+        )
+        raise RuntimeError(
+            "isolated_worker backend request failed. "
+            f"timeout_sec={timeout_sec}, error={error}, backend_status={json.dumps(status_payload, ensure_ascii=False)[:12000]}"
+        ) from error
+
+
 def run_task_direct(
     *,
     gateway_url,
@@ -264,25 +383,173 @@ def run_task_direct(
     custom_mmproj_path,
     runtime_options=None,
 ):
+    if provider_uses_isolated_worker(backend_provider):
+        return run_task_isolated_worker(
+            gateway_url=gateway_url,
+            task_type=task_type,
+            inputs=inputs,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            auto_load_backend=auto_load_backend,
+            unload_after_run=unload_after_run,
+            backend_profile=backend_profile,
+            context_size=context_size,
+            custom_model_path=custom_model_path,
+            custom_mmproj_path=custom_mmproj_path,
+            runtime_options=runtime_options,
+        )
     backend_base_url = resolve_backend_base_url(gateway_url, backend_provider)
-    backend = get_direct_backend(
-        config_path=GATEWAY_CONFIG_PATH,
-        backend_base_url=backend_base_url,
-        backend_provider=backend_provider,
+    last_error = None
+    for attempt in range(2):
+        try:
+            backend = get_direct_backend(
+                config_path=GATEWAY_CONFIG_PATH,
+                backend_base_url=backend_base_url,
+                backend_provider=backend_provider,
+            )
+            return backend.run_task(
+                task_type=task_type,
+                inputs=inputs,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                auto_load_backend=auto_load_backend,
+                unload_after_run=unload_after_run,
+                backend_profile=backend_profile,
+                context_size=context_size,
+                custom_model_path=custom_model_path,
+                custom_mmproj_path=custom_mmproj_path,
+                runtime_options=runtime_options or {},
+            )
+        except Exception as error:
+            last_error = error
+            if attempt >= 1 or not is_transient_backend_error(error):
+                raise
+            time.sleep(1.2)
+    raise last_error
+
+
+def ensure_task_response_ok(response, task_type):
+    if not isinstance(response, dict):
+        raise RuntimeError(f"TaskAgent backend returned invalid response for {task_type}: {type(response).__name__}")
+    status = str(response.get("status", "")).strip().lower()
+    if status in {"error", "failed", "backend_error", "direct_backend_failed", "isolated_worker_failed"}:
+        detail = response.get("error") or response.get("detail") or response.get("message") or response
+        raise RuntimeError(f"TaskAgent backend failed for {task_type}: {detail}")
+    return response
+
+
+def cleanup_task_agent_backends():
+    results = []
+    with _DIRECT_BACKENDS_LOCK:
+        backend_items = list(_DIRECT_BACKENDS.items())
+    for cache_key, backend in backend_items:
+        try:
+            unload_result = backend.unload()
+        except Exception as error:
+            unload_result = {"status": "failed", "error": str(error)}
+        results.append(
+            {
+                "cache_key": list(cache_key) if isinstance(cache_key, tuple) else str(cache_key),
+                "unload_result": unload_result,
+            }
+        )
+    return results
+
+
+def run_studio_suite_cleanup(*, unload_task_agent=True, unload_comfy_models=True, clear_torch_cache=True, trim_working_set=True):
+    before = get_combined_memory_snapshot()
+    task_agent_results = cleanup_task_agent_backends() if unload_task_agent else []
+    comfy_result = cleanup_comfy_resources(
+        unload_models=bool(unload_comfy_models),
+        clear_torch_cache=bool(clear_torch_cache),
+        trim_working_set=bool(trim_working_set),
     )
-    return backend.run_task(
-        task_type=task_type,
-        inputs=inputs,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        auto_load_backend=auto_load_backend,
-        unload_after_run=unload_after_run,
-        backend_profile=backend_profile,
-        context_size=context_size,
-        custom_model_path=custom_model_path,
-        custom_mmproj_path=custom_mmproj_path,
-        runtime_options=runtime_options or {},
-    )
+    after = get_combined_memory_snapshot()
+    return {
+        "before": before,
+        "task_agent_unload": task_agent_results,
+        "comfy_cleanup": comfy_result,
+        "after": after,
+    }
+
+
+def get_local_comfy_queue_counts(timeout=3):
+    try:
+        request = urllib.request.Request("http://127.0.0.1:8188/queue", method="GET")
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        running = payload.get("queue_running", [])
+        pending = payload.get("queue_pending", [])
+        return {
+            "available": True,
+            "running": len(running) if isinstance(running, list) else 0,
+            "pending": len(pending) if isinstance(pending, list) else 0,
+        }
+    except Exception as error:
+        return {"available": False, "error": str(error), "running": 0, "pending": 0}
+
+
+def prompt_value_to_text(value):
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, list):
+        return ", ".join([str(item).strip() for item in value if str(item).strip()])
+    return str(value).strip()
+
+
+def extract_positive_prompt_from_result(json_result):
+    if not isinstance(json_result, dict):
+        return "", "none"
+    for key in (
+        "formatted_prompt",
+        "formatted_prompt_hybrid",
+        "formatted_prompt_tags",
+        "formatted_prompt_xml",
+        "translated_text",
+        "caption_long_en",
+        "natural_language_en",
+        "caption_short_en",
+        "drawing_prompt_en",
+    ):
+        text = prompt_value_to_text(json_result.get(key))
+        if text:
+            return text, key
+    for key in (
+        "recommended_prompt_order_en",
+        "expanded_tags_en",
+        "normalized_tags_en",
+        "tag_list",
+        "tag_list_en",
+        "quality_tags_en",
+    ):
+        text = prompt_value_to_text(json_result.get(key))
+        if text:
+            return text, key
+    return "", "none"
+
+
+def extract_negative_prompt_from_result(json_result):
+    if not isinstance(json_result, dict):
+        return ""
+    for key in ("formatted_negative_prompt", "negative_prompt", "negative_tags_en"):
+        text = prompt_value_to_text(json_result.get(key))
+        if text:
+            return text
+    return ""
+
+
+def prompts_from_response(response):
+    json_result = response.get("json_result", {}) if isinstance(response, dict) else {}
+    positive_prompt, positive_source = extract_positive_prompt_from_result(json_result)
+    negative_prompt = extract_negative_prompt_from_result(json_result)
+    status = response.get("status", "unknown") if isinstance(response, dict) else "unknown"
+    if positive_source != "formatted_prompt":
+        status = f"{status} | positive_prompt_source={positive_source}"
+    if not positive_prompt:
+        status = f"{status} | empty_positive_prompt"
+    return positive_prompt, negative_prompt, status
 
 
 def gateway_status_url(gateway_url):
@@ -402,11 +669,18 @@ def start_local_gateway(gateway_url):
             return
 
     if sys.platform.startswith("win"):
+        RUNTIME_LOG_DIR.mkdir(parents=True, exist_ok=True)
+        gateway_temp_dir = RUNTIME_TEMP_DIR / "gateway"
+        gateway_temp_dir.mkdir(parents=True, exist_ok=True)
         py_escaped = str(sys.executable).replace("'", "''")
         script_escaped = str(GATEWAY_SCRIPT_PATH).replace("'", "''")
         config_escaped = str(GATEWAY_CONFIG_PATH).replace("'", "''")
         cwd_escaped = str(PROJECT_DIR).replace("'", "''")
+        temp_escaped = str(gateway_temp_dir).replace("'", "''")
         ps_script = (
+            f"$env:TEMP='{temp_escaped}'; "
+            f"$env:TMP='{temp_escaped}'; "
+            f"$env:TMPDIR='{temp_escaped}'; "
             f"$p = Start-Process -FilePath '{py_escaped}' "
             f"-ArgumentList @('{script_escaped}','--config','{config_escaped}') "
             f"-WorkingDirectory '{cwd_escaped}' "
@@ -425,7 +699,7 @@ def start_local_gateway(gateway_url):
         if result.returncode != 0 or not pid_text:
             raise RuntimeError(
                 f"failed_to_start_local_gateway_via_powershell: returncode={result.returncode}, "
-                f"stdout={result.stdout!r}, stderr={result.stderr!r}"
+                f"stdout={result.stdout!r}, stderr={result.stderr!r}, gateway_temp_dir={gateway_temp_dir}"
             )
         _GATEWAY_PROCESS = None
         _GATEWAY_PROCESS_PID = int(pid_text.splitlines()[-1].strip())
@@ -438,6 +712,7 @@ def start_local_gateway(gateway_url):
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         stdin=subprocess.DEVNULL,
+        env=runtime_temp_env("gateway"),
     )
 
 
@@ -509,9 +784,9 @@ def build_common_inputs():
             "STRING",
             {"default": "", "multiline": False},
         ),
-        "context_size": ("INT", {"default": 16384, "min": 2048, "max": 65536, "step": 1024}),
+        "context_size": ("INT", {"default": 8192, "min": 2048, "max": 65536, "step": 1024}),
         "llama_cpp_python_n_gpu_layers": ("INT", {"default": 0, "min": -1, "max": 999, "step": 1}),
-        "llama_cpp_python_n_batch": ("INT", {"default": 512, "min": 32, "max": 4096, "step": 32}),
+        "llama_cpp_python_n_batch": ("INT", {"default": 256, "min": 32, "max": 4096, "step": 32}),
         "llama_cpp_python_threads": ("INT", {"default": 0, "min": 0, "max": 128, "step": 1}),
         "auto_load_backend": ("BOOLEAN", {"default": True}),
         "unload_after_run": ("BOOLEAN", {"default": False}),
@@ -951,6 +1226,7 @@ def build_sequential_payloads(task_bundle, base_inputs, fallback_task_type, fall
         current_seed = str(base_inputs.get("raw_text", "")).strip()
     elif "raw_tags" in base_inputs and str(base_inputs.get("raw_tags", "")).strip():
         current_seed = str(base_inputs.get("raw_tags", "")).strip()
+    seed_is_tags = bool(current_seed)
 
     global_fixed_inputs = task_bundle.get("fixed_inputs", {})
     if not isinstance(global_fixed_inputs, dict):
@@ -965,8 +1241,16 @@ def build_sequential_payloads(task_bundle, base_inputs, fallback_task_type, fall
             inputs.update(module_fixed_inputs)
 
         input_field = str(module.get("input_field", "")).strip() or default_task_input_field(module_type)
-        if index == 0 and current_seed and input_field:
+        if index == 0 and current_seed and input_field and input_field != "image_path":
             inputs[input_field] = current_seed
+        if seed_is_tags and module_type in {
+            "extract_tags_from_image",
+            "vision_tagging",
+            "image_captioning",
+            "refine_wd14_tags",
+            "generate_natural_caption",
+        }:
+            inputs.setdefault("raw_tags", current_seed)
 
         resolved_direction = (
             str(module.get("direction", "")).strip()
@@ -1038,6 +1322,28 @@ def extract_seed_from_response(task_type, response):
             return caption
         return ""
     return ""
+
+
+def carry_chain_fields_to_next_inputs(response, next_inputs):
+    json_result = response.get("json_result", {}) if isinstance(response, dict) else {}
+    if not isinstance(json_result, dict) or not isinstance(next_inputs, dict):
+        return
+
+    scalar_fields = ("natural_language_en", "caption_short_en", "caption_long_en")
+    list_fields = (
+        "wd14_raw_tags_en",
+        "training_base_tags_en",
+        "character_tags_en",
+        "resolved_character_tag_strings",
+    )
+    for key in scalar_fields:
+        value = str(json_result.get(key, "")).strip()
+        if value and not str(next_inputs.get(key, "")).strip():
+            next_inputs[key] = value
+    for key in list_fields:
+        value = json_result.get(key, [])
+        if isinstance(value, list) and value and not next_inputs.get(key):
+            next_inputs[key] = value
 
 
 def default_task_input_field(task_type):
@@ -1199,17 +1505,16 @@ class TaskAgentCharacterDesignNode:
                 ),
             )
         except Exception as error:
-            return ("", "", "", "", f"direct_backend_failed: {error}")
+            raise RuntimeError(f"TaskAgent character design backend failed: {error}") from error
 
+        response = ensure_task_response_ok(response, "generate_character_design")
         raw_text = response.get("raw_text", "")
         json_result = response.get("json_result", {})
         resolved_request = response.get("resolved_request", {})
         if isinstance(json_result, dict) and isinstance(resolved_request, dict) and resolved_request:
             json_result["_task_agent_debug"] = resolved_request
         json_text = json.dumps(json_result, ensure_ascii=False, indent=2)
-        positive_prompt = json_result.get("formatted_prompt", "")
-        negative_prompt = json_result.get("formatted_negative_prompt", "")
-        status = response.get("status", "unknown")
+        positive_prompt, negative_prompt, status = prompts_from_response(response)
         return (positive_prompt, negative_prompt, raw_text, json_text, status)
 
 
@@ -1290,10 +1595,23 @@ def execute_tag_utility_internal(
 
     inputs = dict(fixed_inputs)
     raw_input_value = str(text_input or "").strip()
-    if raw_input_value and input_field:
-        inputs[input_field] = raw_input_value
+    has_task_chain = isinstance(task_bundle, dict) and bool(task_bundle.get("task_modules"))
+    if raw_input_value:
+        if has_task_chain:
+            modules = task_bundle.get("task_modules", [])
+            first_module = ""
+            if isinstance(modules, list) and modules and isinstance(modules[0], dict):
+                first_module = str(modules[0].get("type", "")).strip()
+            if first_module == "translate_anime_tags":
+                inputs["raw_text"] = raw_input_value
+            else:
+                # In chained tagging workflows, text_input is usually WD14/tag text.
+                # Keep image_path exclusively from the context/image bridge.
+                inputs["raw_tags"] = raw_input_value
+        elif input_field:
+            inputs[input_field] = raw_input_value
 
-    needs_direct_input = not (isinstance(task_bundle, dict) and task_bundle.get("task_modules"))
+    needs_direct_input = not has_task_chain
     if needs_direct_input and input_field and not str(inputs.get(input_field, "")).strip():
         return (
             "",
@@ -1383,7 +1701,12 @@ def execute_tag_utility_internal(
                     runtime_options=runtime_options,
                 )
             except Exception as error:
-                return ("", "", "", "", f"direct_backend_failed: {error}")
+                raise RuntimeError(
+                    f"TaskAgent chain step {index + 1}/{len(payloads)} failed "
+                    f"({payload.get('task_type', '')}): {error}"
+                ) from error
+
+            response = ensure_task_response_ok(response, str(payload.get("task_type", "")).strip())
 
             chain_debug.append(
                 {
@@ -1397,6 +1720,7 @@ def execute_tag_utility_internal(
             if next_seed and index + 1 < len(payloads):
                 next_payload = payloads[index + 1]
                 next_inputs = next_payload.setdefault("inputs", {})
+                carry_chain_fields_to_next_inputs(response or {}, next_inputs)
                 next_input_field = default_task_input_field(next_payload.get("task_type", ""))
                 if next_input_field:
                     next_inputs[next_input_field] = next_seed
@@ -1442,7 +1766,9 @@ def execute_tag_utility_internal(
                 runtime_options=runtime_options,
             )
         except Exception as error:
-            return ("", "", "", "", f"direct_backend_failed: {error}")
+            raise RuntimeError(f"TaskAgent tag utility backend failed ({resolved_task_type}): {error}") from error
+
+        response = ensure_task_response_ok(response, resolved_task_type)
 
     if response is None:
         return ("", "", "", "", "no_response")
@@ -1452,9 +1778,7 @@ def execute_tag_utility_internal(
     if isinstance(json_result, dict) and chain_debug:
         json_result["_task_agent_chain"] = chain_debug
     json_text = json.dumps(json_result, ensure_ascii=False, indent=2)
-    positive_prompt = json_result.get("formatted_prompt", "")
-    negative_prompt = json_result.get("formatted_negative_prompt", "")
-    status = response.get("status", "unknown")
+    positive_prompt, negative_prompt, status = prompts_from_response(response)
     return (positive_prompt, negative_prompt, raw_text, json_text, status)
 
 
@@ -1779,14 +2103,13 @@ class TaskAgentOutfitGeneratorNode:
                 ),
             )
         except Exception as error:
-            return ("", "", "", "", f"direct_backend_failed: {error}")
+            raise RuntimeError(f"TaskAgent outfit generator backend failed: {error}") from error
 
+        response = ensure_task_response_ok(response, "generate_outfit_tags")
         raw_text = response.get("raw_text", "")
         json_result = response.get("json_result", {})
         json_text = json.dumps(json_result, ensure_ascii=False, indent=2)
-        positive_prompt = json_result.get("formatted_prompt", "")
-        negative_prompt = json_result.get("formatted_negative_prompt", "")
-        status = response.get("status", "unknown")
+        positive_prompt, negative_prompt, status = prompts_from_response(response)
         return (positive_prompt, negative_prompt, raw_text, json_text, status)
 
 
@@ -2317,6 +2640,93 @@ class TaskAgentImagePathBridgeNode:
         return (str(output_path), image, status)
 
 
+class TaskAgentCleanupNode:
+    CATEGORY = "Task Agent/资源清理"
+    RETURN_TYPES = ("STRING", "STRING")
+    RETURN_NAMES = ("status", "memory_report_json")
+    FUNCTION = "cleanup"
+    OUTPUT_NODE = True
+    DESCRIPTION = "工作流结束清理节点。用于批量打标、蒸馏图像和队列任务末尾，主动释放 Task Agent LLM、Comfy 模型、Torch CUDA cache 和可回收工作集。"
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "enabled": ("BOOLEAN", {"default": True}),
+                "unload_task_agent": (
+                    "BOOLEAN",
+                    {
+                        "default": True,
+                        "tooltip": "卸载 Task Agent 的 in-process/managed 后端。对 llama.cpp in-process 的 RAM/显存回收很关键。",
+                    },
+                ),
+                "unload_comfy_models": (
+                    "BOOLEAN",
+                    {
+                        "default": True,
+                        "tooltip": "调用 ComfyUI model_management.unload_all_models()，释放绘图模型、VAE、TE 等可卸载模型。",
+                    },
+                ),
+                "clear_torch_cache": (
+                    "BOOLEAN",
+                    {
+                        "default": True,
+                        "tooltip": "执行 gc.collect + torch.cuda.empty_cache/synchronize。",
+                    },
+                ),
+                "trim_working_set": (
+                    "BOOLEAN",
+                    {
+                        "default": True,
+                        "tooltip": "Windows 下尝试把可回收工作集还给系统，降低批量循环中的 RAM 压力。",
+                    },
+                ),
+            },
+            "optional": {
+                "trigger_text": (
+                    "STRING",
+                    {
+                        "default": "",
+                        "forceInput": True,
+                        "tooltip": "可接保存节点、队列节点或任意上游文本输出，用于保证本节点在工作流末尾执行。",
+                    },
+                ),
+            },
+        }
+
+    def cleanup(
+        self,
+        enabled,
+        unload_task_agent,
+        unload_comfy_models,
+        clear_torch_cache,
+        trim_working_set,
+        trigger_text="",
+    ):
+        if not enabled:
+            report = {"status": "disabled", "trigger_text": str(trigger_text or "")[:200]}
+            return ("disabled", json.dumps(report, ensure_ascii=False, indent=2))
+
+        queue_counts = get_local_comfy_queue_counts()
+        skip_model_unload = bool(queue_counts.get("pending", 0) > 0)
+        effective_unload_task_agent = bool(unload_task_agent) and not skip_model_unload
+        effective_unload_comfy_models = bool(unload_comfy_models) and not skip_model_unload
+        report = run_studio_suite_cleanup(
+            unload_task_agent=effective_unload_task_agent,
+            unload_comfy_models=effective_unload_comfy_models,
+            clear_torch_cache=bool(clear_torch_cache),
+            trim_working_set=bool(trim_working_set),
+        )
+        report["queue_counts"] = queue_counts
+        report["skipped_model_unload_because_queue_pending"] = skip_model_unload
+        report["trigger_text"] = str(trigger_text or "")[:200]
+        status = "cleanup_done"
+        if skip_model_unload:
+            status = "cleanup_done_queue_pending_kept_models_loaded"
+        print(f"[TaskAgentCleanup] {json.dumps(report, ensure_ascii=False)}", flush=True)
+        return (status, json.dumps(report, ensure_ascii=False, indent=2))
+
+
 NODE_CLASS_MAPPINGS = {
     "TaskAgentCharacterDesignNode": TaskAgentCharacterDesignNode,
     "TaskAgentTagUtilityNode": TaskAgentTagUtilityNode,
@@ -2329,6 +2739,7 @@ NODE_CLASS_MAPPINGS = {
     "TaskAgentContextComposerNode": TaskAgentContextComposerNode,
     "TaskAgentLegacyContextComposerNode": TaskAgentLegacyContextComposerNode,
     "TaskAgentImagePathBridgeNode": TaskAgentImagePathBridgeNode,
+    "TaskAgentCleanupNode": TaskAgentCleanupNode,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -2343,4 +2754,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "TaskAgentContextComposerNode": "任务代理·上下文拼装",
     "TaskAgentLegacyContextComposerNode": "任务代理·上下文拼装（兼容旧工作流）",
     "TaskAgentImagePathBridgeNode": "任务代理·图片路径桥接",
+    "TaskAgentCleanupNode": "任务代理·结束清理",
 }

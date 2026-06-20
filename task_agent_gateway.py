@@ -1,17 +1,21 @@
 import argparse
 import base64
+import csv
 import gc
 import json
 import mimetypes
 import os
 import re
+import shutil
 import shlex
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.error
 import urllib.request
+import uuid
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -20,6 +24,13 @@ from pathlib import Path
 PROJECT_DIR = Path(__file__).resolve().parent
 GATEWAY_BUILD_ID = str(Path(__file__).stat().st_mtime_ns)
 FRONTEND_PATH = PROJECT_DIR / "frontend" / "index.html"
+RUNTIME_DIR = PROJECT_DIR / "runtime"
+RUNTIME_LOG_DIR = RUNTIME_DIR / "logs"
+RUNTIME_TEMP_DIR = RUNTIME_DIR / "temp"
+KOBOLDCPP_TEMP_ROOT = Path(
+    os.environ.get("STUDIO_SUITE_KOBOLDCPP_TEMP_DIR")
+    or (Path(tempfile.gettempdir()) / "ComfyUI-Studio-Suite" / "koboldcpp")
+)
 PROMPT_PROFILES_PATH = PROJECT_DIR / "config" / "prompt_profiles.json"
 BACKEND_PROFILES_PATH = PROJECT_DIR / "config" / "backend_profiles.json"
 CHARACTER_ALIASES_PATH = PROJECT_DIR / "resources" / "danbooru_character_aliases.json"
@@ -27,6 +38,106 @@ GENERATED_CHARACTER_ALIASES_PATH = PROJECT_DIR / "resources" / "danbooru_charact
 CHARACTER_ALIAS_SAFETY_PATH = PROJECT_DIR / "resources" / "character_alias_safety.json"
 CHARACTER_WEBUI_NORMALIZED_PATH = PROJECT_DIR / "resources" / "danbooru_character_webui.normalized.jsonl"
 TAG_COUNT_TAGS_JSONL_PATH = PROJECT_DIR / "resources" / "tag_count_tags_统计.jsonl"
+
+
+def read_text_tail(path_value, max_chars=12000):
+    if not path_value:
+        return ""
+    path = Path(path_value)
+    if not path.exists():
+        return ""
+    try:
+        data = path.read_bytes()
+    except Exception as error:
+        return f"<failed to read log tail: {error}>"
+    if len(data) > max_chars:
+        data = data[-max_chars:]
+    return data.decode("utf-8", errors="replace")
+
+
+def runtime_temp_path(subdir):
+    raw = str(subdir or "default").replace("\\", "/").strip("/")
+    if raw == "koboldcpp":
+        return KOBOLDCPP_TEMP_ROOT
+    if raw.startswith("koboldcpp/"):
+        return KOBOLDCPP_TEMP_ROOT / raw.split("/", 1)[1]
+    return RUNTIME_TEMP_DIR / raw
+
+
+def runtime_temp_env(subdir):
+    temp_dir = runtime_temp_path(subdir)
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    env = os.environ.copy()
+    env["TEMP"] = str(temp_dir)
+    env["TMP"] = str(temp_dir)
+    env["TMPDIR"] = str(temp_dir)
+    return env
+
+
+def make_runtime_temp_subdir(prefix):
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    return f"{prefix}/{stamp}_{os.getpid()}_{uuid.uuid4().hex[:8]}"
+
+
+def cleanup_runtime_temp_subdir(subdir):
+    temp_dir = runtime_temp_path(subdir)
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    cleaned = []
+    failed = []
+    for child in list(temp_dir.iterdir()):
+        try:
+            if child.is_dir():
+                shutil.rmtree(child, ignore_errors=False)
+            else:
+                child.unlink()
+            cleaned.append(str(child))
+        except Exception as error:
+            failed.append({"path": str(child), "error": str(error)})
+    return {"temp_dir": str(temp_dir), "cleaned_count": len(cleaned), "failed": failed[:8]}
+
+
+def cleanup_runtime_temp_report(current_subdir=None):
+    report = {
+        "current": cleanup_runtime_temp_subdir(current_subdir) if current_subdir else None,
+        "parent": cleanup_runtime_temp_subdir("koboldcpp"),
+    }
+    return report
+
+
+def find_windows_pids_on_tcp_port(port):
+    if os.name != "nt" or not port:
+        return []
+    try:
+        result = subprocess.run(
+            ["netstat", "-ano", "-p", "tcp"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            check=False,
+        )
+    except Exception:
+        return []
+    pids = set()
+    pattern = re.compile(rf"^\s*TCP\s+\S+:{int(port)}\s+\S+\s+\S+\s+(\d+)\s*$", re.IGNORECASE)
+    for line in (result.stdout or "").splitlines():
+        match = pattern.match(line)
+        if match:
+            try:
+                pids.add(int(match.group(1)))
+            except ValueError:
+                pass
+    return sorted(pids)
+
+
+def parse_port_from_url(url, default_port):
+    match = re.search(r":(\d+)(?:/|$)", str(url or ""))
+    if not match:
+        return default_port
+    try:
+        return int(match.group(1))
+    except ValueError:
+        return default_port
+TAG_COOCCURRENCE_CSV_PATH = PROJECT_DIR / "resources" / "danbooru_tags_cooccurrence.csv"
 CLOTHING_JSONL_PATH = PROJECT_DIR / "resources" / "Danbooru服装查询资源_本地版_2026-05-26.jsonl"
 CLOTHING_TEXT_PATH = PROJECT_DIR / "resources" / "Danbooru服装查询资源_层级版_2026-05-26.txt"
 LEGACY_OUTFIT_SYSTEM_PATH = PROJECT_DIR / "resources" / "服装生成模板_system_legacy.md"
@@ -36,6 +147,43 @@ PRIVATE_LLAMA_CPP_PYTHON_DIR = PRIVATE_PYTHON_LIBS_DIR / "llama_cpp_python_cu130
 INPROCESS_BACKEND_PROVIDERS = {"llama_cpp_python_inproc", "transformers_inproc", "clip_reuse"}
 LEGACY_PROJECT_ROOTS = [
 ]
+
+COOCCURRENCE_GENERIC_SEED_KEYS = {
+    "1girl",
+    "1boy",
+    "solo",
+    "looking at viewer",
+    "simple background",
+    "white background",
+    "smile",
+    "open mouth",
+}
+
+COOCCURRENCE_DEFAULT_RELATED_BLOCK_KEYS = {
+    "breasts",
+    "large breasts",
+    "cleavage",
+    "nipples",
+    "nude",
+    "naked",
+    "pussy",
+    "sex",
+    "nsfw",
+    "rating explicit",
+    "explicit",
+    "multiple girls",
+    "multiple boys",
+    "2girls",
+    "3girls",
+    "4girls",
+    "5girls",
+    "6+girls",
+    "2boys",
+    "3boys",
+    "4boys",
+    "5boys",
+    "6+boys",
+}
 
 GENERIC_DESCRIPTOR_ALIAS_WORDS = {
     "1girl",
@@ -93,6 +241,7 @@ def normalize_runtime_options(runtime_options):
         "llama_cpp_python_n_gpu_layers",
         "llama_cpp_python_threads",
         "llama_cpp_python_n_batch",
+        "llama_cpp_python_n_ubatch",
         "llama_cpp_python_chat_format",
         "llama_cpp_python_verbose",
     }
@@ -397,6 +546,297 @@ def build_llama_cpp_multimodal_chat_handler(runtime_spec, runtime_options, verbo
     return handler_cls(clip_model_path=mmproj_path, verbose=bool(verbose))
 
 
+def cuda_free_mb_from_snapshot(memory_snapshot):
+    cuda = {}
+    if isinstance(memory_snapshot, dict):
+        cuda = memory_snapshot.get("cuda", {}) if isinstance(memory_snapshot.get("cuda", {}), dict) else {}
+    return int(cuda.get("free_mb") or 0)
+
+
+def free_comfy_vram_for_inprocess_llm(target_free_vram_mb=0, attempts=3, wait_seconds=0.25):
+    """Best-effort cleanup before loading llama.cpp inside the ComfyUI process."""
+    target_free_vram_mb = max(0, int(target_free_vram_mb or 0))
+    attempts = max(1, int(attempts or 1))
+    result = {
+        "attempted": True,
+        "target_free_vram_mb": target_free_vram_mb,
+        "attempts": [],
+        "target_reached": False,
+    }
+    for attempt_index in range(attempts):
+        pass_result = {"attempt": attempt_index + 1, "comfy_unload": "not_available", "torch_cache": "not_available"}
+        pass_result["memory_before"] = get_combined_memory_snapshot()
+        try:
+            import comfy.model_management as model_management
+
+            current_loaded_models = getattr(model_management, "current_loaded_models", None)
+            if isinstance(current_loaded_models, list):
+                pass_result["comfy_loaded_models_before"] = len(current_loaded_models)
+            unload_all = getattr(model_management, "unload_all_models", None)
+            cleanup_models_gc = getattr(model_management, "cleanup_models_gc", None)
+            soft_empty_cache = getattr(model_management, "soft_empty_cache", None)
+            if callable(unload_all):
+                unload_all()
+                pass_result["comfy_unload"] = "ok"
+            if callable(cleanup_models_gc):
+                cleanup_models_gc()
+                pass_result["comfy_cleanup_models_gc"] = "ok"
+            if callable(soft_empty_cache):
+                try:
+                    soft_empty_cache(force=True)
+                except TypeError:
+                    soft_empty_cache()
+                pass_result["comfy_soft_empty_cache"] = "ok"
+            if isinstance(current_loaded_models, list):
+                pass_result["comfy_loaded_models_after"] = len(current_loaded_models)
+        except Exception as error:
+            pass_result["comfy_unload"] = f"failed: {error}"
+
+        gc.collect()
+
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
+                torch.cuda.synchronize()
+                pass_result["torch_cache"] = "ok"
+            else:
+                pass_result["torch_cache"] = "cuda_unavailable"
+        except Exception as error:
+            pass_result["torch_cache"] = f"failed: {error}"
+
+        pass_result["memory_after"] = get_combined_memory_snapshot()
+        result["attempts"].append(pass_result)
+        free_mb = cuda_free_mb_from_snapshot(pass_result["memory_after"])
+        if target_free_vram_mb <= 0 or free_mb >= target_free_vram_mb:
+            result["target_reached"] = True
+            break
+        if attempt_index < attempts - 1:
+            time.sleep(float(wait_seconds or 0))
+
+    result["final_memory"] = get_combined_memory_snapshot()
+    result["final_free_vram_mb"] = cuda_free_mb_from_snapshot(result["final_memory"])
+    return result
+
+
+def get_cuda_memory_snapshot():
+    try:
+        import torch
+
+        if not torch.cuda.is_available():
+            return {"available": False}
+        free_bytes, total_bytes = torch.cuda.mem_get_info()
+        return {
+            "available": True,
+            "free_mb": int(free_bytes // (1024 * 1024)),
+            "total_mb": int(total_bytes // (1024 * 1024)),
+            "allocated_mb": int(torch.cuda.memory_allocated() // (1024 * 1024)),
+            "reserved_mb": int(torch.cuda.memory_reserved() // (1024 * 1024)),
+        }
+    except Exception as error:
+        return {"available": False, "error": str(error)}
+
+
+def get_system_memory_snapshot():
+    if os.name != "nt":
+        return {"available": False, "reason": "unsupported_platform"}
+    try:
+        import ctypes
+
+        class MEMORYSTATUSEX(ctypes.Structure):
+            _fields_ = [
+                ("dwLength", ctypes.c_ulong),
+                ("dwMemoryLoad", ctypes.c_ulong),
+                ("ullTotalPhys", ctypes.c_ulonglong),
+                ("ullAvailPhys", ctypes.c_ulonglong),
+                ("ullTotalPageFile", ctypes.c_ulonglong),
+                ("ullAvailPageFile", ctypes.c_ulonglong),
+                ("ullTotalVirtual", ctypes.c_ulonglong),
+                ("ullAvailVirtual", ctypes.c_ulonglong),
+                ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+            ]
+
+        status = MEMORYSTATUSEX()
+        status.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+        if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+            return {"available": False, "error": "GlobalMemoryStatusEx failed"}
+        return {
+            "available": True,
+            "memory_load_percent": int(status.dwMemoryLoad),
+            "total_phys_mb": int(status.ullTotalPhys // (1024 * 1024)),
+            "avail_phys_mb": int(status.ullAvailPhys // (1024 * 1024)),
+            "total_pagefile_mb": int(status.ullTotalPageFile // (1024 * 1024)),
+            "avail_pagefile_mb": int(status.ullAvailPageFile // (1024 * 1024)),
+        }
+    except Exception as error:
+        return {"available": False, "error": str(error)}
+
+
+def get_process_memory_snapshot():
+    try:
+        import psutil
+
+        process = psutil.Process(os.getpid())
+        memory_info = process.memory_info()
+        return {
+            "available": True,
+            "source": "psutil",
+            "rss_mb": int(memory_info.rss // (1024 * 1024)),
+            "vms_mb": int(memory_info.vms // (1024 * 1024)),
+            "private_mb": int(getattr(memory_info, "private", 0) // (1024 * 1024)),
+        }
+    except Exception:
+        pass
+
+    if os.name != "nt":
+        return {"available": False, "reason": "unsupported_platform"}
+    try:
+        import ctypes
+
+        class PROCESS_MEMORY_COUNTERS_EX(ctypes.Structure):
+            _fields_ = [
+                ("cb", ctypes.c_ulong),
+                ("PageFaultCount", ctypes.c_ulong),
+                ("PeakWorkingSetSize", ctypes.c_size_t),
+                ("WorkingSetSize", ctypes.c_size_t),
+                ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                ("PagefileUsage", ctypes.c_size_t),
+                ("PeakPagefileUsage", ctypes.c_size_t),
+                ("PrivateUsage", ctypes.c_size_t),
+            ]
+
+        counters = PROCESS_MEMORY_COUNTERS_EX()
+        counters.cb = ctypes.sizeof(PROCESS_MEMORY_COUNTERS_EX)
+        handle = ctypes.windll.kernel32.GetCurrentProcess()
+        if not ctypes.windll.psapi.GetProcessMemoryInfo(handle, ctypes.byref(counters), counters.cb):
+            return {"available": False, "error": "GetProcessMemoryInfo failed"}
+        return {
+            "available": True,
+            "working_set_mb": int(counters.WorkingSetSize // (1024 * 1024)),
+            "peak_working_set_mb": int(counters.PeakWorkingSetSize // (1024 * 1024)),
+            "pagefile_usage_mb": int(counters.PagefileUsage // (1024 * 1024)),
+            "peak_pagefile_usage_mb": int(counters.PeakPagefileUsage // (1024 * 1024)),
+            "private_usage_mb": int(counters.PrivateUsage // (1024 * 1024)),
+        }
+    except Exception as error:
+        return {"available": False, "error": str(error)}
+
+
+def get_combined_memory_snapshot():
+    return {
+        "cuda": get_cuda_memory_snapshot(),
+        "system": get_system_memory_snapshot(),
+        "process": get_process_memory_snapshot(),
+    }
+
+
+def trim_process_working_set():
+    if os.name != "nt":
+        return {"attempted": False, "reason": "unsupported_platform"}
+    try:
+        import ctypes
+
+        handle = ctypes.windll.kernel32.GetCurrentProcess()
+        if hasattr(ctypes.windll, "psapi") and ctypes.windll.psapi.EmptyWorkingSet(handle):
+            return {"attempted": True, "status": "ok", "method": "EmptyWorkingSet"}
+        set_working_set_size = ctypes.windll.kernel32.SetProcessWorkingSetSize
+        set_working_set_size.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_size_t]
+        set_working_set_size.restype = ctypes.c_bool
+        max_size_t = ctypes.c_size_t(-1).value
+        if set_working_set_size(handle, max_size_t, max_size_t):
+            return {"attempted": True, "status": "ok", "method": "SetProcessWorkingSetSize"}
+        return {"attempted": True, "status": "failed"}
+    except Exception as error:
+        return {"attempted": True, "status": "failed", "error": str(error)}
+
+
+def choose_safe_llama_cpp_gpu_layers(requested_layers, memory_snapshot, max_gpu_layers=8):
+    try:
+        requested = int(requested_layers)
+    except Exception:
+        requested = -1
+    try:
+        max_gpu_layers = max(0, int(max_gpu_layers))
+    except Exception:
+        max_gpu_layers = 8
+    if requested == 0:
+        return 0, {"requested": requested, "effective": 0, "reason": "cpu_only_requested"}
+
+    cuda = {}
+    if isinstance(memory_snapshot, dict):
+        cuda = memory_snapshot.get("cuda", {}) if isinstance(memory_snapshot.get("cuda", {}), dict) else {}
+    free_mb = int(cuda.get("free_mb") or 0)
+    if free_mb <= 0:
+        return requested, {"requested": requested, "effective": requested, "reason": "unknown_free_vram"}
+
+    # Comfy workflows usually need to load the image model immediately after the
+    # LLM task. Keep a larger VRAM floor than llama.cpp itself would require.
+    if free_mb < 3500:
+        cap = 0
+    elif free_mb < 5000:
+        cap = 4
+    elif free_mb < 6500:
+        cap = 8
+    else:
+        cap = max_gpu_layers or (requested if requested > 0 else 8)
+
+    effective = min(requested, cap) if requested > 0 else cap
+    return effective, {
+        "requested": requested,
+        "effective": effective,
+        "free_vram_mb": free_mb,
+        "cap": cap,
+        "max_gpu_layers": max_gpu_layers,
+        "reason": "vram_safety_cap" if effective != requested else "unchanged",
+    }
+
+
+def choose_stable_llama_cpp_ubatch(n_batch, context_size, runtime_options, backend):
+    explicit = runtime_options.get("llama_cpp_python_n_ubatch", backend.get("llama_cpp_python_n_ubatch", ""))
+    if str(explicit or "").strip():
+        return max(16, int(explicit))
+    batch = max(16, int(n_batch or 512))
+    ctx = int(context_size or 4096)
+    if ctx >= 8192:
+        return min(batch, 64)
+    return min(batch, 256)
+
+
+def minimum_safe_post_llama_load_vram_mb(runtime_spec, runtime_options, backend):
+    explicit = runtime_options.get(
+        "llama_cpp_python_min_free_vram_after_load_mb",
+        backend.get("llama_cpp_python_min_free_vram_after_load_mb", ""),
+    )
+    if str(explicit or "").strip():
+        return max(0, int(explicit))
+    if (runtime_spec or {}).get("mmproj_path"):
+        return 1400
+    return 1000
+
+
+def minimum_safe_pre_llama_load_vram_mb(requested_layers, runtime_spec, runtime_options, backend):
+    explicit = runtime_options.get(
+        "llama_cpp_python_min_free_vram_before_load_mb",
+        backend.get("llama_cpp_python_min_free_vram_before_load_mb", ""),
+    )
+    if str(explicit or "").strip():
+        return max(0, int(explicit))
+    try:
+        requested = int(requested_layers)
+    except Exception:
+        requested = -1
+    if requested == 0:
+        return 0
+    if (runtime_spec or {}).get("mmproj_path"):
+        return 3500
+    return 3000
+
+
 def normalize_alias_key(text):
     return (
         str(text)
@@ -404,6 +844,7 @@ def normalize_alias_key(text):
         .lower()
         .replace("\\(", "(")
         .replace("\\)", ")")
+        .replace("\\", "")
         .replace("_", " ")
         .replace("-", " ")
     )
@@ -972,6 +1413,78 @@ def lookup_tag_statistics_for_tags(tags, limit=14):
     return hits
 
 
+def lookup_tag_cooccurrence_for_tags(tags, per_seed_limit=8, total_limit=28):
+    if not TAG_COOCCURRENCE_CSV_PATH.exists():
+        return []
+
+    wanted = {
+        normalize_lookup_tag(tag)
+        for tag in tags
+        if normalize_lookup_tag(tag) and normalize_lookup_tag(tag) not in COOCCURRENCE_GENERIC_SEED_KEYS
+    }
+    if not wanted:
+        return []
+
+    by_seed = {tag: [] for tag in wanted}
+    seen_pairs = set()
+    try:
+        with open(TAG_COOCCURRENCE_CSV_PATH, "r", encoding="utf-8", newline="") as handle:
+            reader = csv.DictReader(handle)
+            for row in reader:
+                tag_a = str(row.get("tag_a", "")).strip()
+                tag_b = str(row.get("tag_b", "")).strip()
+                if not tag_a or not tag_b:
+                    continue
+                norm_a = normalize_lookup_tag(tag_a)
+                norm_b = normalize_lookup_tag(tag_b)
+                matched = []
+                if norm_a in wanted:
+                    matched.append((norm_a, tag_b))
+                if norm_b in wanted:
+                    matched.append((norm_b, tag_a))
+                if not matched:
+                    continue
+                try:
+                    count = int(float(row.get("count", 0) or 0))
+                except Exception:
+                    count = 0
+                for seed_norm, related_tag in matched:
+                    related_norm = normalize_lookup_tag(related_tag)
+                    if related_norm in COOCCURRENCE_DEFAULT_RELATED_BLOCK_KEYS:
+                        continue
+                    if len(by_seed.get(seed_norm, [])) >= per_seed_limit:
+                        continue
+                    pair_key = (seed_norm, related_norm)
+                    if pair_key in seen_pairs:
+                        continue
+                    seen_pairs.add(pair_key)
+                    by_seed[seed_norm].append(
+                        {
+                            "seed": seed_norm,
+                            "related_tag": related_tag,
+                            "count": count,
+                        }
+                    )
+                if all(len(items) >= per_seed_limit for items in by_seed.values()):
+                    break
+    except Exception:
+        return []
+
+    merged = []
+    for items in by_seed.values():
+        merged.extend(items)
+    merged.sort(key=lambda item: int(item.get("count", 0)), reverse=True)
+    return merged[:total_limit]
+
+
+def dictionary_suggested_tags_for_inputs(inputs, limit=18):
+    if not input_requests_resource_role(inputs, "danbooru_cooccurrence"):
+        return []
+    raw_tag_candidates = split_tag_like_text(inputs.get("raw_tags", "") or inputs.get("raw_text", ""))
+    hits = lookup_tag_cooccurrence_for_tags(raw_tag_candidates[:32], total_limit=limit)
+    return dedupe_tags([item.get("related_tag", "") for item in hits if str(item.get("related_tag", "")).strip()])
+
+
 def lookup_character_reference_entries(canonical_tags, limit=8):
     if not CHARACTER_WEBUI_NORMALIZED_PATH.exists():
         return []
@@ -1047,6 +1560,17 @@ def build_local_dictionary_reference_text(inputs):
             parts.append("[Tag Frequency References]")
             for item in tag_stats[:12]:
                 parts.append(f"- {item.get('tag', '')}: count={item.get('count', 0)}")
+
+    if input_requests_resource_role(inputs, "danbooru_cooccurrence"):
+        raw_tag_candidates = split_tag_like_text(inputs.get("raw_tags", "") or inputs.get("raw_text", ""))
+        cooccurrence_hits = lookup_tag_cooccurrence_for_tags(raw_tag_candidates[:32])
+        if cooccurrence_hits:
+            parts.append("[Danbooru Cooccurrence Suggestions]")
+            parts.append("Use these only when they match the user's intent; do not blindly add every related tag.")
+            for item in cooccurrence_hits[:24]:
+                parts.append(
+                    f"- seed={item.get('seed', '')} -> related={item.get('related_tag', '')}, count={item.get('count', 0)}"
+                )
 
     return "\n".join(parts).strip()
 
@@ -1958,7 +2482,7 @@ def preprocess_task_inputs(task_type, inputs):
     prepared = dict(inputs or {})
     alias_hits = []
     original_raw_tags = str(prepared.get("raw_tags", "")).strip()
-    if original_raw_tags:
+    if original_raw_tags and not prepared.get("wd14_raw_tags_en"):
         prepared["wd14_raw_tags_en"] = split_tag_like_text(original_raw_tags)
 
     if task_type in ("expand_anime_tags", "normalize_anime_tags"):
@@ -2077,6 +2601,8 @@ def normalize_tag_for_anima(tag):
     lowered = tag.strip().lower()
     if not lowered:
         return ""
+    if lowered.startswith("score "):
+        return lowered.replace(" ", "_")
     if lowered.startswith("score_"):
         return lowered
     return escape_sdxl_tag_parentheses(lowered.replace("_", " "))
@@ -2093,7 +2619,7 @@ def normalize_tag_for_illustrious(tag):
     lowered = tag.strip().lower()
     if not lowered:
         return ""
-    return escape_sdxl_tag_parentheses(lowered.replace("_", " "))
+    return escape_sdxl_tag_parentheses(lowered)
 
 
 def escape_sdxl_tag_parentheses(tag):
@@ -2379,13 +2905,202 @@ def build_training_two_line_text(tag_items, caption_text):
     return first_line or second_line
 
 
+def clean_training_passthrough_tag(tag):
+    value = str(tag or "").strip()
+    while value.endswith(","):
+        value = value[:-1].strip()
+    return value
+
+
+def build_training_passthrough_tags(tags):
+    # Training tag rows should preserve WD14 as the label source; LLM only supplements the NL caption.
+    return [clean_training_passthrough_tag(tag) for tag in tags or [] if clean_training_passthrough_tag(tag)]
+
+
 def get_training_base_tags(json_result, inputs):
     raw_tags = inputs.get("wd14_raw_tags_en", [])
     if isinstance(raw_tags, list) and raw_tags:
-        return dedupe_tags([str(item).strip() for item in raw_tags if str(item).strip()])
+        return build_training_passthrough_tags(raw_tags)
 
     base_tags = json_result.get("extended_tags_en", []) or json_result.get("canonical_tags_en", []) or json_result.get("expanded_tags_en", []) or json_result.get("normalized_tags_en", [])
-    return dedupe_tags([str(item).strip() for item in base_tags if str(item).strip()])
+    return build_training_passthrough_tags(base_tags)
+
+
+def has_custom_training_trigger(tags):
+    return any(str(tag).strip().startswith("@") for tag in tags or [])
+
+
+def build_resolved_character_block_keys(json_result):
+    keys = set()
+    for hit in json_result.get("resolved_character_tags", []) or []:
+        if not isinstance(hit, dict):
+            continue
+        for field in ("canonical_tag", "matched_alias"):
+            value = str(hit.get(field, "")).strip()
+            if value:
+                keys.add(normalize_alias_key(value))
+        for value in hit.get("blocked_tags", []) or []:
+            value = str(value).strip()
+            if value:
+                keys.add(normalize_alias_key(value))
+    return keys
+
+
+TRAINING_METADATA_TAG_KEYS = {
+    normalize_alias_key(value)
+    for value in (
+        "artist name",
+        "signature",
+        "character name",
+        "copyright name",
+        "character signature",
+        "twitter username",
+        "username",
+        "watermark",
+        "english text",
+        "copyright notice",
+        "cover page",
+        "doujin cover",
+        "magazine cover",
+        "cover art",
+    )
+}
+
+
+def filter_training_character_pollution(tags, json_result):
+    """Training tag rows are WD14 passthrough; do not let LLM/dictionary cleanup delete tags."""
+    return build_training_passthrough_tags(tags)
+
+
+def build_resolved_character_name_blocks(json_result):
+    ambiguous = {
+        "black", "blue", "brown", "green", "grey", "gray", "orange", "pink", "purple", "red", "white", "yellow",
+        "ring", "dog", "cat", "hood", "jewelry", "belt", "cover", "patch", "rose", "star", "shadow",
+    }
+    names = set()
+    for hit in json_result.get("resolved_character_tags", []) or []:
+        if not isinstance(hit, dict):
+            continue
+        for field in ("canonical_tag", "matched_alias"):
+            raw = str(hit.get(field, "")).strip()
+            if not raw:
+                continue
+            base = re.split(r"[\(_]", raw.replace("\\", ""), maxsplit=1)[0]
+            base = base.replace("_", " ").replace("-", " ").strip()
+            if len(base) >= 4 and base.lower() not in ambiguous:
+                names.add(base)
+    return sorted(names, key=len, reverse=True)
+
+
+def sanitize_training_caption_generic_identity(caption):
+    cleaned = str(caption or "")
+    if not cleaned:
+        return cleaned
+
+    # Avoid teaching the training set accidental IP/character recognition. Keep visible details instead.
+    cleaned = re.sub(
+        r"\b[A-Z][A-Za-z0-9_-]{1,24}\s+from\s+[A-Z][A-Za-z0-9&:.' -]{2,48}\s+is\s+depicted\b",
+        "A solo anime girl is depicted",
+        cleaned,
+    )
+    cleaned = re.sub(
+        r"\b(?:This is|The image is|It is)\s+(?:a\s+)?(?:vibrant\s+|close-up\s+|dynamic\s+)*portrait of\s+[A-Z][A-Za-z0-9_-]{1,24}\s*,",
+        "This is a portrait of a solo anime girl,",
+        cleaned,
+    )
+    cleaned = re.sub(
+        r"\b(?:depicts|shows|features)\s+[A-Z][A-Za-z0-9_-]{1,24}\s+from\s+[A-Z][A-Za-z0-9&:.' -]{2,48}\b",
+        "shows a solo anime girl",
+        cleaned,
+    )
+    cleaned = re.sub(
+        r"\bfrom\s+(?:Azur Lane|Arknights|Genshin Impact|Honkai(?: Star Rail)?|Kantai Collection|Kancolle|Blue Archive|Fate(?:/Grand Order)?|Touhou|Pokemon|Ring Fit Adventure|Duck Hunt)\b",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(
+        r"\b(?:Azur Lane|Arknights|Genshin Impact|Honkai(?: Star Rail)?|Kantai Collection|Kancolle|Blue Archive|Fate(?:/Grand Order)?|Touhou|Pokemon|Ring Fit Adventure|Duck Hunt)\b",
+        "anime source",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(r"\b(?:Z23|Atago|Ai)\b\s*,?\s*", "", cleaned)
+    return cleaned
+
+
+def sanitize_training_caption_character_pollution(caption, json_result):
+    if not caption:
+        return caption
+    cleaned = sanitize_training_caption_generic_identity(caption)
+    for name in build_resolved_character_name_blocks(json_result):
+        escaped = re.escape(name)
+        cleaned = re.sub(rf"\s*,\s*{escaped}\s*,\s*", ", ", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(rf"\b{escaped}\b\s*,?\s*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\banime source\s+is depicted\b", "A solo anime girl is depicted", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s+,", ",", cleaned)
+    cleaned = re.sub(r",\s*,", ",", cleaned)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned)
+    cleaned = cleaned.replace("girl, with", "girl with").replace("character, with", "character with")
+    return cleaned.strip(" ,")
+
+
+def build_training_caption_from_sections(json_result, fallback_tags):
+    def clean_join(values, limit):
+        return ", ".join([str(item).strip() for item in values[:limit] if str(item).strip()])
+
+    character = clean_join(json_result.get("character_tags_en", []), 3)
+    appearance = clean_join(json_result.get("appearance_tags_en", []), 8)
+    outfit = clean_join(json_result.get("outfit_tags_en", []), 8)
+    expression = clean_join(json_result.get("expression_tags_en", []), 4)
+    pose = clean_join(json_result.get("pose_tags_en", []), 5)
+    camera = clean_join(json_result.get("camera_tags_en", []), 4)
+    style = clean_join(json_result.get("style_tags_en", []), 5)
+
+    sentences = []
+    subject = character or clean_join(fallback_tags, 4) or "an anime character"
+    first_parts = [subject]
+    if appearance:
+        first_parts.append(appearance)
+    sentences.append("The image shows " + ", ".join(first_parts) + ".")
+
+    detail_parts = []
+    if outfit:
+        detail_parts.append("The outfit includes " + outfit)
+    if expression:
+        detail_parts.append("the expression reads as " + expression)
+    if pose:
+        detail_parts.append("the pose is described by " + pose)
+    if detail_parts:
+        sentences.append("; ".join(detail_parts) + ".")
+
+    composition_parts = []
+    if camera:
+        composition_parts.append("Composition and camera cues include " + camera)
+    if style:
+        composition_parts.append("the visual style is " + style)
+    if composition_parts:
+        sentences.append("; ".join(composition_parts) + ".")
+
+    if len(sentences) < 2 and fallback_tags:
+        sentences.append("Additional visible elements include " + clean_join(fallback_tags[4:], 14) + ".")
+    return compact_text(" ".join(sentences), 620)
+
+
+def select_training_caption(json_result, training_tags):
+    caption = (
+        str(json_result.get("caption_long_en", "")).strip()
+        or str(json_result.get("natural_language_en", "")).strip()
+        or str(json_result.get("caption_short_en", "")).strip()
+    )
+    if len(caption) >= 180:
+        return caption
+    fallback_caption = build_training_caption_from_sections(json_result, training_tags)
+    if not caption:
+        return fallback_caption
+    if fallback_caption and len(fallback_caption) > len(caption):
+        return fallback_caption
+    return caption
 
 
 def profile_format_prompt(profile_name, json_result):
@@ -2397,7 +3112,7 @@ def profile_format_prompt(profile_name, json_result):
     natural_language_en = str(json_result.get("natural_language_en", "")).strip()
     caption_short_en = str(json_result.get("caption_short_en", "")).strip()
     caption_long_en = str(json_result.get("caption_long_en", "")).strip()
-    training_base_tags = dedupe_tags(json_result.get("training_base_tags_en", []))
+    training_base_tags = build_training_passthrough_tags(json_result.get("training_base_tags_en", []))
 
     base_positive = []
     if expanded_tags:
@@ -2412,26 +3127,27 @@ def profile_format_prompt(profile_name, json_result):
         negative_prefix = ["worst quality", "low quality", "score_1", "score_2", "score_3", "artist name"]
         positive_tags = dedupe_tags(positive_prefix + quality_tags + base_positive)
         negative_final = dedupe_tags(negative_prefix + negative_tags)
-        formatted_tag_list = [
-            normalize_tag_for_anima(tag) for tag in positive_tags if normalize_tag_for_anima(tag)
-        ]
-        if natural_language_en:
-            formatted_positive = ", ".join(formatted_tag_list + [natural_language_en])
+        formatted_tag_list = dedupe_tags(
+            [normalize_tag_for_anima(tag) for tag in positive_tags if normalize_tag_for_anima(tag)]
+        )
+        formatted_tag_text = ", ".join(formatted_tag_list)
+        inference_caption = natural_language_en or caption_long_en or caption_short_en
+        if inference_caption:
+            formatted_positive = build_training_two_line_text(formatted_tag_list, inference_caption)
         else:
-            formatted_positive = ", ".join(formatted_tag_list)
+            formatted_positive = formatted_tag_text
         formatted_negative = ", ".join(
-            [normalize_tag_for_anima(tag) for tag in negative_final if normalize_tag_for_anima(tag)]
+            dedupe_tags([normalize_tag_for_anima(tag) for tag in negative_final if normalize_tag_for_anima(tag)])
         )
         return {
             "target_profile": "anima_v1",
             "formatted_prompt": formatted_positive,
-            "formatted_prompt_tags": ", ".join(formatted_tag_list),
+            "formatted_prompt_tags": formatted_tag_text,
             "formatted_prompt_hybrid": formatted_positive,
             "formatted_negative_prompt": formatted_negative,
             "profile_notes_cn": (
-                "按 Anima 混合范式格式化：Danbooru tag 骨架优先，小写 tag、下划线改空格"
-                "（score tags 除外），并在尾部补一小段自然语言描述；正向前缀为 "
-                "masterpiece/best quality/score_7/safe，负向加入低质与 artist name。"
+                "按 Anima 混合范式格式化：第一段为 Danbooru tag 骨架并带推理质量词，"
+                "空行后补一小段自然语言描述；小写 tag、下划线改空格（score tags 除外）。"
             ),
         }
 
@@ -2539,8 +3255,10 @@ def profile_format_prompt(profile_name, json_result):
 
     if profile_name == "anima_train_v1":
         tag_source = training_base_tags or dedupe_tags(base_positive)
-        training_tags = [normalize_tag_for_anima(tag) for tag in tag_source if normalize_tag_for_anima(tag)]
-        training_caption = caption_long_en or natural_language_en or caption_short_en
+        tag_source = filter_training_character_pollution(tag_source, json_result)
+        training_tags = build_training_passthrough_tags(tag_source)
+        training_caption = select_training_caption(json_result, training_tags)
+        training_caption = sanitize_training_caption_character_pollution(training_caption, json_result)
         training_text = build_training_two_line_text(training_tags, training_caption)
         return {
             "target_profile": "anima_train_v1",
@@ -2549,13 +3267,15 @@ def profile_format_prompt(profile_name, json_result):
             "formatted_prompt_tags": ", ".join(training_tags),
             "formatted_prompt_caption": training_caption,
             "formatted_training_text": training_text,
-            "profile_notes_cn": "Anima 训练标注格式：第一段为 tags，空一行后第二段为自然语言；不添加质量词和负面词。",
+            "profile_notes_cn": "Anima 训练标注格式：第一段完全保留 WD14 tags，空一行后第二段为 LLM 补充自然语言；不添加质量词和负面词。",
         }
 
     if profile_name == "illustrious_train_v1":
         tag_source = training_base_tags or dedupe_tags(base_positive)
-        training_tags = [normalize_tag_for_illustrious(tag) for tag in tag_source if normalize_tag_for_illustrious(tag)]
-        training_caption = caption_long_en or natural_language_en or caption_short_en
+        tag_source = filter_training_character_pollution(tag_source, json_result)
+        training_tags = build_training_passthrough_tags(tag_source)
+        training_caption = select_training_caption(json_result, training_tags)
+        training_caption = sanitize_training_caption_character_pollution(training_caption, json_result)
         training_text = build_training_two_line_text(training_tags, training_caption)
         return {
             "target_profile": "illustrious_train_v1",
@@ -2564,13 +3284,15 @@ def profile_format_prompt(profile_name, json_result):
             "formatted_prompt_tags": ", ".join(training_tags),
             "formatted_prompt_caption": training_caption,
             "formatted_training_text": training_text,
-            "profile_notes_cn": "Illustrious 训练标注格式：tags 与自然语言隔行，不追加质量词和负面词。",
+            "profile_notes_cn": "Illustrious 训练标注格式：第一段完全保留 WD14 tags，空一行后第二段为 LLM 补充自然语言；不追加质量词和负面词。",
         }
 
     if profile_name == "noobai_train_v1":
         tag_source = training_base_tags or dedupe_tags(base_positive)
-        training_tags = [normalize_tag_for_noobai(tag) for tag in tag_source if normalize_tag_for_noobai(tag)]
-        training_caption = caption_long_en or natural_language_en or caption_short_en
+        tag_source = filter_training_character_pollution(tag_source, json_result)
+        training_tags = build_training_passthrough_tags(tag_source)
+        training_caption = select_training_caption(json_result, training_tags)
+        training_caption = sanitize_training_caption_character_pollution(training_caption, json_result)
         training_text = build_training_two_line_text(training_tags, training_caption)
         return {
             "target_profile": "noobai_train_v1",
@@ -2579,7 +3301,7 @@ def profile_format_prompt(profile_name, json_result):
             "formatted_prompt_tags": ", ".join(training_tags),
             "formatted_prompt_caption": training_caption,
             "formatted_training_text": training_text,
-            "profile_notes_cn": "NoobAI 训练标注格式：tags 与自然语言隔行，不追加质量词和负面词。",
+            "profile_notes_cn": "NoobAI 训练标注格式：第一段完全保留 WD14 tags，空一行后第二段为 LLM 补充自然语言；不追加质量词和负面词。",
         }
 
     if profile_name == "flux_train_nl_v1":
@@ -2655,8 +3377,19 @@ def enrich_json_result(task_type, json_result, inputs):
     if task_type not in supported:
         return json_result
 
-    enriched = apply_character_aliases_to_result(task_type, json_result, inputs)
+    enriched = dict(json_result or {})
+    for carry_key in ("natural_language_en", "caption_short_en", "caption_long_en"):
+        if not str(enriched.get(carry_key, "")).strip() and str(inputs.get(carry_key, "")).strip():
+            enriched[carry_key] = str(inputs.get(carry_key, "")).strip()
+    enriched = apply_character_aliases_to_result(task_type, enriched, inputs)
     enriched = infer_structured_tag_sections(enriched, inputs)
+    dictionary_suggestions = dictionary_suggested_tags_for_inputs(inputs)
+    if dictionary_suggestions:
+        enriched["dictionary_suggested_tags_en"] = dictionary_suggestions
+        if task_type in {"expand_anime_tags", "normalize_anime_tags", "translate_anime_tags"}:
+            expanded_now = dedupe_tags(enriched.get("expanded_tags_en", []) or enriched.get("normalized_tags_en", []))
+            if len(expanded_now) < 24:
+                enriched["expanded_tags_en"] = dedupe_tags(expanded_now + dictionary_suggestions)[:48]
     if inputs.get("wd14_raw_tags_en"):
         enriched["wd14_raw_tags_en"] = list(inputs.get("wd14_raw_tags_en", []))
         enriched["training_base_tags_en"] = get_training_base_tags(enriched, inputs)
@@ -2926,6 +3659,8 @@ def build_character_design_prompts(inputs):
 硬性要求：
 - 保持二次元角色设计思维，不要写成现实主义摄影提示
 - tag_list_en 用英文短 tag，适合后续给绘图模型理解
+- tag_list_en 尽量覆盖角色、外观、服装、表情、姿态、镜头、背景、风格，不要只给极短列表
+- 如果 Additional Runtime Context 里有 Tag Frequency 或 Cooccurrence Suggestions，优先参考其中的 Danbooru 拼写和高相关候选
 - negative_tags_en 重点压制崩坏、脏乱、跑题、过度性感和不适合立绘的内容
 - 输出必须是 JSON，不要加解释，不要加 markdown 代码块
 """.strip()
@@ -2979,11 +3714,14 @@ def build_expand_tags_prompts(inputs):
 - 保持二次元绘图语境
 - normalized_tags_en 用清洗后的核心 Danbooru tags
 - expanded_tags_en 在不跑题的前提下补充可执行 Danbooru tags 细节
+- expanded_tags_en 尽量给出 24 到 48 个有用 tag；如果输入信息不足，也要补足构图、表情、姿态、服装、场景、风格等常见 Danbooru 维度
 - natural_language_en 必须是一小段简洁的英文自然语言补充，用来补足 tag 难以表达的气质、构图或视觉感觉
 - 最终风格是 Danbooru tag 骨架 + 短自然语言补充，不要只输出纯 tag 思路
 - quality_tags_en 只放高质量和画面控制相关项
 - negative_tags_en 压制常见崩坏
 - 如果角色规范 tag 参考不为空，必须保留这些 canonical Danbooru tags，不要把角色名自行翻译成普通英文词
+- 如果 Additional Runtime Context 里有 Tag Frequency 或 Cooccurrence Suggestions，要优先用它们修正 tag 拼写、补充高相关 tag，但不要加入和用户意图冲突的 tag
+- 不要凭空加入 fetish、sexual、explicit、nsfw、nude 等内容，除非原始输入明确要求
 - natural_language_en 不要重复罗列 tags，不要写成长段句子，控制在 8 到 24 个英文词左右
 - 输出必须是 JSON，不要 markdown，不要解释性前言
 - 你的输出第一字符必须是 {{，最后字符必须是 }}
@@ -3021,9 +3759,12 @@ def build_expand_tags_prompts(inputs):
 - 保持二次元绘图语境
 - normalized_tags_en 用清洗后的核心 tags
 - expanded_tags_en 在不跑题的前提下补充可执行细节
+- expanded_tags_en 尽量给出 24 到 48 个有用 tag；如果输入信息不足，也要补足构图、表情、姿态、服装、场景、风格等常见 Danbooru 维度
 - quality_tags_en 只放高质量和画面控制相关项
 - negative_tags_en 压制常见崩坏
 - 如果角色规范 tag 参考不为空，必须保留这些 canonical Danbooru tags，不要把角色名自行翻译成普通英文词
+- 如果 Additional Runtime Context 里有 Tag Frequency 或 Cooccurrence Suggestions，要优先用它们修正 tag 拼写、补充高相关 tag，但不要加入和用户意图冲突的 tag
+- 不要凭空加入 fetish、sexual、explicit、nsfw、nude 等内容，除非原始输入明确要求
 - 输出必须是 JSON，不要 markdown，不要解释性前言
 - 你的输出第一字符必须是 {{，最后字符必须是 }}
 """.strip()
@@ -3114,6 +3855,9 @@ def build_normalize_tags_prompts(inputs):
 - recommended_prompt_order_en 按更合理的 prompt 顺序给出
 - negative_tags_en 补常见崩坏抑制项
 - 如果角色规范 tag 参考不为空，必须优先使用这些 canonical Danbooru tags
+- 如果 Additional Runtime Context 里有 Tag Frequency 或 Cooccurrence Suggestions，要用它们修正拼写和补充合理高相关 tag
+- normalized_tags_en 和 recommended_prompt_order_en 不要过短；绘图用至少保留 18 个左右的有效 tag，训练/打标用优先保留 WD14 原标
+- 不要添加用户没有要求的 fetish、sexual、explicit、nsfw、nude 等内容
 - 输出必须是 JSON，不要 markdown，不要前言
 - 你的输出第一字符必须是 {{，最后字符必须是 }}
 """.strip()
@@ -3212,9 +3956,13 @@ WD14 原始 tags：
 
 要求：
 - 以 WD14 原始标签为主，不要大幅重写成另一套标签体系
-- 优先保留 WD14 已经可用的标签，只做少量校正、去重、补充
+- wd14_tags_raw 必须完整保留 WD14 原始标签顺序，除非是空项或完全重复项
+- normalized_tags_en 应保留 WD14 中可靠的主体、角色、外观、服装、表情、姿态、构图标签，不要压缩成很短的一组摘要
+- expanded_tags_en 只用于补充少量图像可确认的缺失标签，不要替代 WD14 原标
 - 去掉明显噪声、重复、错误归类
-- 同时补一段简洁自然语言，便于 Anima / caption / 训练说明
+- 训练/打标用途下，不要猜测或写出现有版权角色名、作品名、IP 名；只描述可见外观、服装、表情、姿态和构图
+- caption_long_en / natural_language_en 写 2-4 句英文训练 caption，覆盖主体、外观、服装、表情、姿态、镜头/构图和显著细节
+- caption 不要加入 masterpiece、best quality、score、negative prompt 这类质量词
 - 如果图片能帮助判断，请优先依据图片修正 WD14
 
 请输出一个 JSON 对象，字段至少包含：
@@ -3273,11 +4021,13 @@ def build_natural_caption_prompts(inputs):
 要求：
 - 以现有 tags 为主要事实依据来写自然语言
 - 不要重新发明一套和 tags 不一致的内容
-- caption_short_en 用于简短说明
-- caption_long_en 用于 Flux / 纯自然语言工作流
+- caption_short_en 用一句话概括
+- caption_long_en 用 2-4 句英文，覆盖主体、外观、服装、表情、姿态、镜头/构图和显著细节
 - natural_language_en 可以与 caption_long_en 接近，但要保持清晰、稳定、便于模型理解
 - 不要写成小说，不要使用过度修辞
 - 不要重复输出完整 tags 列表
+- 如果目标是训练标注，不要猜测或写出现有版权角色名、作品名、IP 名；只描述图像中可见内容
+- 如果目标是训练标注，不要加入 masterpiece、best quality、score、negative prompt 这类质量词
 - 只输出一个很短的 JSON，不要在 JSON 之外添加任何内容
 - 输出必须是 JSON
 """.strip()
@@ -3405,13 +4155,17 @@ class ManagedBackend:
         self.config = config
         self.process = None
         self.process_pid = None
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
         self.prompt_profiles = load_prompt_profiles()
         self.backend_profiles = load_backend_profiles()
         self.current_backend_profile = self.config["backend"].get("default_profile")
         self.current_context_size = None
         self.current_model_name = self.config["model"]["name"]
         self.runtime_kcpps_path = None
+        self.last_launch_command = []
+        self.last_launch_log_path = None
+        self.last_launch_error = None
+        self.current_runtime_temp_subdir = None
         self.inprocess_model = None
         self.inprocess_runtime_spec = None
         self.inprocess_runtime_info = {}
@@ -3467,6 +4221,27 @@ class ManagedBackend:
             return self.openai_base_url + self.health_path
         return self.api_root_url + self.health_path
 
+    def backend_health_is_ready(self, payload):
+        if self.is_inprocess_provider:
+            return self.inprocess_model is not None
+        if self.backend_provider == "koboldcpp":
+            if not isinstance(payload, dict):
+                return False
+            # KoboldCpp can expose the admin/API shell before a text model is loaded.
+            return bool(payload.get("llm")) or bool(payload.get("txt2txt")) or bool(payload.get("textgen"))
+        if self.backend_provider in {"lm_studio", "vllm", "custom_openai_compat", "llama_cpp_server"}:
+            return isinstance(payload, dict)
+        return isinstance(payload, dict)
+
+    def backend_not_ready_reason(self, payload):
+        if self.backend_provider == "koboldcpp" and isinstance(payload, dict):
+            return (
+                "koboldcpp responded but no text model is active "
+                f"(llm={payload.get('llm')}, txt2img={payload.get('txt2img')}, "
+                f"vision={payload.get('vision')}, version={payload.get('version')})"
+            )
+        return f"backend health payload is not ready: {payload}"
+
     def available_backend_profiles(self):
         return {
             key: {
@@ -3487,21 +4262,28 @@ class ManagedBackend:
 
     def resolve_model_runtime_spec(self, backend_profile, context_size, custom_model_path=None, custom_mmproj_path=None):
         profile_name, profile = self.resolve_backend_profile(backend_profile)
+        custom_model = normalize_optional_path(custom_model_path)
+        custom_mmproj = normalize_optional_path(custom_mmproj_path)
         model_path = resolve_existing_path(
-            normalize_optional_path(custom_model_path) or profile["model_path"],
+            custom_model or profile["model_path"],
             purpose=f"model_path for backend profile {profile_name}",
             project_subdirs=["runtime", "models"],
         )
+        # A custom model path should not inherit the catalog profile's mmproj.
+        # Otherwise selecting a text-only/custom Q4 model while the UI profile is
+        # still a vision profile silently keeps the vision projector loaded.
+        mmproj_source = custom_mmproj if custom_model else (custom_mmproj or profile.get("mmproj_path"))
         mmproj_path = resolve_existing_path(
-            normalize_optional_path(custom_mmproj_path) or profile.get("mmproj_path"),
+            mmproj_source,
             purpose=f"mmproj_path for backend profile {profile_name}",
             required=False,
             project_subdirs=["runtime", "models"],
         )
         resolved_context_size = int(context_size) if context_size else int(profile.get("default_context_size", 0) or 0)
         effective_name = profile.get("model_name", profile_name)
-        if normalize_optional_path(custom_model_path):
+        if custom_model:
             effective_name = Path(model_path).stem
+            profile_name = f"{profile_name}__custom"
         return {
             "profile_name": profile_name,
             "profile": profile,
@@ -3511,7 +4293,8 @@ class ManagedBackend:
             "effective_name": effective_name,
         }
 
-    def build_runtime_kcpps(self, runtime_spec):
+    def build_runtime_kcpps(self, runtime_spec, runtime_options=None):
+        runtime_options = normalize_runtime_options(runtime_options)
         profile_name = runtime_spec["profile_name"]
         profile = runtime_spec["profile"]
         template_path = resolve_existing_path(
@@ -3530,6 +4313,12 @@ class ManagedBackend:
             runtime_config["port_param"] = int(profile["port"])
         if runtime_spec["context_size"]:
             runtime_config["contextsize"] = int(runtime_spec["context_size"])
+        batch_size = runtime_options.get("llama_cpp_python_n_batch")
+        if batch_size is not None and str(batch_size).strip():
+            runtime_config["batchsize"] = int(batch_size)
+        thread_count = runtime_options.get("llama_cpp_python_threads")
+        if thread_count is not None and str(thread_count).strip() and int(thread_count) > 0:
+            runtime_config["threads"] = int(thread_count)
 
         RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
         context_tag = runtime_config.get("contextsize", "default")
@@ -3544,10 +4333,13 @@ class ManagedBackend:
         process_alive = self._is_managed_process_alive()
         healthy = bool(self.is_inprocess_provider and self.inprocess_model is not None)
         health_error = None
+        health_payload = None
         if not self.is_inprocess_provider:
             try:
-                http_get_json(self.health_check_url, timeout=1)
-                healthy = True
+                health_payload = http_get_json(self.health_check_url, timeout=1)
+                healthy = self.backend_health_is_ready(health_payload)
+                if not healthy:
+                    health_error = self.backend_not_ready_reason(health_payload)
             except Exception as error:
                 health_error = str(error)
 
@@ -3562,9 +4354,23 @@ class ManagedBackend:
             "backend_pid": (self.process.pid if self.process is not None and self.process.poll() is None else self.process_pid) if process_alive else None,
             "healthy": healthy,
             "health_error": health_error,
+            "health_payload": health_payload,
             "model_name": self.current_model_name,
             "current_backend_profile": self.current_backend_profile,
             "current_context_size": self.current_context_size,
+            "runtime_kcpps_path": self.runtime_kcpps_path,
+            "runtime_temp_dir": str(RUNTIME_TEMP_DIR),
+            "koboldcpp_temp_root": str(KOBOLDCPP_TEMP_ROOT),
+            "current_runtime_temp_subdir": self.current_runtime_temp_subdir,
+            "current_runtime_temp_path": (
+                str(runtime_temp_path(self.current_runtime_temp_subdir))
+                if self.current_runtime_temp_subdir
+                else None
+            ),
+            "last_launch_command": self.last_launch_command,
+            "last_launch_log_path": self.last_launch_log_path,
+            "last_launch_error": self.last_launch_error,
+            "last_launch_log_tail": read_text_tail(self.last_launch_log_path, max_chars=6000),
             "inprocess_loaded": self.inprocess_model is not None,
             "inprocess_runtime_info": self.inprocess_runtime_info,
             "inprocess_runtime_options": (
@@ -3575,10 +4381,10 @@ class ManagedBackend:
             "available_backend_profiles": self.available_backend_profiles(),
         }
 
-    def _build_koboldcpp_launch_command(self, runtime_spec):
+    def _build_koboldcpp_launch_command(self, runtime_spec, runtime_options=None):
         backend = self.config["backend"]
         exe_path = resolve_koboldcpp_executable(backend.get("koboldcpp_exe"))
-        runtime_path = self.build_runtime_kcpps(runtime_spec)
+        runtime_path = self.build_runtime_kcpps(runtime_spec, runtime_options=runtime_options)
         self.runtime_kcpps_path = str(runtime_path)
         self.current_backend_profile = runtime_spec["profile_name"]
         self.current_context_size = runtime_spec["context_size"]
@@ -3630,7 +4436,7 @@ class ManagedBackend:
         backend["llama_cpp_server_exe"] = exe_path
         return command
 
-    def _build_launch_command(self, backend_profile, context_size, custom_model_path=None, custom_mmproj_path=None):
+    def _build_launch_command(self, backend_profile, context_size, custom_model_path=None, custom_mmproj_path=None, runtime_options=None):
         runtime_spec = self.resolve_model_runtime_spec(
             backend_profile,
             context_size,
@@ -3639,7 +4445,7 @@ class ManagedBackend:
         )
         provider = self.backend_provider
         if provider == "koboldcpp":
-            return self._build_koboldcpp_launch_command(runtime_spec)
+            return self._build_koboldcpp_launch_command(runtime_spec, runtime_options=runtime_options)
         if provider == "llama_cpp_server":
             return self._build_llama_cpp_server_launch_command(runtime_spec)
         raise ValueError(f"Unsupported managed backend provider: {provider}")
@@ -3680,14 +4486,32 @@ class ManagedBackend:
             self.current_model_name = runtime_spec["effective_name"]
             return {"status": "ready", "details": self.status()}
 
-        self._unload_inprocess_model_locked()
         backend = self.config["backend"]
-        Llama, runtime_info = load_llama_cpp_for_task_agent(
-            prefer_private=bool(backend.get("llama_cpp_python_prefer_private", True))
-        )
         n_gpu_layers = runtime_options.get(
             "llama_cpp_python_n_gpu_layers",
             backend.get("llama_cpp_python_n_gpu_layers", backend.get("llama_cpp_n_gpu_layers", -1)),
+        )
+        pre_cleanup_memory = get_combined_memory_snapshot()
+        self._unload_inprocess_model_locked()
+        pre_load_floor_mb = minimum_safe_pre_llama_load_vram_mb(
+            n_gpu_layers,
+            runtime_spec,
+            runtime_options,
+            backend,
+        )
+        pre_load_cleanup = free_comfy_vram_for_inprocess_llm(target_free_vram_mb=pre_load_floor_mb)
+        post_cleanup_memory = get_combined_memory_snapshot()
+        if pre_load_floor_mb > 0 and not bool(pre_load_cleanup.get("target_reached", False)):
+            raise RuntimeError(
+                "llama_cpp_python_inproc refused to load because ComfyUI did not release enough VRAM "
+                f"for a safe LLM handoff: free={pre_load_cleanup.get('final_free_vram_mb')}MB, "
+                f"required={pre_load_floor_mb}MB, profile={runtime_spec['profile_name']}. "
+                "This usually means the image model or another CUDA allocation is still resident. "
+                "Use a non-vision/text-only backend profile, lower the workflow memory load, or run the LLM "
+                f"in an external subprocess/server. cleanup={pre_load_cleanup}"
+            )
+        Llama, runtime_info = load_llama_cpp_for_task_agent(
+            prefer_private=bool(backend.get("llama_cpp_python_prefer_private", True))
         )
         n_threads = runtime_options.get(
             "llama_cpp_python_threads",
@@ -3699,11 +4523,22 @@ class ManagedBackend:
         ).strip() or None
         verbose = bool(runtime_options.get("llama_cpp_python_verbose", backend.get("llama_cpp_python_verbose", False)))
         chat_handler = build_llama_cpp_multimodal_chat_handler(runtime_spec, runtime_options, verbose=verbose)
+        n_ubatch = choose_stable_llama_cpp_ubatch(n_batch, runtime_spec["context_size"], runtime_options, backend)
+        max_safe_gpu_layers = runtime_options.get(
+            "llama_cpp_python_max_safe_gpu_layers",
+            backend.get("llama_cpp_python_max_safe_gpu_layers", 8),
+        )
+        effective_gpu_layers, gpu_layer_decision = choose_safe_llama_cpp_gpu_layers(
+            n_gpu_layers,
+            post_cleanup_memory,
+            max_gpu_layers=max_safe_gpu_layers,
+        )
         init_kwargs = {
             "model_path": runtime_spec["model_path"],
             "n_ctx": int(runtime_spec["context_size"] or 4096),
             "n_batch": int(n_batch or 512),
-            "n_gpu_layers": int(n_gpu_layers) if str(n_gpu_layers).strip() != "" else -1,
+            "n_ubatch": int(n_ubatch),
+            "n_gpu_layers": int(effective_gpu_layers),
             "verbose": verbose,
         }
         if str(n_threads or "").strip():
@@ -3712,8 +4547,38 @@ class ManagedBackend:
             init_kwargs["chat_handler"] = chat_handler
         elif chat_format:
             init_kwargs["chat_format"] = chat_format
+        min_free_after_load_mb = minimum_safe_post_llama_load_vram_mb(runtime_spec, runtime_options, backend)
 
+        print(
+            "[TaskAgent] loading llama.cpp in-process "
+            f"profile={runtime_spec['profile_name']} ctx={init_kwargs['n_ctx']} "
+            f"gpu_layers={init_kwargs['n_gpu_layers']} gpu_layer_decision={gpu_layer_decision} batch={init_kwargs['n_batch']} "
+            f"ubatch={init_kwargs['n_ubatch']} memory_before={pre_cleanup_memory} "
+            f"pre_load_floor_mb={pre_load_floor_mb} cleanup={pre_load_cleanup} "
+            f"memory_after_cleanup={post_cleanup_memory}",
+            flush=True,
+        )
         self.inprocess_model = Llama(**init_kwargs)
+        post_load_memory = get_combined_memory_snapshot()
+        post_load_cuda = post_load_memory.get("cuda", {}) if isinstance(post_load_memory, dict) else {}
+        post_load_free_mb = int(post_load_cuda.get("free_mb") or 0) if isinstance(post_load_cuda, dict) else 0
+        if (
+            min_free_after_load_mb > 0
+            and post_load_free_mb < min_free_after_load_mb
+        ):
+            unload_result = self._unload_inprocess_model_locked()
+            raise RuntimeError(
+                "llama_cpp_python_inproc stopped before generation because VRAM left after load "
+                f"was unsafe: free={post_load_free_mb}MB, minimum={min_free_after_load_mb}MB, "
+                f"gpu_layers={init_kwargs['n_gpu_layers']}. Lower llama_cpp_python_n_gpu_layers, "
+                "use a smaller/quantized text model, or run the LLM as CPU-only/subprocess for image workflows. "
+                f"unload_result={unload_result}"
+            )
+        print(
+            "[TaskAgent] llama.cpp in-process loaded "
+            f"profile={runtime_spec['profile_name']} memory_after_load={post_load_memory}",
+            flush=True,
+        )
         self.inprocess_runtime_spec = dict(runtime_spec)
         self.inprocess_runtime_spec["runtime_options"] = dict(runtime_options)
         self.inprocess_runtime_info = runtime_info
@@ -3729,6 +4594,14 @@ class ManagedBackend:
                 "model_name": self.current_model_name,
                 "model_path": runtime_spec["model_path"],
                 "runtime_options": dict(runtime_options),
+                "pre_load_cleanup": pre_load_cleanup,
+                "pre_load_floor_mb": int(pre_load_floor_mb),
+                "memory_before_cleanup": pre_cleanup_memory,
+                "memory_after_cleanup": post_cleanup_memory,
+                "memory_after_load": post_load_memory,
+                "effective_n_ubatch": int(n_ubatch),
+                "min_free_vram_after_load_mb": int(min_free_after_load_mb),
+                "gpu_layer_decision": gpu_layer_decision,
             },
         }
 
@@ -3742,10 +4615,24 @@ class ManagedBackend:
             if has_image and not (self.inprocess_runtime_spec or {}).get("mmproj_path"):
                 raise RuntimeError("llama_cpp_python_inproc received image input but no mmproj_path is loaded.")
             messages = raw_messages if has_image else normalize_messages_for_text_runtime(raw_messages)
+            print(
+                "[TaskAgent] llama.cpp in-process completion start "
+                f"profile={self.current_backend_profile} model={self.current_model_name} "
+                f"messages={len(messages)} has_image={has_image} "
+                f"max_tokens={int(payload.get('max_tokens', 900))} "
+                f"temperature={float(payload.get('temperature', 0.4))} "
+                f"memory_before={get_combined_memory_snapshot()}",
+                flush=True,
+            )
             response = self.inprocess_model.create_chat_completion(
                 messages=messages,
                 temperature=float(payload.get("temperature", 0.4)),
                 max_tokens=int(payload.get("max_tokens", 900)),
+            )
+            print(
+                "[TaskAgent] llama.cpp in-process completion end "
+                f"profile={self.current_backend_profile} memory_after={get_combined_memory_snapshot()}",
+                flush=True,
             )
             return (
                 response.get("choices", [{}])[0]
@@ -3761,6 +4648,9 @@ class ManagedBackend:
     def _complete_messages(self, payload):
         if self.is_inprocess_provider:
             return self._complete_inprocess_messages(payload)
+        health_payload = http_get_json(self.health_check_url, timeout=5)
+        if not self.backend_health_is_ready(health_payload):
+            raise RuntimeError(self.backend_not_ready_reason(health_payload))
         response = http_post_json(self.openai_base_url + "/chat/completions", payload, timeout=900)
         return (
             response.get("choices", [{}])[0]
@@ -3770,6 +4660,7 @@ class ManagedBackend:
 
     def _unload_inprocess_model_locked(self):
         had_model = self.inprocess_model is not None
+        memory_before = get_combined_memory_snapshot()
         self.inprocess_model = None
         self.inprocess_runtime_spec = None
         self.inprocess_runtime_info = {}
@@ -3783,7 +4674,18 @@ class ManagedBackend:
                 torch.cuda.synchronize()
         except Exception:
             pass
-        return {"status": "stopped" if had_model else "no_inprocess_model"}
+        memory_after_gc = get_combined_memory_snapshot()
+        trim_result = trim_process_working_set()
+        memory_after_trim = get_combined_memory_snapshot()
+        result = {
+            "status": "stopped" if had_model else "no_inprocess_model",
+            "memory_before": memory_before,
+            "memory_after_gc": memory_after_gc,
+            "trim_result": trim_result,
+            "memory_after_trim": memory_after_trim,
+        }
+        print(f"[TaskAgent] unload in-process result={result}", flush=True)
+        return result
 
     def _is_managed_process_alive(self):
         if self.process is not None:
@@ -3806,7 +4708,34 @@ class ManagedBackend:
         except OSError:
             return False
 
-    def _start_windows_process(self, command, exe_parent):
+    def _new_launch_log_path(self):
+        RUNTIME_LOG_DIR.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        safe_provider = re.sub(r"[^a-zA-Z0-9_.-]+", "_", self.backend_provider)
+        safe_profile = re.sub(r"[^a-zA-Z0-9_.-]+", "_", str(self.current_backend_profile or "unknown"))
+        return RUNTIME_LOG_DIR / f"{safe_provider}_{safe_profile}_{stamp}.log"
+
+    def _launch_failure_context(self, last_error=None):
+        return {
+            "backend_provider": self.backend_provider,
+            "backend_profile": self.current_backend_profile,
+            "context_size": self.current_context_size,
+            "model_name": self.current_model_name,
+            "runtime_kcpps_path": self.runtime_kcpps_path,
+            "koboldcpp_temp_root": str(KOBOLDCPP_TEMP_ROOT),
+            "current_runtime_temp_subdir": self.current_runtime_temp_subdir,
+            "current_runtime_temp_path": (
+                str(runtime_temp_path(self.current_runtime_temp_subdir))
+                if self.current_runtime_temp_subdir
+                else None
+            ),
+            "last_launch_command": self.last_launch_command,
+            "last_launch_log_path": self.last_launch_log_path,
+            "last_error": last_error,
+            "log_tail": read_text_tail(self.last_launch_log_path, max_chars=12000),
+        }
+
+    def _start_windows_process(self, command, exe_parent, log_handle, temp_subdir):
         creationflags = 0
         for flag_name in ("CREATE_NO_WINDOW", "DETACHED_PROCESS", "CREATE_NEW_PROCESS_GROUP"):
             creationflags |= int(getattr(subprocess, flag_name, 0) or 0)
@@ -3820,40 +4749,70 @@ class ManagedBackend:
         self.process = subprocess.Popen(
             command,
             cwd=exe_parent,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=log_handle,
+            stderr=log_handle,
             stdin=subprocess.DEVNULL,
+            env=runtime_temp_env(temp_subdir),
             creationflags=creationflags,
             startupinfo=startupinfo,
         )
         self.process_pid = self.process.pid
 
-    def _start_process_locked(self, backend_profile, context_size, custom_model_path=None, custom_mmproj_path=None):
+    def _start_process_locked(self, backend_profile, context_size, custom_model_path=None, custom_mmproj_path=None, runtime_options=None):
         if self.backend_mode != "managed_process":
             return {"status": "skipped", "reason": "attach_existing"}
 
         if self._is_managed_process_alive():
-            return {"status": "already_running"}
+            current = self.status()
+            if current.get("healthy"):
+                return {"status": "already_running", "details": current}
+            stale_unload = self.unload()
+            print(
+                "[TaskAgent] managed backend process was alive but not ready; restarted "
+                f"reason={current.get('health_error')} unload={stale_unload}",
+                flush=True,
+            )
 
         command = self._build_launch_command(
             backend_profile,
             context_size,
             custom_model_path=custom_model_path,
             custom_mmproj_path=custom_mmproj_path,
+            runtime_options=runtime_options,
         )
         exe_parent = str(Path(command[0]).resolve().parent)
+        self.last_launch_command = [str(part) for part in command]
+        self.last_launch_error = None
+        parent_temp_cleanup = cleanup_runtime_temp_subdir("koboldcpp")
+        launch_temp_subdir = make_runtime_temp_subdir("koboldcpp")
+        self.current_runtime_temp_subdir = launch_temp_subdir
+        log_path = self._new_launch_log_path()
+        self.last_launch_log_path = str(log_path)
         self.process = None
         self.process_pid = None
-        if os.name == "nt":
-            self._start_windows_process(command, exe_parent)
-        else:
-            self.process = subprocess.Popen(
-                command,
-                cwd=exe_parent,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+        with open(log_path, "ab", buffering=0) as log_handle:
+            header = (
+                f"\n\n[TaskAgent] launching {self.backend_provider} at {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                f"cwd={exe_parent}\n"
+                f"command={self.last_launch_command}\n"
+                f"runtime_kcpps_path={self.runtime_kcpps_path}\n"
+                f"backend_profile={self.current_backend_profile}\n"
+                f"context_size={self.current_context_size}\n"
+                f"runtime_temp_dir={runtime_temp_path(launch_temp_subdir)}\n"
+                f"parent_temp_cleanup={parent_temp_cleanup}\n\n"
             )
-            self.process_pid = self.process.pid
+            log_handle.write(header.encode("utf-8", errors="replace"))
+            if os.name == "nt":
+                self._start_windows_process(command, exe_parent, log_handle, launch_temp_subdir)
+            else:
+                self.process = subprocess.Popen(
+                    command,
+                    cwd=exe_parent,
+                    stdout=log_handle,
+                    stderr=log_handle,
+                    env=runtime_temp_env(launch_temp_subdir),
+                )
+                self.process_pid = self.process.pid
 
         timeout_sec = int(self.config["backend"].get("startup_timeout_sec", 180))
         deadline = time.time() + timeout_sec
@@ -3861,24 +4820,34 @@ class ManagedBackend:
         last_error = None
         while time.time() < deadline:
             try:
-                http_get_json(self.health_check_url, timeout=3)
-                return {
-                    "status": "started",
-                    "backend_profile": self.current_backend_profile,
-                    "context_size": self.current_context_size,
-                    "runtime_kcpps_path": self.runtime_kcpps_path,
-                }
+                health_payload = http_get_json(self.health_check_url, timeout=3)
+                if self.backend_health_is_ready(health_payload):
+                    return {
+                        "status": "started",
+                        "backend_profile": self.current_backend_profile,
+                        "context_size": self.current_context_size,
+                        "runtime_kcpps_path": self.runtime_kcpps_path,
+                        "health_payload": health_payload,
+                    }
+                last_error = self.backend_not_ready_reason(health_payload)
             except Exception as error:
                 last_error = str(error)
                 if not self._is_managed_process_alive() and time.time() >= grace_deadline:
                     return_code = self.process.returncode if self.process is not None else "unknown"
+                    failure_context = self._launch_failure_context(last_error=last_error)
+                    self.last_launch_error = failure_context
                     raise RuntimeError(
                         f"{self.backend_provider} failed to become healthy and launcher process is gone. "
-                        f"code={return_code}, last_error={last_error}"
+                        f"code={return_code}, last_error={last_error}, details={failure_context}"
                     )
                 time.sleep(2)
 
-        raise TimeoutError(f"Timed out waiting for {self.backend_provider} to become healthy. Last error: {last_error}")
+        failure_context = self._launch_failure_context(last_error=last_error)
+        self.last_launch_error = failure_context
+        raise TimeoutError(
+            f"Timed out waiting for {self.backend_provider} to become healthy. "
+            f"Last error: {last_error}, details={failure_context}"
+        )
 
     def ensure_loaded(self, backend_profile=None, context_size=None, custom_model_path=None, custom_mmproj_path=None, runtime_options=None):
         with self.lock:
@@ -3913,6 +4882,7 @@ class ManagedBackend:
                     target_context,
                     custom_model_path=custom_model_path,
                     custom_mmproj_path=custom_mmproj_path,
+                    runtime_options=runtime_options,
                 ),
             }
 
@@ -3920,12 +4890,43 @@ class ManagedBackend:
         with self.lock:
             if self.is_inprocess_provider:
                 return self._unload_inprocess_model_locked()
+            stopped_pids = []
             if self.process is None and self.process_pid is None:
-                return {"status": "no_managed_process"}
+                port = parse_port_from_url(self.base_url, 5001)
+                for pid in find_windows_pids_on_tcp_port(port):
+                    subprocess.run(
+                        ["taskkill", "/PID", str(pid), "/T", "/F"],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        check=False,
+                    )
+                    stopped_pids.append(pid)
+                temp_cleanup = cleanup_runtime_temp_report(self.current_runtime_temp_subdir)
+                self.current_runtime_temp_subdir = None
+                return {
+                    "status": "no_managed_process",
+                    "stopped_port_pids": stopped_pids,
+                    "temp_cleanup": temp_cleanup,
+                }
             if not self._is_managed_process_alive():
                 self.process = None
                 self.process_pid = None
-                return {"status": "already_stopped"}
+                port = parse_port_from_url(self.base_url, 5001)
+                for pid in find_windows_pids_on_tcp_port(port):
+                    subprocess.run(
+                        ["taskkill", "/PID", str(pid), "/T", "/F"],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        check=False,
+                    )
+                    stopped_pids.append(pid)
+                temp_cleanup = cleanup_runtime_temp_report(self.current_runtime_temp_subdir)
+                self.current_runtime_temp_subdir = None
+                return {
+                    "status": "already_stopped",
+                    "stopped_port_pids": stopped_pids,
+                    "temp_cleanup": temp_cleanup,
+                }
             pid = self.process_pid or self.process.pid
             if os.name == "nt":
                 subprocess.run(
@@ -3939,6 +4940,17 @@ class ManagedBackend:
                     if not self._is_managed_process_alive():
                         break
                     time.sleep(0.5)
+                port = parse_port_from_url(self.base_url, 5001)
+                for residual_pid in find_windows_pids_on_tcp_port(port):
+                    if residual_pid == pid:
+                        continue
+                    subprocess.run(
+                        ["taskkill", "/PID", str(residual_pid), "/T", "/F"],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        check=False,
+                    )
+                    stopped_pids.append(residual_pid)
             else:
                 self.process.terminate()
                 try:
@@ -3949,6 +4961,8 @@ class ManagedBackend:
 
             self.process = None
             self.process_pid = None
+            temp_cleanup = cleanup_runtime_temp_report(self.current_runtime_temp_subdir)
+            self.current_runtime_temp_subdir = None
 
             deadline = time.time() + 15
             last_error = None
@@ -3958,9 +4972,21 @@ class ManagedBackend:
                     time.sleep(0.5)
                 except Exception as error:
                     last_error = str(error)
-                    return {"status": "stopped", "health_after_unload": "offline", "health_error": last_error}
+                    return {
+                        "status": "stopped",
+                        "health_after_unload": "offline",
+                        "health_error": last_error,
+                        "stopped_port_pids": stopped_pids,
+                        "temp_cleanup": temp_cleanup,
+                    }
 
-            return {"status": "stopped", "health_after_unload": "still_responding", "health_error": last_error}
+            return {
+                "status": "stopped",
+                "health_after_unload": "still_responding",
+                "health_error": last_error,
+                "stopped_port_pids": stopped_pids,
+                "temp_cleanup": temp_cleanup,
+            }
 
     def run_task(
         self,

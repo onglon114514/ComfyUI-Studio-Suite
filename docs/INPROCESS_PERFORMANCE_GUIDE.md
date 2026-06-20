@@ -24,7 +24,8 @@ Measured on the current local machine:
 
 Main conclusion:
 
-- For repeated text tasks, `unload_after_run = false` is the most important speed improvement.
+- For repeated text-only tasks, `unload_after_run = false` is the most important speed improvement.
+- For workflows where the LLM prompt output immediately feeds a sampler or another high-VRAM image model, use `unload_after_run = true`.
 - Small GPU offload helps, but the improvement is smaller than avoiding reload cost.
 
 ## Node parameters
@@ -49,8 +50,8 @@ Recommended starting point:
 - `context_size = 1024` or `2048` for short tag tasks
 - `llama_cpp_python_n_gpu_layers = 10`
 - `llama_cpp_python_n_batch = 512`
-- `unload_after_run = false` for repeated batches
-- `unload_after_run = true` only when ComfyUI needs VRAM back for image generation immediately
+- `unload_after_run = false` for repeated text/caption batches
+- `unload_after_run = true` when ComfyUI needs VRAM back for image generation immediately, especially if the prompt output goes straight into a sampler
 
 ## Benchmark script
 

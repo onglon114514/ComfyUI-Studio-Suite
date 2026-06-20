@@ -16,6 +16,8 @@ This repository is intended for early testing and integration. The core workflow
 - Local GGUF execution through `llama_cpp_python_inproc`
 - Optional backend adapters for KoboldCpp, llama.cpp server, LM Studio, vLLM, and OpenAI-compatible APIs
 - Folder-based queue helpers for image/text batch workflows
+- XY matrix testing for LoRA files, LoRA strength, sampler/scheduler, FreeU, and generic node inputs
+- Prompt Studio editor with bundled autocomplete / group-tag storage
 - Fill / crop / resize image helper nodes
 
 ## Recommended Current Setup
@@ -23,8 +25,9 @@ This repository is intended for early testing and integration. The core workflow
 The most tested path in this preview is:
 
 - Text tasks: `Gemma 4 E4B GGUF Q4`
-- Vision tasks: `Gemma 4 E4B Vision GGUF` plus matching `mmproj`
 - Backend provider: `llama_cpp_python_inproc`
+- Low-VRAM training caption baseline: WD14 original tags + Gemma 4 E4B Q4 text-only natural-language captioning
+- Optional vision tasks: `Gemma 4 E4B Vision GGUF` plus matching `mmproj`
 
 Qwen-based paths may work, but the Gemma 4 E4B route is currently the safest recommendation.
 
@@ -73,19 +76,41 @@ This workflow is the recommended first-run validation for:
 - local text LLM execution
 - NoobAI-oriented prompt formatting
 
-### 2. First vision caption test
+### 2. Stable low-VRAM tagging baseline
 
 Use:
 
 - `examples/workflows/tagging_wd14_llm_anima_train_preview.json`
 
-This workflow combines:
+Recommended conservative setup:
 
-- image queue input
-- WD14 base tags
+- WD14 produces the original tag line.
+- Task Agent keeps the WD14 tag line unchanged.
+- `Gemma 4 E4B Q4` adds only the natural-language caption line.
+- Use `llama_cpp_python_inproc`, context `4096`, GPU layers `0`, batch `128`.
+- Keep the LLM loaded during a queue batch, then unload with the cleanup node at the end.
+
+Expected training text:
+
+```text
+wd14, original, tags, kept, as, first, line
+
+Natural-language caption generated from the WD14 tags.
+```
+
+See:
+
+- `docs/TAGGING_STABLE_BASELINE.md`
+
+### 3. Optional vision caption test
+
+The same workflow can be extended with:
+
 - image-path bridging
 - vision-capable local LLM refinement
 - Anima-style training caption formatting
+
+This requires a vision-capable GGUF and matching `mmproj`, and is not the low-VRAM baseline.
 
 ## Example Workflows
 
@@ -95,13 +120,32 @@ This workflow combines:
   - text-only
 
 - `examples/workflows/tagging_wd14_llm_anima_train_preview.json`
-  - WD14 tags + local vision LLM caption refinement
+  - WD14 tags + local LLM natural-language caption assistance
   - intended for training-caption workflows
-  - requires a vision-capable GGUF and `mmproj`
+  - low-VRAM baseline uses text-only Gemma 4 E4B Q4; vision refinement is optional
 
 Detailed notes are in:
 
 - `examples/workflows/README.md`
+
+## XY / LoRA Testing
+
+The current development line includes a generic XY matrix system:
+
+- `Studio Suite XY Axis - LoRA File`
+- `Studio Suite XY Axis - LoRA Strength`
+- `Studio Suite XY Axis - Sampler/Scheduler`
+- `Studio Suite XY Axis - FreeU`
+- `Studio Suite XY Axis - Generic`
+- `Studio Suite XY Matrix`
+- `Studio Suite XY Queue`
+- `Studio Suite XY Grid Builder`
+
+For LoRA checkpoint comparison, place a target bridge after the LoRA loader and connect `target_ref` to the LoRA axis nodes. The queue submits one independent child prompt per cell, then the grid builder can create a contact sheet after the child images finish.
+
+See:
+
+- `docs/xy_matrix_nodes.zh-CN.md`
 
 ## Resource Policy
 
@@ -201,6 +245,8 @@ Supported execution directions:
   - tested preview workflows
 - `resources/`
   - bundled lightweight resources and optional large-resource slots
+- `prompt_studio/storage/`
+  - bundled Prompt Studio autocomplete, group tags, local complete tags, and prompt data
 - `docs/`
   - setup, backend, migration, and release notes
 - `scripts/`
@@ -218,6 +264,14 @@ The main remaining friction points are:
 - model-path setup still requires manual editing
 - large optional resources are intentionally not bundled
 - some Prompt Studio and extended workflows are still under active refinement
+- Task Agent has a tested low-VRAM text-only tagging baseline, but long unattended production batches still need more testing
+- managed KoboldCpp auto-launch is optional and not the default recommendation yet
+- LoRA stack testing and LoRA block/layer weight testing are not implemented yet
+
+See:
+
+- `CHANGELOG.md`
+- `docs/NEXT_RELEASE_TODO.md`
 
 ## Attribution
 

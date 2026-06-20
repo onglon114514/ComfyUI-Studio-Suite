@@ -1,0 +1,454 @@
+{
+    "sectionCount": 3,
+    "sections": [
+        {
+            "id": "section_1",
+            "label": "\u5168\u5c40\u7c7b\u533a",
+            "tag": "general_tags",
+            "kind": "container",
+            "rule": "tag",
+            "text": "",
+            "touched": false,
+            "fields": [
+                {
+                    "id": "field_1",
+                    "label": "\u6570\u91cf",
+                    "tag": "count",
+                    "value": "1girl",
+                    "touched": true
+                },
+                {
+                    "id": "field_2",
+                    "label": "\u753b\u98ce",
+                    "tag": "style",
+                    "value": "akakura",
+                    "touched": true
+                },
+                {
+                    "id": "field_3",
+                    "label": "\u80cc\u666f",
+                    "tag": "background",
+                    "value": "",
+                    "touched": false
+                },
+                {
+                    "id": "field_4",
+                    "label": "\u5149\u5f71",
+                    "tag": "lighting",
+                    "value": "",
+                    "touched": false
+                },
+                {
+                    "id": "field_5",
+                    "label": "\u753b\u9762\u60c5\u7eea\u3001\u6c1b\u56f4",
+                    "tag": "atmosphere",
+                    "value": "",
+                    "touched": false
+                },
+                {
+                    "id": "field_6",
+                    "label": "\u8d28\u91cf",
+                    "tag": "quality",
+                    "value": "",
+                    "touched": false
+                },
+                {
+                    "id": "field_7",
+                    "label": "\u5404\u79cd\u7269\u54c1\uff08\u5305\u62ec\u6b66\u5668\u3001\u9970\u54c1\u7b49\u7b49\uff09",
+                    "tag": "objects",
+                    "value": "",
+                    "touched": false
+                },
+                {
+                    "id": "field_8",
+                    "label": "\u5176\u4ed6\uff08\u672a\u5305\u542b\u7684\u4efb\u4f55\u7c7b\u578b\uff09",
+                    "tag": "other",
+                    "value": "",
+                    "touched": false
+                }
+            ]
+        },
+        {
+            "id": "section_3",
+            "label": "\u89d2\u82721",
+            "tag": "character_1",
+            "kind": "container",
+            "rule": "tag",
+            "text": "",
+            "touched": false,
+            "fields": [
+                {
+                    "id": "field_9",
+                    "label": "\u89d2\u8272",
+                    "tag": "n",
+                    "value": "beanstalk_\\(arknights\\)",
+                    "touched": true
+                },
+                {
+                    "id": "field_10",
+                    "label": "\u89d2\u8272\u522b\u540d",
+                    "tag": "name",
+                    "value": "",
+                    "touched": false
+                },
+                {
+                    "id": "field_11",
+                    "label": "\u6027\u522b/\u4eba\u6570\u6807\u7b7e",
+                    "tag": "gender",
+                    "value": "",
+                    "touched": false
+                },
+                {
+                    "id": "field_12",
+                    "label": "\u5916\u89c2\u7279\u5f81",
+                    "tag": "appearance",
+                    "value": "",
+                    "touched": false
+                },
+                {
+                    "id": "field_13",
+                    "label": "\u670d\u88c5",
+                    "tag": "clothing",
+                    "value": "",
+                    "touched": false
+                },
+                {
+                    "id": "field_14",
+                    "label": "\u8868\u60c5",
+                    "tag": "expression",
+                    "value": "",
+                    "touched": false
+                },
+                {
+                    "id": "field_15",
+                    "label": "\u52a8\u4f5c\u3001\u59ff\u52bf",
+                    "tag": "action",
+                    "value": "on_stomach",
+                    "touched": true
+                },
+                {
+                    "id": "field_16",
+                    "label": "\u89d2\u8272\u4f4d\u7f6e",
+                    "tag": "position",
+                    "value": "",
+                    "touched": false
+                }
+            ]
+        },
+        {
+            "id": "section_2",
+            "label": "\u81ea\u7136\u8bed\u8a00\u63cf\u8ff0",
+            "tag": "caption",
+            "kind": "text",
+            "rule": "natural",
+            "text": "d,p,osd,a,",
+            "touched": true,
+            "fields": []
+        }
+    ],
+    "archives": [
+        {
+            "id": "archive_1777351998118_69368",
+            "name": "\u9ed8\u8ba4\u5b58\u6863",
+            "locked": true,
+            "sections": [
+                {
+                    "id": "section_1",
+                    "label": "\u5168\u5c40\u7c7b\u533a",
+                    "tag": "general_tags",
+                    "kind": "container",
+                    "rule": "tag",
+                    "text": "",
+                    "touched": false,
+                    "fields": [
+                        {
+                            "id": "field_1",
+                            "label": "\u6570\u91cf",
+                            "tag": "count",
+                            "value": "",
+                            "touched": false
+                        },
+                        {
+                            "id": "field_2",
+                            "label": "\u753b\u98ce",
+                            "tag": "style",
+                            "value": "",
+                            "touched": false
+                        },
+                        {
+                            "id": "field_3",
+                            "label": "\u80cc\u666f",
+                            "tag": "background",
+                            "value": "",
+                            "touched": false
+                        },
+                        {
+                            "id": "field_4",
+                            "label": "\u5149\u5f71",
+                            "tag": "lighting",
+                            "value": "",
+                            "touched": false
+                        },
+                        {
+                            "id": "field_5",
+                            "label": "\u753b\u9762\u60c5\u7eea\u3001\u6c1b\u56f4",
+                            "tag": "atmosphere",
+                            "value": "",
+                            "touched": false
+                        },
+                        {
+                            "id": "field_6",
+                            "label": "\u8d28\u91cf",
+                            "tag": "quality",
+                            "value": "",
+                            "touched": false
+                        },
+                        {
+                            "id": "field_7",
+                            "label": "\u5404\u79cd\u7269\u54c1\uff08\u5305\u62ec\u6b66\u5668\u3001\u9970\u54c1\u7b49\u7b49\uff09",
+                            "tag": "objects",
+                            "value": "",
+                            "touched": false
+                        },
+                        {
+                            "id": "field_8",
+                            "label": "\u5176\u4ed6\uff08\u672a\u5305\u542b\u7684\u4efb\u4f55\u7c7b\u578b\uff09",
+                            "tag": "other",
+                            "value": "",
+                            "touched": false
+                        }
+                    ]
+                },
+                {
+                    "id": "section_2",
+                    "label": "\u81ea\u7136\u8bed\u8a00\u63cf\u8ff0",
+                    "tag": "caption",
+                    "kind": "text",
+                    "rule": "natural",
+                    "text": "",
+                    "touched": false,
+                    "fields": []
+                },
+                {
+                    "id": "section_3",
+                    "label": "\u89d2\u82721",
+                    "tag": "character_1",
+                    "kind": "container",
+                    "rule": "tag",
+                    "text": "",
+                    "touched": false,
+                    "fields": [
+                        {
+                            "id": "field_9",
+                            "label": "\u89d2\u8272",
+                            "tag": "n",
+                            "value": "",
+                            "touched": false
+                        },
+                        {
+                            "id": "field_10",
+                            "label": "\u89d2\u8272\u522b\u540d",
+                            "tag": "name",
+                            "value": "",
+                            "touched": false
+                        },
+                        {
+                            "id": "field_11",
+                            "label": "\u6027\u522b/\u4eba\u6570\u6807\u7b7e",
+                            "tag": "gender",
+                            "value": "",
+                            "touched": false
+                        },
+                        {
+                            "id": "field_12",
+                            "label": "\u5916\u89c2\u7279\u5f81",
+                            "tag": "appearance",
+                            "value": "",
+                            "touched": false
+                        },
+                        {
+                            "id": "field_13",
+                            "label": "\u670d\u88c5",
+                            "tag": "clothing",
+                            "value": "",
+                            "touched": false
+                        },
+                        {
+                            "id": "field_14",
+                            "label": "\u8868\u60c5",
+                            "tag": "expression",
+                            "value": "",
+                            "touched": false
+                        },
+                        {
+                            "id": "field_15",
+                            "label": "\u52a8\u4f5c\u3001\u59ff\u52bf",
+                            "tag": "action",
+                            "value": "",
+                            "touched": false
+                        },
+                        {
+                            "id": "field_16",
+                            "label": "\u89d2\u8272\u4f4d\u7f6e",
+                            "tag": "position",
+                            "value": "",
+                            "touched": false
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "id": "archive_1780845600449_55482",
+            "name": "\u6a21\u677f\u5b58\u6863 2",
+            "locked": false,
+            "sections": [
+                {
+                    "id": "section_1",
+                    "label": "\u5168\u5c40\u7c7b\u533a",
+                    "tag": "general_tags",
+                    "kind": "container",
+                    "rule": "tag",
+                    "text": "",
+                    "touched": false,
+                    "fields": [
+                        {
+                            "id": "field_1",
+                            "label": "\u6570\u91cf",
+                            "tag": "count",
+                            "value": "",
+                            "touched": false
+                        },
+                        {
+                            "id": "field_2",
+                            "label": "\u753b\u98ce",
+                            "tag": "style",
+                            "value": "",
+                            "touched": false
+                        },
+                        {
+                            "id": "field_3",
+                            "label": "\u80cc\u666f",
+                            "tag": "background",
+                            "value": "",
+                            "touched": false
+                        },
+                        {
+                            "id": "field_4",
+                            "label": "\u5149\u5f71",
+                            "tag": "lighting",
+                            "value": "",
+                            "touched": false
+                        },
+                        {
+                            "id": "field_5",
+                            "label": "\u753b\u9762\u60c5\u7eea\u3001\u6c1b\u56f4",
+                            "tag": "atmosphere",
+                            "value": "",
+                            "touched": false
+                        },
+                        {
+                            "id": "field_6",
+                            "label": "\u8d28\u91cf",
+                            "tag": "quality",
+                            "value": "",
+                            "touched": false
+                        },
+                        {
+                            "id": "field_7",
+                            "label": "\u5404\u79cd\u7269\u54c1\uff08\u5305\u62ec\u6b66\u5668\u3001\u9970\u54c1\u7b49\u7b49\uff09",
+                            "tag": "objects",
+                            "value": "",
+                            "touched": false
+                        },
+                        {
+                            "id": "field_8",
+                            "label": "\u5176\u4ed6\uff08\u672a\u5305\u542b\u7684\u4efb\u4f55\u7c7b\u578b\uff09",
+                            "tag": "other",
+                            "value": "",
+                            "touched": false
+                        }
+                    ]
+                },
+                {
+                    "id": "section_2",
+                    "label": "\u81ea\u7136\u8bed\u8a00\u63cf\u8ff0",
+                    "tag": "caption",
+                    "kind": "text",
+                    "rule": "natural",
+                    "text": "",
+                    "touched": false,
+                    "fields": []
+                },
+                {
+                    "id": "section_3",
+                    "label": "\u89d2\u82721",
+                    "tag": "character_1",
+                    "kind": "container",
+                    "rule": "tag",
+                    "text": "",
+                    "touched": false,
+                    "fields": [
+                        {
+                            "id": "field_9",
+                            "label": "\u89d2\u8272",
+                            "tag": "n",
+                            "value": "",
+                            "touched": false
+                        },
+                        {
+                            "id": "field_10",
+                            "label": "\u89d2\u8272\u522b\u540d",
+                            "tag": "name",
+                            "value": "",
+                            "touched": false
+                        },
+                        {
+                            "id": "field_11",
+                            "label": "\u6027\u522b/\u4eba\u6570\u6807\u7b7e",
+                            "tag": "gender",
+                            "value": "",
+                            "touched": false
+                        },
+                        {
+                            "id": "field_12",
+                            "label": "\u5916\u89c2\u7279\u5f81",
+                            "tag": "appearance",
+                            "value": "",
+                            "touched": false
+                        },
+                        {
+                            "id": "field_13",
+                            "label": "\u670d\u88c5",
+                            "tag": "clothing",
+                            "value": "",
+                            "touched": false
+                        },
+                        {
+                            "id": "field_14",
+                            "label": "\u8868\u60c5",
+                            "tag": "expression",
+                            "value": "",
+                            "touched": false
+                        },
+                        {
+                            "id": "field_15",
+                            "label": "\u52a8\u4f5c\u3001\u59ff\u52bf",
+                            "tag": "action",
+                            "value": "",
+                            "touched": false
+                        },
+                        {
+                            "id": "field_16",
+                            "label": "\u89d2\u8272\u4f4d\u7f6e",
+                            "tag": "position",
+                            "value": "",
+                            "touched": false
+                        }
+                    ]
+                }
+            ]
+        }
+    ],
+    "selectedArchiveId": "archive_1777351998118_69368"
+}

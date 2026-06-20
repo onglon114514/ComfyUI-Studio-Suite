@@ -21,6 +21,7 @@
     "llama_cpp_python_n_gpu_layers": 0,
     "llama_cpp_python_threads": "",
     "llama_cpp_python_n_batch": 512,
+    "llama_cpp_python_max_safe_gpu_layers": 8,
     "llama_cpp_python_chat_format": "",
     "llama_cpp_python_verbose": false,
     "llama_cpp_python_prefer_private": true

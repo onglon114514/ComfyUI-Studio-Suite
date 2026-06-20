@@ -564,7 +564,7 @@
         512,
         0,
         true,
-        false,
+        true,
         "WD14 tags will be connected here."
       ]
     },

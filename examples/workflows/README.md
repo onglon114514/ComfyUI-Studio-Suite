@@ -30,7 +30,9 @@
 - `context_size = 4096`
 - `llama_cpp_python_n_gpu_layers = 10`
 - `llama_cpp_python_n_batch = 512`
-- `unload_after_run = false`
+- `unload_after_run = true`
+
+如果这个输出会直接接到采样器或显存重的绘图节点，必须保持 `unload_after_run = true`。只有纯文本批量处理、不立刻生图时，才建议临时改成 `false` 提速。
 
 ## tagging_wd14_llm_anima_train_preview.json
 
@@ -67,7 +69,9 @@
 - `context_size = 4096`
 - `llama_cpp_python_n_gpu_layers = 10`
 - `llama_cpp_python_n_batch = 512`
-- `unload_after_run = false`
+- `unload_after_run = true`
+
+批量打标时如果不接采样器，可以把 `unload_after_run` 改成 `false` 换速度；如果同一工作流后面还有采样或大模型加载，保持 `true`，否则 26B Q4 这类 LLM 很容易占住显存导致采样爆显存。
 
 ## 分发注意事项
 

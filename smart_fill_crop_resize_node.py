@@ -42,9 +42,9 @@ DISPLAY_NAME = (
 )
 
 CATEGORY_NAME = (
-    "图像/Image Toolbox"
+    "Studio Suite/图像预处理"
     if LOCALE == "zh"
-    else "image/Image Toolbox"
+    else "Studio Suite/Image Prep"
 )
 
 

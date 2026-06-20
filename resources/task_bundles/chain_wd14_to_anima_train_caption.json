@@ -1,9 +1,6 @@
 {
   "task_modules": [
     {
-      "type": "refine_wd14_tags"
-    },
-    {
       "type": "generate_natural_caption"
     }
   ],
@@ -11,8 +8,8 @@
     "type": "anima_train_v1"
   },
   "task_defaults": {
-    "style_hint": "training caption, keep reliable wd14 tags, add concise natural-language description line",
-    "purpose": "保留 WD14 可用标签，只让 LLM 做补充、校正和自然语言训练描述。输出不要加入绘图质量词。"
+    "style_hint": "training caption, preserve WD14 tags exactly, add one concise natural-language description paragraph",
+    "purpose": "训练打标基线：第一段完全保留 WD14 原始标签；LLM 只依据 WD14 写第二段自然语言描述，不重写 tag，不添加质量词。"
   },
   "fixed_inputs": {
     "caption_mode": "training_tag_plus_nl"

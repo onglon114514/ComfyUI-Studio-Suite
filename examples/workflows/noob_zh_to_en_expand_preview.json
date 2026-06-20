@@ -577,7 +577,7 @@
         512,
         0,
         true,
-        false,
+        true,
         "这里可直接输入中文描述；当前示例已连接左侧 Prompt Studio 文本输出。"
       ]
     }

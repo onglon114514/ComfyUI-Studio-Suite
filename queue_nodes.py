@@ -10,9 +10,21 @@ import torch
 from PIL import Image, ImageOps
 from PIL.PngImagePlugin import PngInfo
 
+import utils.install_util  # Ensure ComfyUI's top-level utils package wins before server imports comfy.utils.
 import folder_paths
-import nodes as comfy_nodes
 from server import PromptServer
+import nodes as comfy_nodes
+
+try:
+    from .cleanup_utils import cleanup_comfy_resources
+except Exception:
+    import importlib.util
+
+    cleanup_path = Path(__file__).resolve().parent / "cleanup_utils.py"
+    cleanup_spec = importlib.util.spec_from_file_location("studio_suite_cleanup_utils", str(cleanup_path))
+    cleanup_module = importlib.util.module_from_spec(cleanup_spec)
+    cleanup_spec.loader.exec_module(cleanup_module)
+    cleanup_comfy_resources = cleanup_module.cleanup_comfy_resources
 
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}
@@ -615,7 +627,7 @@ def _save_tensor_images(
 
 
 class IndependentLoadImagePath:
-    CATEGORY = "Independent Prompt"
+    CATEGORY = "Studio Suite/Queue"
     RETURN_TYPES = ("IMAGE", "MASK", "STRING", "STRING", "STRING", "STRING", "STRING")
     RETURN_NAMES = ("image", "mask", "image_path", "image_stem", "paired_text", "text_path", "text_stem")
     FUNCTION = "load_image"
@@ -674,7 +686,7 @@ class IndependentLoadImagePath:
 
 
 class IndependentResultWriterProxy:
-    CATEGORY = "Independent Prompt"
+    CATEGORY = "Studio Suite/Queue"
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("status",)
     FUNCTION = "proxy"
@@ -801,6 +813,13 @@ class IndependentResultWriterProxy:
                         "tooltip": "counter_suffix keeps the numeric suffix behavior. exact_name uses the base name directly and only adds suffixes on conflict. exact_name_overwrite uses the exact name and overwrites existing files.",
                     },
                 ),
+                "cleanup_after_save": (
+                    "BOOLEAN",
+                    {
+                        "default": True,
+                        "tooltip": "Queue stability option. After saving the child result, unload Comfy models and clear CUDA/RAM caches before the next queued job.",
+                    },
+                ),
             },
             "optional": {
                 "source_image_path": (
@@ -855,6 +874,7 @@ class IndependentResultWriterProxy:
         png_compress,
         lossless_webp,
         naming_mode="counter_suffix",
+        cleanup_after_save=True,
         source_image_path="",
         source_image_stem="",
         source_text_path="",
@@ -891,7 +911,7 @@ class IndependentResultWriterProxy:
 
 
 class IndependentResultWriter:
-    CATEGORY = "Independent Prompt"
+    CATEGORY = "Studio Suite/Queue"
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("saved",)
     FUNCTION = "save"
@@ -924,6 +944,7 @@ class IndependentResultWriter:
         png_compress,
         lossless_webp,
         naming_mode="counter_suffix",
+        cleanup_after_save=True,
         source_image_path="",
         source_image_stem="",
         source_text_path="",
@@ -981,14 +1002,26 @@ class IndependentResultWriter:
             prompt=prompt,
             extra_pnginfo=extra_pnginfo,
         )
+        cleanup_result = None
+        if bool(cleanup_after_save):
+            cleanup_result = cleanup_comfy_resources(
+                unload_models=True,
+                clear_torch_cache=True,
+                trim_working_set=True,
+            )
+            print(f"[IndependentResultWriter] cleanup_after_save={json.dumps(cleanup_result, ensure_ascii=False)}", flush=True)
+        saved_json = {
+            "files": files,
+            "cleanup_after_save": cleanup_result,
+        }
         return {
             "ui": {"images": ui_images},
-            "result": (json.dumps(files, ensure_ascii=False),),
+            "result": (json.dumps(saved_json, ensure_ascii=False),),
         }
 
 
 class IndependentPromptFolderQueue:
-    CATEGORY = "Independent Prompt"
+    CATEGORY = "Studio Suite/Queue"
     RETURN_TYPES = ("STRING", "INT")
     RETURN_NAMES = ("summary", "queued_jobs")
     FUNCTION = "queue_jobs"
@@ -1220,6 +1253,7 @@ class IndependentPromptFolderQueue:
             writer_inputs.setdefault("source_image_stem", image_path.stem)
             writer_inputs.setdefault("source_text_path", text_path_str)
             writer_inputs.setdefault("source_text_stem", text_stem)
+            writer_inputs.setdefault("cleanup_after_save", True)
 
             if scheduler_id in child_prompt and "inputs" in child_prompt[scheduler_id]:
                 child_prompt[scheduler_id]["inputs"]["enabled"] = False
