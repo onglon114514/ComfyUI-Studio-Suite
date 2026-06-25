@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import folder_paths
@@ -41,11 +42,18 @@ def _find_model_path(model_type, model_name):
         return None
 
     if model_type in {"loras", "embeddings"}:
-        lowered = model_name.lower()
+        lowered = model_name.replace("/", "\\").lower()
         for filename in folder_paths.get_filename_list(model_type):
             full_path = folder_paths.get_full_path(model_type, filename)
-            stem = Path(filename).stem.lower()
-            if filename.lower() == lowered or stem == lowered:
+            filename_norm = str(filename).replace("/", "\\")
+            stem_norm = os.path.splitext(filename_norm)[0]
+            basename_stem = Path(filename_norm).stem
+            candidates = {
+                filename_norm.lower(),
+                stem_norm.lower(),
+                basename_stem.lower(),
+            }
+            if lowered in candidates:
                 return Path(full_path)
         return None
 

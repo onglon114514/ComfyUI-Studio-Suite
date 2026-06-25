@@ -1,0 +1,1286 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <title>WeiLin Prompt All In One</title>
+    <link rel="stylesheet" href="./css/main.min.css">
+    <link rel="stylesheet" href="./css/autocomplete.css">
+    <link rel="stylesheet" href="./css/newbieXmlWizard.css">
+    <link rel="stylesheet" href="./styles/dialog_model_info.css">
+    <link rel="stylesheet" href="./css/modelInfoDialog.css">
+    <link rel="stylesheet" href="./styles/color_style.css">
+    <link rel="stylesheet" href="./styles/json_index.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            /* ── Gray-toned palette for readability ── */
+            --bg-color: #1e1e22;
+            --card-bg: #2a2a30;
+            --card-border: #3e3e46;
+            --text-main: #f0f0f0;
+            --text-secondary: #d0d0d4;
+            --text-muted: #9e9ea6;
+            --accent-color: #e8a630;
+            --accent-hover: #f0b840;
+            --accent-glow: rgba(232, 166, 48, 0.15);
+            --btn-bg: #333338;
+            --btn-hover: #44444c;
+            --danger: #e05555;
+            --success: #45bf8a;
+            --font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }
+
+        /* ── Global ── */
+        body {
+            background-color: var(--bg-color) !important;
+            color: var(--text-main) !important;
+            font-family: var(--font-family) !important;
+            font-size: 14px !important;
+            letter-spacing: 0.01em;
+            margin: 0;
+            padding: 15px;
+            scroll-behavior: smooth;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+
+        /* Force all text to be light on dark */
+        *, *::before, *::after {
+            color: inherit;
+        }
+
+        /* ── Top Bar ── */
+        .topBar {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 12px;
+            padding: 16px 20px;
+            margin-bottom: 24px;
+            box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
+            display: flex;
+            flex-direction: column;
+            transition: all 0.3s ease;
+        }
+        .topBar .topBox {
+            padding: 0;
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+
+        /* ── Buttons ── */
+        .closeBtn, .refreshBtn, .fullBtn, .nomBtn, .copyBtn, .windowBtn {
+            background: var(--btn-bg) !important;
+            border: 1px solid var(--card-border) !important;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-main) !important;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+        }
+        .closeBtn:hover, .refreshBtn:hover, .fullBtn:hover, .nomBtn:hover, .copyBtn:hover, .windowBtn:hover {
+            background: var(--btn-hover) !important;
+            border-color: var(--text-muted) !important;
+            transform: translateY(-1px);
+            box-shadow: 0 3px 10px rgba(0, 0, 0, 0.25);
+        }
+
+        /* Specific Button Colors */
+        .closeBtn { color: var(--danger) !important; }
+        .closeBtn:hover { border-color: var(--danger) !important; background: rgba(224, 85, 85, 0.12) !important; }
+
+        .refreshBtn { color: var(--success) !important; margin-left: auto; }
+        .refreshBtn:hover { border-color: var(--success) !important; background: rgba(69, 191, 138, 0.12) !important; }
+
+        .copyBtn { color: var(--accent-color) !important; margin-left: 10px; }
+        .copyBtn:hover { border-color: var(--accent-color) !important; background: var(--accent-glow) !important; }
+
+        .windowBtn { margin-right: 10px !important; }
+
+        .leftBox, .rightBox {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .copyPrompt {
+            display: none;
+            align-items: center;
+        }
+
+        /* ── Icons ── */
+        .closeIcon, .refreshIcon, .fullIcon, .nomIcon, .copyIcon, .windowIcon {
+            width: 16px;
+            height: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        svg { fill: currentColor !important; }
+        .icon-svg { width: 100%; height: 100%; }
+
+        /* ── Notes & Editing Info ── */
+        #notePromptBox, #yourIsEditing {
+            display: none !important;
+            color: var(--accent-color) !important;
+            font-size: 13px !important;
+            font-weight: 500 !important;
+            margin-top: 12px !important;
+            padding: 10px 14px !important;
+            background: var(--accent-glow);
+            border-radius: 8px;
+            border-left: 3px solid var(--accent-color);
+            line-height: 1.5;
+        }
+
+        /* ── Main Container ── */
+        .weilin_prompt_ui_main_box {
+            background: transparent;
+            margin-top: 10px;
+        }
+
+        /* ── Textareas & Input Containers ── */
+        .gradio-row { gap: 20px; }
+        .gradio-textbox, .form {
+            background: #111114 !important;
+            border: 1px solid var(--card-border) !important;
+            border-radius: 12px !important;
+            box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.4) !important;
+            overflow: visible;
+            margin-bottom: 20px;
+            transition: all 0.3s ease;
+            position: relative;
+        }
+
+        .gradio-textbox:focus-within {
+            border-color: var(--accent-color) !important;
+            box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.4), 0 0 0 1px var(--accent-color) !important;
+        }
+
+        textarea {
+            background: transparent !important;
+            color: #f0a830 !important;
+            padding: 16px !important;
+            font-size: 15px !important;
+            font-weight: 500 !important;
+            line-height: 1.7 !important;
+            border: none !important;
+            box-shadow: none !important;
+            font-family: var(--font-family) !important;
+            resize: vertical;
+            letter-spacing: 0.02em;
+        }
+        textarea:focus { outline: none !important; }
+
+        /* ── Token Counter ── */
+        .token-counter {
+            background: var(--btn-bg) !important;
+            color: var(--text-muted) !important;
+            border: 1px solid var(--card-border) !important;
+            border-radius: 20px !important;
+            padding: 6px 12px !important;
+            font-size: 12px !important;
+            position: absolute !important;
+            top: -15px !important;
+            right: 15px !important;
+            z-index: 10;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.35);
+        }
+        .token-counter span { color: var(--accent-color) !important; font-weight: bold; }
+
+        /* ── Slider ── */
+        .gradio-slider {
+            background: var(--card-bg) !important;
+            border: 1px solid var(--card-border) !important;
+            border-radius: 12px !important;
+            padding: 20px !important;
+            margin-top: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2) !important;
+        }
+        .gradio-slider .head { margin-bottom: 15px; display: flex; align-items: center; justify-content: space-between; }
+        .gradio-slider input[type="range"] {
+            accent-color: var(--accent-color) !important;
+            height: 6px;
+            border-radius: 3px;
+            width: 100%;
+        }
+        .gradio-slider input[type="number"] {
+            background: var(--btn-bg) !important;
+            color: var(--text-main) !important;
+            border: 1px solid var(--card-border) !important;
+            border-radius: 8px !important;
+            padding: 6px 10px !important;
+            font-family: var(--font-family) !important;
+            width: 60px;
+            text-align: center;
+        }
+        .gradio-slider span { color: var(--text-main) !important; font-weight: 600 !important; font-size: 14px; }
+
+        /* ── Checkbox ── */
+        input[type="checkbox"] {
+            accent-color: var(--accent-color);
+            width: 15px;
+            height: 15px;
+        }
+
+        /* ── Scrollbar ── */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: var(--bg-color); }
+        ::-webkit-scrollbar-thumb { background: #4a4a52; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #6a6a72; }
+
+        /* ── Override plugin/component text colors for readability ── */
+        .physton-gradio-container,
+        .physton-gradio-container * {
+            color: var(--text-secondary) !important;
+        }
+        .physton-gradio-container .promptTagValue,
+        .physton-gradio-container [class*="promptTagValue"] {
+            color: var(--text-main) !important;
+            background: rgba(255, 255, 255, 0.06) !important;
+            border-color: rgba(255, 255, 255, 0.08) !important;
+        }
+        .physton-gradio-container [class*="promptTagValue"]:hover {
+            background: rgba(255, 255, 255, 0.12) !important;
+        }
+        /* Tag group headers */
+        .physton-gradio-container [class*="groupTab"] {
+            color: var(--text-secondary) !important;
+            border-color: var(--card-border) !important;
+        }
+        .physton-gradio-container [class*="groupTab"]:hover,
+        .physton-gradio-container [class*="groupTab"].active {
+            background: var(--accent-color) !important;
+            color: #1a1a1e !important;
+        }
+        /* Sub-group tabs */
+        .physton-gradio-container [class*="subGroupTab"] {
+            color: var(--text-muted) !important;
+            background: rgba(255, 255, 255, 0.04) !important;
+        }
+        .physton-gradio-container [class*="subGroupTab"]:hover,
+        .physton-gradio-container [class*="subGroupTab"].active {
+            border-bottom-color: var(--accent-color) !important;
+            color: var(--text-main) !important;
+        }
+        /* Tag items in grid */
+        .physton-gradio-container [class*="tagLocal"] {
+            color: var(--text-main) !important;
+            background: rgba(255, 255, 255, 0.06) !important;
+        }
+        .physton-gradio-container [class*="tagEn"] {
+            color: var(--text-muted) !important;
+            background: rgba(255, 255, 255, 0.03) !important;
+        }
+        .physton-gradio-container [class*="tagItem"]:hover {
+            background: rgba(232, 166, 48, 0.12) !important;
+        }
+        /* Local language text */
+        .physton-gradio-container [class*="localLanguage"] {
+            color: var(--text-muted) !important;
+        }
+        /* Group header bg */
+        .physton-gradio-container [class*="groupHeader"] {
+            background: rgba(255, 255, 255, 0.04) !important;
+        }
+        /* Group body border */
+        .physton-gradio-container [class*="groupBody"] {
+            border-color: var(--card-border) !important;
+        }
+        /* Extend button groups */
+        .physton-gradio-container [class*="extendBtnGroup"] {
+            background: var(--btn-bg) !important;
+            border-color: var(--card-border) !important;
+            color: var(--text-main) !important;
+        }
+        /* Select controls */
+        .physton-gradio-container select,
+        .physton-gradio-container [class*="selectSelectBtn"] {
+            background: var(--btn-bg) !important;
+            color: var(--text-main) !important;
+            border-color: var(--card-border) !important;
+        }
+        /* Input fields in the plugin */
+        .physton-gradio-container input[type="text"],
+        .physton-gradio-container [class*="inputTagAppend"],
+        .physton-gradio-container [class*="inputTagEdit"] {
+            color: var(--text-main) !important;
+            background: rgba(255, 255, 255, 0.05) !important;
+            border-color: var(--card-border) !important;
+        }
+        /* Prompt header title */
+        .physton-gradio-container [class*="promptHeaderTitle"] {
+            color: var(--text-main) !important;
+        }
+        /* Footer text */
+        .physton-gradio-container [class*="tagsCopyRight"],
+        .physton-gradio-container [class*="tagsColor"] * {
+            color: var(--text-muted) !important;
+        }
+        /* Checkboxes in plugin */
+        .physton-gradio-container [class*="inputCheckbox"] {
+            background-color: rgba(255, 255, 255, 0.06) !important;
+            border-color: var(--text-muted) !important;
+        }
+
+        :root {
+            --ui-scale: 1;
+            --font-base: clamp(13px, calc(14px * var(--ui-scale)), 16px);
+            --font-sm: clamp(12px, calc(13px * var(--ui-scale)), 14px);
+            --font-lg: clamp(14px, calc(15px * var(--ui-scale)), 18px);
+            --space-1: calc(4px * var(--ui-scale));
+            --space-2: calc(8px * var(--ui-scale));
+            --space-3: calc(12px * var(--ui-scale));
+            --space-4: calc(16px * var(--ui-scale));
+            --space-5: calc(20px * var(--ui-scale));
+            --space-6: calc(24px * var(--ui-scale));
+            --control-height: calc(38px * var(--ui-scale));
+            --radius: calc(12px * var(--ui-scale));
+        }
+
+        body[data-density="comfortable"] {
+            --ui-scale: 1.08;
+        }
+
+        body[data-density="standard"] {
+            --ui-scale: 1;
+        }
+
+        body[data-density="compact"] {
+            --ui-scale: 0.92;
+        }
+
+        body {
+            --page-padding: var(--space-4);
+            --page-bottom-safe: calc(var(--space-6) + env(safe-area-inset-bottom, 0px));
+            --textarea-padding-x: var(--space-4);
+            --textarea-padding-top: var(--space-4);
+            --textarea-padding-bottom: calc(var(--space-5) + env(safe-area-inset-bottom, 0px));
+            font-size: var(--font-base) !important;
+            padding-top: var(--page-padding) !important;
+            padding-right: var(--page-padding) !important;
+            padding-left: var(--page-padding) !important;
+            padding-bottom: var(--page-bottom-safe) !important;
+            scroll-padding-bottom: var(--page-bottom-safe);
+        }
+
+        .topBar {
+            border-radius: var(--radius) !important;
+            padding: var(--space-4) var(--space-5) !important;
+            margin-bottom: var(--space-6) !important;
+        }
+
+        .topBox {
+            gap: var(--space-3) !important;
+            align-items: flex-start !important;
+        }
+
+        .leftBox,
+        .rightBox {
+            gap: var(--space-2) !important;
+        }
+
+        .rightBox {
+            justify-content: flex-end;
+        }
+
+        .closeBtn,
+        .refreshBtn,
+        .fullBtn,
+        .nomBtn,
+        .copyBtn,
+        .windowBtn {
+            min-height: var(--control-height);
+            padding: 0 var(--space-4) !important;
+            border-radius: calc(var(--control-height) / 2) !important;
+            font-size: var(--font-sm) !important;
+            gap: var(--space-2);
+        }
+
+        .copyBtn {
+            margin-left: 0 !important;
+        }
+
+        .refreshBtn {
+            margin-left: 0 !important;
+        }
+
+        .windowBtn {
+            margin-right: 0 !important;
+        }
+
+        .rightBox > .closeBtn {
+            margin-right: 0 !important;
+        }
+
+        .closeIcon,
+        .refreshIcon,
+        .fullIcon,
+        .nomIcon,
+        .copyIcon,
+        .windowIcon {
+            width: calc(16px * var(--ui-scale));
+            height: calc(16px * var(--ui-scale));
+            flex-shrink: 0;
+        }
+
+        .buttonText {
+            white-space: nowrap;
+        }
+
+        .buttonText--leading {
+            padding-left: var(--space-2);
+        }
+
+        .buttonText--trailing {
+            padding-right: var(--space-2);
+        }
+
+        .copyPrompt {
+            gap: var(--space-2);
+            flex-wrap: wrap;
+        }
+
+        .densityControl {
+            display: flex;
+            align-items: center;
+            gap: var(--space-2);
+            min-height: var(--control-height);
+            padding: var(--space-1);
+            border-radius: calc(var(--control-height) / 2);
+            border: 1px solid var(--card-border);
+            background: var(--btn-bg);
+        }
+
+        .densityControlLabel {
+            color: var(--text-muted) !important;
+            font-size: var(--font-sm);
+            padding-left: var(--space-2);
+            white-space: nowrap;
+        }
+
+        .densitySegment {
+            display: flex;
+            gap: var(--space-1);
+        }
+
+        .densityOption {
+            min-height: calc(var(--control-height) - (var(--space-1) * 2));
+            padding: 0 var(--space-3);
+            border-radius: 999px;
+            border: 1px solid transparent;
+            background: transparent;
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-family: var(--font-family);
+            font-size: var(--font-sm);
+            font-weight: 500;
+            transition: all 0.2s ease;
+        }
+
+        .densityOption:hover {
+            background: rgba(255, 255, 255, 0.06);
+        }
+
+        .densityOption.is-active {
+            background: var(--accent-color);
+            color: #1a1a1e;
+            font-weight: 700;
+        }
+
+        #notePromptBox,
+        #yourIsEditing {
+            font-size: var(--font-sm) !important;
+            margin-top: var(--space-3) !important;
+            padding: var(--space-2) var(--space-3) !important;
+        }
+
+        .weilin_prompt_ui_main_box {
+            margin-top: var(--space-3);
+            padding-bottom: var(--space-5);
+        }
+
+        .gradio-row {
+            gap: var(--space-4) !important;
+        }
+
+        .gradio-textbox,
+        .form {
+            border-radius: var(--radius) !important;
+            margin-bottom: var(--space-5);
+        }
+
+        textarea {
+            box-sizing: border-box;
+            padding-top: var(--textarea-padding-top) !important;
+            padding-right: var(--textarea-padding-x) !important;
+            padding-left: var(--textarea-padding-x) !important;
+            padding-bottom: var(--textarea-padding-bottom) !important;
+            font-size: var(--font-lg) !important;
+            min-height: calc(136px * var(--ui-scale));
+            scroll-padding-bottom: var(--textarea-padding-bottom);
+        }
+
+        .token-counter {
+            border-radius: 999px !important;
+            padding: var(--space-1) var(--space-3) !important;
+            font-size: var(--font-sm) !important;
+            top: calc(var(--space-4) * -0.9) !important;
+            right: var(--space-3) !important;
+        }
+
+        .gradio-slider {
+            border-radius: var(--radius) !important;
+            padding: var(--space-5) !important;
+        }
+
+        .gradio-slider .head {
+            margin-bottom: var(--space-3);
+        }
+
+        .gradio-slider span {
+            font-size: var(--font-base) !important;
+        }
+
+        @media (max-width: 820px) {
+            body {
+                --page-padding: var(--space-3);
+            }
+
+            .topBar {
+                padding: var(--space-4) !important;
+            }
+
+            .topBox {
+                flex-direction: column;
+                align-items: stretch !important;
+            }
+
+            .leftBox,
+            .rightBox {
+                width: 100%;
+                justify-content: flex-start;
+            }
+
+            .rightBox {
+                flex-wrap: wrap;
+            }
+
+            .densityControl {
+                order: 10;
+            }
+
+            .gradio-row {
+                gap: var(--space-3) !important;
+            }
+        }
+
+        @media (max-width: 560px) {
+            body {
+                --page-padding: var(--space-2);
+                --page-bottom-safe: calc(var(--space-5) + env(safe-area-inset-bottom, 0px));
+                --textarea-padding-x: var(--space-3);
+                --textarea-padding-top: var(--space-3);
+                --textarea-padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom, 0px));
+            }
+
+            .topBar {
+                padding: var(--space-3) !important;
+                margin-bottom: var(--space-4) !important;
+            }
+
+            .buttonText--secondary,
+            .densityControlLabel {
+                display: none;
+            }
+
+            .leftBox,
+            .rightBox {
+                gap: var(--space-2) !important;
+            }
+
+            .refreshBtn,
+            .copyBtn,
+            .windowBtn,
+            .fullBtn,
+            .nomBtn {
+                padding: 0 var(--space-2) !important;
+            }
+
+            .copyPrompt {
+                width: 100%;
+            }
+
+            .densityControl {
+                width: 100%;
+                justify-content: space-between;
+            }
+
+            .densitySegment {
+                display: grid;
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+                width: 100%;
+            }
+
+            .densityOption {
+                width: 100%;
+                padding: 0 var(--space-2);
+            }
+
+            .form {
+                display: flex;
+                flex-direction: column;
+            }
+
+            .form > .gradio-textbox {
+                order: 1;
+                margin-bottom: 0 !important;
+            }
+
+            .form > .token-counter {
+                order: 2;
+                position: static !important;
+                top: auto !important;
+                right: auto !important;
+                align-self: flex-end;
+                margin: var(--space-2) var(--space-2) 0 0 !important;
+            }
+
+            textarea {
+                min-height: calc(112px * var(--ui-scale));
+                font-size: var(--font-base) !important;
+            }
+        }
+
+    </style>
+</head>
+<body class="">
+    <div class="topBar">
+        <div class="topBox">
+            <div class="leftBox">
+                <div class="closeBtn" onclick="closeDialog()" id="weilin_prompt_ui_left_close_btn" title="关闭PromptUI" aria-label="关闭PromptUI">
+                    <div class="closeIcon">
+                        <div class="icon-svg icon-svg-close" data-name="name" style=""><!--?xml version="1.0" encoding="UTF-8"?-->
+                            <svg id="uuid-02c25950-3da6-4790-a038-e69a788fa473" data-name="图层 1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 14 14">
+                            <path d="m14,1.41l-1.41-1.41-5.59,5.59L1.41,0,0,1.41l5.59,5.59L0,12.59l1.41,1.41,5.59-5.59,5.59,5.59,1.41-1.41-5.59-5.59L14,1.41Z"></path>
+                            </svg>
+                        </div>
+                    </div>
+                    <div class="buttonText buttonText--leading">关闭PromptUI</div>
+                </div>
+                <div class="refreshBtn" onclick="iNeedRefresh()" id="weilin_prompt_ui_left_refresh_btn" title="刷新PromptUI" aria-label="刷新PromptUI">
+                    <div class="refreshIcon">
+                        <div class="icon-svg icon-svg-refresh" data-name="name" style=""><!--?xml version="1.0" encoding="UTF-8"?-->
+                            <svg id="uuid-471e7dd3-8710-47a7-a01a-33b30b047321" data-name="图层 1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1022.73 870.84">
+                              <path d="m698.85,706.29c-56.83,40.33-123.34,60.55-191.36,59.62-8.99-.09-17.93-.58-26.77-1.35-3.6-.34-7.19-.95-10.84-1.4-6.94-.95-13.88-1.9-20.62-3.22-4.2-.8-8.29-1.88-12.39-2.84-6.64-1.58-13.23-3.17-19.73-5.12-3.1-.97-6.14-2.09-9.24-3.15-7.44-2.52-14.88-5.14-22.12-8.21-1.65-.67-3.24-1.45-4.85-2.2-8.49-3.77-16.83-7.71-24.92-12.16-.4-.2-.7-.37-1.1-.57-27.37-15.21-52.39-34.21-74.36-56.41-.35-.35-.7-.75-1.05-1.15-6.84-6.91-13.33-14.18-19.52-21.72-1.3-1.62-2.55-3.34-3.85-4.98-44.7-56.61-71.66-128.24-71.66-206.16h75.81c1.95,0,3.85-1.05,4.85-2.89,1-1.83.85-4-.25-5.62l-127.39-193.48c-1-1.5-2.69-2.5-4.61-2.5s-3.59,1-4.59,2.5L.91,426.73c-1.08,1.65-1.25,3.8-.25,5.64,1,1.85,2.9,2.89,4.84,2.89h75.81c0,91.6,28.21,176.53,76.12,246.73.6.97,1,2.02,1.65,2.99,4.99,7.2,10.49,13.8,15.83,20.6,1.95,2.57,3.85,5.21,5.89,7.74,7.84,9.64,16.18,18.67,24.72,27.54.85.87,1.6,1.74,2.4,2.52,28.77,29.16,61.28,53.73,96.68,73.35.9.59,1.8,1.13,2.8,1.66,10.19,5.54,20.67,10.56,31.31,15.3,2.64,1.15,5.19,2.42,7.89,3.57,9.09,3.8,18.43,7.15,27.82,10.34,4.44,1.53,8.84,3.08,13.33,4.47,8.24,2.47,16.63,4.52,25.07,6.57,5.64,1.33,11.19,2.74,16.93,3.84,2.34.49,4.59,1.22,6.94,1.59,7.99,1.43,15.98,2.22,23.97,3.22,2.89.33,5.74.82,8.59,1.15,14.39,1.42,28.67,2.38,42.95,2.38,87.45,0,172.74-27.08,245.9-78.98,23.32-16.58,29.01-49.1,12.67-72.76-16.37-23.67-48.59-29.39-71.91-12.81m242.6-271.02c-.04-91.33-28.07-176.08-75.76-246.14-.71-1.2-1.2-2.42-1.95-3.52-5.95-8.57-12.39-16.55-18.83-24.57-.75-.98-1.45-2-2.24-2.95-43.65-53.6-98.43-95.03-160.55-122.1-1.7-.75-3.4-1.6-5.1-2.35-9.93-4.12-20.07-7.76-30.26-11.24-3.7-1.22-7.34-2.57-11.09-3.69-8.89-2.72-17.92-4.94-27.02-7.07-5.04-1.18-10.04-2.47-15.12-3.47-2.55-.5-4.9-1.25-7.4-1.69-6.79-1.2-13.64-1.73-20.42-2.6-4.7-.6-9.34-1.35-14.09-1.85-11.43-1.07-22.77-1.52-34.1-1.72-2.04,0-4.09-.32-6.14-.32-.35,0-.7.1-1.1.12-87.29.07-172.44,26.76-245.5,78.6-23.37,16.53-29.06,49.11-12.73,72.75,16.33,23.65,48.59,29.39,71.91,12.81,56.43-40.02,122.3-60.27,189.81-59.67,9.74.07,19.28.55,28.72,1.45,2.95.35,5.79.77,8.69,1.15,7.79.95,15.48,2.07,23.07,3.6,3.35.65,6.69,1.52,9.93,2.27,7.45,1.7,14.9,3.52,22.18,5.74,2.29.75,4.54,1.57,6.83,2.35,8.34,2.75,16.48,5.72,24.52,9.09.81.35,1.66.77,2.45,1.1,48.09,20.95,90.29,53.21,123.21,93.53.19.25.4.58.59.8,46.34,57.1,74.26,130.11,74.26,209.58h-75.81c-1.94,0-3.84,1.05-4.84,2.89-1,1.85-.85,4,.26,5.64l127.43,193.45c.96,1.49,2.66,2.47,4.6,2.47s3.59-.97,4.59-2.47l127.35-193.45c1.09-1.65,1.24-3.8.25-5.64-1.01-1.85-2.9-2.89-4.85-2.89h-75.75s0,0,0,0Z"></path>
+                            </svg>
+                        </div>
+                    </div>
+                    <div class="buttonText buttonText--leading buttonText--secondary">刷新PromptUI</div>
+                </div>
+                <div class="copyPrompt" id="weilin_copyPrompt">
+                    <div class="copyBtn" id="weilinCopyGreatPrompt" data-clipboard-target="#weilin_prompt_text_input" title="一键复制正向提示词" aria-label="一键复制正向提示词">
+                        <div class="copyIcon">
+                            <div class="icon-svg icon-svg-copy hover-scale-120" data-name="name" style=""><!--?xml version="1.0" encoding="UTF-8"?-->
+                                <svg id="uuid-d8cf81fa-a19a-405c-a171-b80a3ec6289a" data-name="图层 1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 833.1 895.9">
+                                    <path d="m.1,511.8c0,17.73,14.41,32.1,32.19,32.11s32.2-14.37,32.21-32.09h0c0-17.74-14.41-32.12-32.19-32.12S.1,494.06.1,511.79H.1Z"></path>
+                                    <path d="m646.1,386.8l-269.5-2.1c-14.3-.1-26,13.8-26,31s11.7,31.3,26,31.4l269.5,2.1c14.3.1,26-13.8,26-31s-11.7-31.3-26-31.4h0Zm0,127l-269.5-2.1c-14.3-.1-26,13.8-26,31s11.7,31.3,26,31.4l269.5,2.1c14.3.2,26-13.8,26-31s-11.7-31.3-26-31.4Z"></path>
+                                    <path d="m640.1,0h-319.1c-70.4,0-128,57.6-128,128h-64.9C57.7,128,.1,185.6.1,256v128C0,401.7,14.5,416,32.3,416s32.2-14.4,32.2-32.1v-127.8c0-35.2,28.8-64,64-64h64.5v447.8c0,70.4,57.6,128,128,128h255.1c-.1,35.2-28.8,63.8-64,63.8H128.5c-35.2,0-64-28.8-64-64v-128.1c0-17.7-14.4-32.1-32.2-32.1S0,621.9,0,639.6v128.3c0,70.4,57.6,128,128,128h384.1c70.4,0,128-57.6,128-128h65c70.4,0,128-57.6,128-128V192S640.1,0,640.1,0Zm.1,63.4l127.7,128.3h-63.9c-35.2,0-64-28.8-64-64V63.4h.2,0Zm64,641h-384.1c-35.2,0-64-28.8-64-64V127.4c0-35.2,28.8-64,64-64h254.9v63.7c0,70.4,57.6,128,128,128h65.2v385.3c0,35.2-28.8,64-64,64h0Z"></path>
+                                </svg>
+                            </div>
+                        </div>
+                        <div class="buttonText buttonText--leading buttonText--secondary">一键复制正向提示词</div>
+                    </div>
+                    <div class="copyBtn" id="weilinCopyNegPrompt" data-clipboard-target="#weilin_prompt_text_neg_input" title="一键复制反向提示词" aria-label="一键复制反向提示词">
+                        <div class="copyIcon">
+                            <div class="icon-svg icon-svg-copy hover-scale-120" data-name="name" style=""><!--?xml version="1.0" encoding="UTF-8"?-->
+                                <svg id="uuid-d8cf81fa-a19a-405c-a171-b80a3ec6289a" data-name="图层 1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 833.1 895.9">
+                                    <path d="m.1,511.8c0,17.73,14.41,32.1,32.19,32.11s32.2-14.37,32.21-32.09h0c0-17.74-14.41-32.12-32.19-32.12S.1,494.06.1,511.79H.1Z"></path>
+                                    <path d="m646.1,386.8l-269.5-2.1c-14.3-.1-26,13.8-26,31s11.7,31.3,26,31.4l269.5,2.1c14.3.1,26-13.8,26-31s-11.7-31.3-26-31.4h0Zm0,127l-269.5-2.1c-14.3-.1-26,13.8-26,31s11.7,31.3,26,31.4l269.5,2.1c14.3.2,26-13.8,26-31s-11.7-31.3-26-31.4Z"></path>
+                                    <path d="m640.1,0h-319.1c-70.4,0-128,57.6-128,128h-64.9C57.7,128,.1,185.6.1,256v128C0,401.7,14.5,416,32.3,416s32.2-14.4,32.2-32.1v-127.8c0-35.2,28.8-64,64-64h64.5v447.8c0,70.4,57.6,128,128,128h255.1c-.1,35.2-28.8,63.8-64,63.8H128.5c-35.2,0-64-28.8-64-64v-128.1c0-17.7-14.4-32.1-32.2-32.1S0,621.9,0,639.6v128.3c0,70.4,57.6,128,128,128h384.1c70.4,0,128-57.6,128-128h65c70.4,0,128-57.6,128-128V192S640.1,0,640.1,0Zm.1,63.4l127.7,128.3h-63.9c-35.2,0-64-28.8-64-64V63.4h.2,0Zm64,641h-384.1c-35.2,0-64-28.8-64-64V127.4c0-35.2,28.8-64,64-64h254.9v63.7c0,70.4,57.6,128,128,128h65.2v385.3c0,35.2-28.8,64-64,64h0Z"></path>
+                                </svg>
+                            </div>
+                        </div>
+                        <div class="buttonText buttonText--leading buttonText--secondary">一键复制反向提示词</div>
+                    </div>
+                </div>
+            </div>
+            <div class="rightBox">
+                <div class="windowBtn" id="weilinGlobalPastSettingBox" title="启用全局粘贴板" aria-label="启用全局粘贴板">
+                    <input
+                        type="checkbox"
+                        id="weilin_prompt_ui_is_global_past"
+                    />
+                    <div class="windowIcon">
+                        <svg t="1723910295691" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" ><path d="M640 42.666667a85.333333 85.333333 0 0 1 85.333333 85.333333h42.666667a128 128 0 0 1 128 128v597.333333a128 128 0 0 1-128 128H256a128 128 0 0 1-128-128V256a128 128 0 0 1 128-128h42.666667a85.333333 85.333333 0 0 1 85.333333-85.333333h256z m0 256H384a85.333333 85.333333 0 0 1-85.333333-85.333334H256a42.666667 42.666667 0 0 0-42.666667 42.666667v597.333333a42.666667 42.666667 0 0 0 42.666667 42.666667h512a42.666667 42.666667 0 0 0 42.666667-42.666667V256a42.666667 42.666667 0 0 0-42.666667-42.666667h-42.666667a85.333333 85.333333 0 0 1-85.333333 85.333334z m0-170.666667H384v85.333333h256V128z" p-id="4406"></path></svg>
+                    </div>
+                    <div class="buttonText buttonText--leading buttonText--secondary">启用全局粘贴板</div>
+                </div>
+                <div class="windowBtn" title="启用窗口模式" aria-label="启用窗口模式">
+                    <input
+                        type="checkbox"
+                        id="weilin_prompt_ui_is_window_fomt"
+                    />
+                    <div class="windowIcon">
+                        <svg t="1723720042871" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="7731" xmlns:xlink="http://www.w3.org/1999/xlink"><path d="M426.666667 213.333333a42.666667 42.666667 0 1 0 42.666666 42.666667 42.666667 42.666667 0 0 0-42.666666-42.666667zM256 213.333333a42.666667 42.666667 0 1 0 42.666667 42.666667 42.666667 42.666667 0 0 0-42.666667-42.666667z m341.333333 0a42.666667 42.666667 0 1 0 42.666667 42.666667 42.666667 42.666667 0 0 0-42.666667-42.666667z m256-170.666666H170.666667a128 128 0 0 0-128 128v682.666666a128 128 0 0 0 128 128h682.666666a128 128 0 0 0 128-128V170.666667a128 128 0 0 0-128-128z m42.666667 810.666666a42.666667 42.666667 0 0 1-42.666667 42.666667H170.666667a42.666667 42.666667 0 0 1-42.666667-42.666667v-384h768z m0-469.333333H128V170.666667a42.666667 42.666667 0 0 1 42.666667-42.666667h682.666666a42.666667 42.666667 0 0 1 42.666667 42.666667z" p-id="7732"></path>
+                        </svg>
+                    </div>
+                    <div class="buttonText buttonText--leading buttonText--secondary">启用窗口模式</div>
+                </div>
+                <div class="densityControl" id="weilinDensityControl">
+                    <div class="densityControlLabel">视图</div>
+                    <div class="densitySegment" role="group" aria-label="PromptUI视图档位">
+                        <button type="button" class="densityOption" data-density-value="comfortable">舒适</button>
+                        <button type="button" class="densityOption" data-density-value="standard">标准</button>
+                        <button type="button" class="densityOption" data-density-value="compact">紧凑</button>
+                    </div>
+                </div>
+                <div class="fullBtn" onclick="nomBox()" id="weilin_fullBtn" title="还原窗口" aria-label="还原窗口">
+                    <div class="fullIcon">
+                        <svg t="1723036752389" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1022.73 870.84">
+                            <path d="M384 128h-85.33v170.67H128V384h256zM896 384v-85.33H725.33V128H640v256zM725.33 725.33H896V640H640v256h85.33zM298.67 896H384V640H128v85.33h170.67z" p-id="3296"></path>
+                        </svg>
+                    </div>
+                    <div class="buttonText buttonText--leading buttonText--secondary">还原窗口</div>
+                </div>
+                <div class="nomBtn" onclick="fullBox()" id="weilin_nomBtn" title="放大窗口" aria-label="放大窗口">
+                    <div class="nomIcon">
+                        <svg t="1723036324160" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1022.73 870.84">
+                            <path d="M928 128H96a53.393333 53.393333 0 0 0-53.333333 53.333333v661.333334a53.393333 53.393333 0 0 0 53.333333 53.333333h832a53.393333 53.393333 0 0 0 53.333333-53.333333V181.333333a53.393333 53.393333 0 0 0-53.333333-53.333333z m10.666667 714.666667a10.666667 10.666667 0 0 1-10.666667 10.666666H96a10.666667 10.666667 0 0 1-10.666667-10.666666V181.333333a10.666667 10.666667 0 0 1 10.666667-10.666666h832a10.666667 10.666667 0 0 1 10.666667 10.666666zM377.753333 560.913333a21.333333 21.333333 0 0 1 0 30.173334L200.833333 768H320a21.333333 21.333333 0 0 1 0 42.666667H149.206667a21.333333 21.333333 0 0 1-21.206667-21.206667V618.666667a21.333333 21.333333 0 0 1 42.666667 0v119.166666l176.913333-176.92a21.333333 21.333333 0 0 1 30.173333 0zM896 234.54V405.333333a21.333333 21.333333 0 0 1-42.666667 0V286.166667l-176.913333 176.92a21.333333 21.333333 0 0 1-30.173333-30.173334L823.166667 256H704a21.333333 21.333333 0 0 1 0-42.666667h170.793333a21.333333 21.333333 0 0 1 21.206667 21.206667z"></path>
+                        </svg>
+                    </div>
+                    <div class="buttonText buttonText--leading buttonText--secondary">放大窗口</div>
+                </div>
+                <div class="closeBtn" style="margin-right: 10px;" onclick="closeDialog()" id="weilin_prompt_ui_right_close_btn" title="关闭PromptUI" aria-label="关闭PromptUI">
+                    <div class="buttonText buttonText--trailing">关闭PromptUI</div>
+                    <div class="closeIcon">
+                        <div class="icon-svg icon-svg-close" data-name="name" style=""><!--?xml version="1.0" encoding="UTF-8"?-->
+                            <svg id="uuid-02c25950-3da6-4790-a038-e69a788fa473" data-name="图层 1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 14 14">
+                            <path d="m14,1.41l-1.41-1.41-5.59,5.59L1.41,0,0,1.41l5.59,5.59L0,12.59l1.41,1.41,5.59-5.59,5.59,5.59,1.41-1.41-5.59-5.59L14,1.41Z"></path>
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div id="notePromptBox"></div>
+        <div id="yourIsEditing"></div>
+    </div>
+    <div id="newbie_xml_wizard_root"></div>
+    <div class="weilin_prompt_ui_main_box" id="tabs">
+        <div id="tab_txt2img" class="tabitem gradio-tabitem svelte-19hvt5v">
+            <div class="svelte-vt1mxs gap">
+                <div id="txt2img_toprow" class="gradio-row svelte-15lo0d8 compact">
+                    <div id="txt2img_prompt_container" class="gradio-column svelte-vt1mxs gap">
+                        <div id="component-5173" class="gradio-row svelte-15lo0d8">
+                            <div id="component-5174" class="gradio-column svelte-vt1mxs gap">
+                                <div id="component-5175" class="gradio-row svelte-15lo0d8">
+                                    <div class="form svelte-awbtu4">
+                                        <div id="txt2img_token_counter" class="block gradio-html token-counter svelte-mppz8v padded" title="">
+                                            <div class="wrap center svelte-gjihhp hide"></div>
+                                            <div class="svelte-1ed2p3z">
+                                                <div class="prose gradio-html token-counter svelte-1ybaih5" id="txt2img_token_counter">
+                                                    <span class="gr-box gr-text-input">0/0</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div id="txt2img_prompt" class="block gradio-textbox svelte-mppz8v padded">
+                                            <label class="svelte-4xt1ch">
+                                                <span class="svelte-1gfkn6j sr-only hide"></span>
+                                                <textarea id="weilin_prompt_text_input"    data-testid="textbox" class="scroll-hide svelte-4xt1ch autocomplete" placeholder="" rows="3"></textarea>
+                                                <div id="weilin_prompt_great_ins_autocom" style="width: 100%;position: relative;height: 1px;z-index: 99;">
+                                                </div>
+                                            </label>
+                                            <my-component></my-component>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="component-5178" class="gradio-row svelte-15lo0d8" >
+                            <div id="component-5179" class="gradio-column svelte-vt1mxs gap">
+                                <div id="component-5180" class="gradio-row svelte-15lo0d8">
+                                    <div class="form svelte-awbtu4">
+                                        <div id="txt2img_negative_token_counter" class="block gradio-html token-counter svelte-mppz8v padded" title="">
+                                            <div class="wrap center svelte-gjihhp hide"></div>
+                                            <div class="svelte-1ed2p3z">
+                                                <div class="prose gradio-html token-counter svelte-1ybaih5" id="txt2img_negative_token_counter">
+                                                    <span class="gr-box gr-text-input">0/0</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div id="txt2img_neg_prompt" class="block gradio-textbox svelte-mppz8v padded">
+                                            <label class="svelte-4xt1ch">
+                                                <span class="svelte-1gfkn6j sr-only hide"></span>
+                                                <textarea id="weilin_prompt_text_neg_input" data-testid="textbox" style="will-change: clip-path;resize: none;" class="scroll-hide svelte-4xt1ch autocomplete" placeholder="" rows="3"></textarea>
+                                                <div id="weilin_prompt_neg_ins_autocom" style="width: 100%;position: relative;height: 1px;z-index: 99;">
+                                                </div>
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div id="txt2img_steps" class="block gradio-slider svelte-mppz8v padded">
+                <div class="wrap default svelte-gjihhp hide"></div>
+                <div class="wrap svelte-jigama">
+                    <div class="head svelte-jigama">
+                        <label for="range_id_1">
+                            <span class="svelte-1gfkn6j">Steps</span>
+                        </label>
+                        <input type="number" min="1" max="150" step="1" class="svelte-jigama" value="20">
+                    </div>
+                </div>
+                <input type="range" id="range_id_1" name="cowbell" min="1" max="150" step="1" class="svelte-jigama">
+            </div>
+        </div>
+        <div id="tab_img2img" class="tabitem gradio-tabitem svelte-19hvt5v">
+            <div class="svelte-vt1mxs gap">
+                <div id="img2img_toprow" class="gradio-row svelte-15lo0d8 compact">
+                    <div id="img2img_prompt_container" class="gradio-column svelte-vt1mxs gap">
+                        <div id="component-5703" class="gradio-row svelte-15lo0d8">
+                            <div id="component-5704" class="gradio-column svelte-vt1mxs gap">
+                                <div id="component-5705" class="gradio-row svelte-15lo0d8">
+                                    <div class="form svelte-awbtu4">
+                                        <div id="img2img_token_counter" class="block gradio-html token-counter svelte-mppz8v padded" title="">
+                                            <div class="wrap center svelte-gjihhp hide"></div>
+                                            <div class="svelte-1ed2p3z">
+                                                <div class="prose gradio-html token-counter svelte-1ybaih5" id="img2img_token_counter">
+                                                    <span class="gr-box gr-text-input">0/0</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div id="img2img_prompt" class="block gradio-textbox svelte-mppz8v padded">
+                                            <label class="svelte-4xt1ch">
+                                                <span class="svelte-1gfkn6j sr-only hide"></span>
+                                                <textarea data-testid="textbox" class="scroll-hide svelte-4xt1ch autocomplete" placeholder="" rows="3"></textarea>
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="component-5708" class="gradio-row svelte-15lo0d8">
+                            <div id="component-5709" class="gradio-column svelte-vt1mxs gap">
+                                <div id="component-5710" class="gradio-row svelte-15lo0d8">
+                                    <div class="form svelte-awbtu4">
+                                        <div id="img2img_negative_token_counter" class="block gradio-html token-counter svelte-mppz8v padded" title="">
+                                            <div class="wrap center svelte-gjihhp hide"></div>
+                                            <div class="svelte-1ed2p3z">
+                                                <div class="prose gradio-html token-counter svelte-1ybaih5" id="img2img_negative_token_counter">
+                                                    <span class="gr-box gr-text-input">0/0</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div id="img2img_neg_prompt" class="block gradio-textbox svelte-mppz8v padded">
+                                            <label class="svelte-4xt1ch">
+                                                <span class="svelte-1gfkn6j sr-only hide"></span>
+                                                <textarea data-testid="textbox" class="scroll-hide svelte-4xt1ch autocomplete" placeholder="" rows="3"></textarea>
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div id="img2img_steps" class="block gradio-slider svelte-mppz8v padded">
+                <div class="wrap default svelte-gjihhp hide"></div>
+                <div class="wrap svelte-jigama">
+                    <div class="head svelte-jigama">
+                        <label for="range_id_20">
+                            <span class="svelte-1gfkn6j">Steps</span>
+                        </label>
+                        <input type="number" min="1" max="150" step="1" class="svelte-jigama" value="20">
+                    </div>
+                </div>
+                <input type="range" id="range_id_20" name="cowbell" min="1" max="150" step="1" class="svelte-jigama">
+            </div>
+        </div>
+        <div style="width: 100%;height: 500px;"></div>
+    </div>
+    <div id="txt2img_checkpoints_cards">
+        <div class="card"></div>
+    </div>
+</body>
+<script src="./js/jquery-3.7.1.min.js"></script>
+<script src="./js/main.js"></script>
+<script src="./js/clipboard.min.js"></script>
+<script>
+    const APP_MODE = true
+    let UiLoaded = []
+    let embeddings = []
+    let loras = ['asaa','asdas']
+    let opts = {}
+    let thisRandomId = ''
+    let boxStatus= 'nom'
+
+    if (window.frameElement && window.frameElement.tagName === 'IFRAME') {
+
+    } else {
+        window.close()
+    }
+
+    new ClipboardJS('.btn');
+
+
+    const params = new URL(window.location.href)
+    const searchParams = params.searchParams
+    const window_type =  searchParams.get('type')
+    const theme =  searchParams.get('__theme')
+    thisRandomId = localStorage.getItem("weilin_prompt_randomid");
+    const getTheme = localStorage.getItem("weilin_prompt_theme");
+    let getBoxStatus = localStorage.getItem("weilin_prompt_box_status");
+    const weilin_fullBtn = document.getElementById("weilin_fullBtn")
+    const weilin_nomBtn = document.getElementById("weilin_nomBtn")
+    const weilin_copyPrompt = document.getElementById("weilin_copyPrompt")
+    const weilinCopyGreatPrompt = document.getElementById("weilinCopyGreatPrompt")
+    const weilinCopyNegPrompt = document.getElementById("weilinCopyNegPrompt")
+    let getSettingChangUI = localStorage.getItem("weilin_prompt_ui_change_close") // UI设置
+    let getIsWindowMode = localStorage.getItem("weilin_prompt_ui_is_window")
+    let getGloablPastSetting = localStorage.getItem("weilin_prompt_global_past_setting")
+    const DENSITY_KEY = "weilin_prompt_view_density"
+    const DENSITY_VALUES = ["comfortable", "standard", "compact"]
+    const densityButtons = Array.from(document.querySelectorAll("[data-density-value]"))
+    new ClipboardJS(weilinCopyGreatPrompt);
+    new ClipboardJS(weilinCopyNegPrompt);
+
+
+    const ge_box = document.getElementById('component-5173')
+    const ng_box = document.getElementById('component-5178')
+
+    function syncWindowActionButtons() {
+        getBoxStatus = localStorage.getItem("weilin_prompt_box_status") || "nom";
+        boxStatus = getBoxStatus
+        if(getBoxStatus == "full"){
+            weilin_fullBtn.style.display = "flex"
+            weilin_nomBtn.style.display = "none"
+        }else{
+            weilin_fullBtn.style.display = "none"
+            weilin_nomBtn.style.display = "flex"
+        }
+    }
+
+    function applyDensity(density) {
+        const nextDensity = DENSITY_VALUES.includes(density) ? density : "standard"
+        document.body.dataset.density = nextDensity
+        localStorage.setItem(DENSITY_KEY, nextDensity)
+        densityButtons.forEach((button) => {
+            const isActive = button.dataset.densityValue === nextDensity
+            button.classList.toggle("is-active", isActive)
+            button.setAttribute("aria-pressed", isActive ? "true" : "false")
+        })
+    }
+
+    // console.log(getBoxStatus)
+    if(getBoxStatus == null){
+        localStorage.setItem("weilin_prompt_box_status","nom");
+    }
+    syncWindowActionButtons()
+
+    const weilin_prompt_ui_is_window_fomt = document.getElementById("weilin_prompt_ui_is_window_fomt");
+    const weilin_prompt_ui_is_global_past = document.getElementById("weilin_prompt_ui_is_global_past");
+    const weilinGlobalPastSettingBox = document.getElementById("weilinGlobalPastSettingBox");
+    weilinGlobalPastSettingBox.style.display = "none";
+
+    if(getIsWindowMode=='no'){
+        weilin_prompt_ui_is_window_fomt.checked=false
+    }else{
+        weilin_prompt_ui_is_window_fomt.checked=true
+    }
+
+    applyDensity(localStorage.getItem(DENSITY_KEY) || "standard")
+
+    if(getGloablPastSetting == 1){
+        weilin_prompt_ui_is_global_past.checked = true
+    }else {
+        weilin_prompt_ui_is_global_past.checked = false
+    }
+
+    // 监听checkbox
+    weilin_prompt_ui_is_window_fomt.addEventListener('change', function(e) {
+        if(e.target.checked){
+            localStorage.setItem("weilin_prompt_ui_is_window",'yes')
+            getIsWindowMode = "yes"
+            window.top.postMessage({handel: 'changeWeilinPromptWindowMode', randomid: thisRandomId}, "*");
+        }else{
+            localStorage.setItem("weilin_prompt_ui_is_window",'no')
+            getIsWindowMode = "no"
+            window.top.postMessage({handel: 'changeWeilinPromptWindowMode', randomid: thisRandomId}, "*");
+        }
+        syncWindowActionButtons()
+    });
+
+    weilin_prompt_ui_is_global_past.addEventListener('change', function(e) {
+        if(e.target.checked){
+            localStorage.setItem("weilin_prompt_global_past_setting",1)
+        }else{
+            localStorage.setItem("weilin_prompt_global_past_setting",0)
+        }
+    });
+
+    densityButtons.forEach((button) => {
+        button.addEventListener("click", function() {
+            applyDensity(button.dataset.densityValue)
+        })
+    })
+
+
+    if(getSettingChangUI == 'false'){
+        const El = document.getElementById("weilin_prompt_ui_right_close_btn")
+        const El3 = document.getElementById("weilin_prompt_ui_left_close_btn")
+        const El2 = document.getElementById("weilin_prompt_ui_left_refresh_btn")
+        El.style.display="none";
+        El3.style.display="flex";
+        El2.style.marginLeft ="50px"
+    }else{
+        const El = document.getElementById("weilin_prompt_ui_left_close_btn")
+        const El3 = document.getElementById("weilin_prompt_ui_right_close_btn")
+        const El2 = document.getElementById("weilin_prompt_ui_left_refresh_btn")
+        El.style.display="none";
+        El3.style.display="flex";
+        El2.style.marginLeft ="0px"
+    }
+
+    // console.log(window_type)
+    if(window_type == 'prompt'){
+
+        thisRandomId = localStorage.getItem("weilin_prompt_randomid")
+
+        window.top.postMessage({handel: 'getWeilinPromptBox', randomid: thisRandomId}, "*");
+
+        const evt = new CustomEvent("weilinInitCompletePrompt", {"detail":{"open":true}});
+        window.top.document.dispatchEvent(evt);
+    }
+    
+    if(theme != getTheme && (theme=='light' || theme=='dark' || theme == null)){
+        localStorage.setItem("weilin_prompt_theme",theme);
+        // 重新获取prompt
+        if(window_type == 'prompt'){
+            window.top.postMessage({handel: 'getWeilinPromptBox', randomid: thisRandomId}, "*");
+        }
+    }
+
+    
+
+    function selectCheckpoint(name) {
+        var time = Math.floor(Math.random() * 2000 + 3000)
+        setTimeout(function() {
+            opts.sd_model_checkpoint = name
+        }, time)
+    }
+
+    function onUiLoaded(callback) {
+        UiLoaded.push(callback)
+    }
+
+    window.onload = function() {
+        UiLoaded.forEach(function(callback) {
+            callback()
+        })
+    }
+
+    const log = document.getElementById("weilin_prompt_text_input");
+    log.addEventListener("input", updateValue);
+    const log2 = document.getElementById("weilin_prompt_text_neg_input");
+    log2.addEventListener("input", updateValue);
+    let lastSyncedGreatValue = "";
+    let lastSyncedNegValue = "";
+
+    function rememberPromptSnapshot() {
+        lastSyncedGreatValue = log.value;
+        lastSyncedNegValue = log2.value;
+    }
+
+    function syncPromptToHost(force) {
+        if(window_type !='prompt' || !thisRandomId){
+            return;
+        }
+
+        if(!force && lastSyncedGreatValue === log.value && lastSyncedNegValue === log2.value){
+            return;
+        }
+
+        rememberPromptSnapshot();
+        window.top.postMessage({handel: 'changeWeiLinPrompt',g_value: log.value,n_value: log2.value,randomid: thisRandomId}, "*");
+    }
+
+    rememberPromptSnapshot();
+    window.setInterval(function () {
+        syncPromptToHost(false);
+    }, 200);
+
+    
+    document.addEventListener("weilinPromptInnerSendToGreat",e =>{
+        // console.log(e.detail.text)
+        log.value = e.detail.text
+        syncPromptToHost(true)
+                
+    },false)
+
+    document.addEventListener("weilinPromptInnerSendToNeg",e =>{
+        // console.log(e.detail.text)
+        log2.value = e.detail.text
+        syncPromptToHost(true)
+    },false)
+
+    window.addEventListener('message', e => {
+        // console.log(e.data)
+        if(e.data.handel == 'openWeiLinPrompt'){
+            if(window_type =='prompt'){
+                thisRandomId = e.data.randomid
+                log.value = e.data.g_value
+                log2.value = e.data.n_value
+                rememberPromptSnapshot()
+                if(e.data.type == 'prompt'){
+                    const editingBox = document.getElementById('yourIsEditing')
+                    const notePromptBox = document.getElementById('notePromptBox')
+
+                    if(e.data.nodeName == "WeiLinComfyUIPromptAllInOneGreat"){
+                        editingBox.innerText=""
+                        ge_box.style.display = "block"
+                        ng_box.style.display = "none"
+                    }else if(e.data.nodeName == "WeiLinComfyUIPromptAllInOneNeg"){
+                        editingBox.innerText=""
+                        ge_box.style.display = "none"
+                        ng_box.style.display = "block"
+                    }else if(e.data.nodeName =="WeiLinPromptToString"){
+                        editingBox.innerText=""
+                        ge_box.style.display = "block"
+                        ng_box.style.display = "block"
+                    }
+
+                    weilin_copyPrompt.style.display="none"
+                    editingBox.style.display = "none"
+                    notePromptBox.style.display="none"
+                    weilinGlobalPastSettingBox.style.display = "none";
+                }else if(e.data.type == 'global'){
+                    const editingBox = document.getElementById('yourIsEditing')
+                    const notePromptBox = document.getElementById('notePromptBox')
+                    editingBox.innerText=""
+                    notePromptBox.style.display = "none"
+                    editingBox.style.display = "none"
+
+                    weilin_copyPrompt.style.display="flex"
+                    ge_box.style.display = "block"
+                    ng_box.style.display = "block"
+                    weilinGlobalPastSettingBox.style.display = "flex";
+                }
+            }
+        }else if(e.data.handel == 'responeseWeiLinPrompt'){
+            // console.log(e.data)
+            thisRandomId = e.data.randomid
+            log.value = e.data.g_value
+            log2.value = e.data.n_value
+            rememberPromptSnapshot()
+            if(e.data.type == 'prompt'){
+                const editingBox = document.getElementById('yourIsEditing')
+                const notePromptBox = document.getElementById('notePromptBox')
+
+                if(e.data.nodeName == "WeiLinComfyUIPromptAllInOneGreat"){
+                    editingBox.innerText=""
+                    ge_box.style.display = "block"
+                    ng_box.style.display = "none"
+                }else if(e.data.nodeName == "WeiLinComfyUIPromptAllInOneNeg"){
+                    editingBox.innerText=""
+                    ge_box.style.display = "none"
+                    ng_box.style.display = "block"
+                }else if( e.data.nodeName == "WeiLinPromptToString"){
+                    editingBox.innerText=""
+                    ge_box.style.display = "block"
+                    ng_box.style.display = "block"
+                }
+                
+                weilin_copyPrompt.style.display="none"
+                editingBox.style.display = "none"
+                notePromptBox.style.display="none"
+                weilinGlobalPastSettingBox.style.display = "none";
+            }else if(e.data.type == 'global'){
+                const editingBox = document.getElementById('yourIsEditing')
+                const notePromptBox = document.getElementById('notePromptBox')
+                editingBox.innerText=""
+                editingBox.style.display = "none"
+                notePromptBox.style.display = "none"
+
+                weilin_copyPrompt.style.display="flex"
+                ge_box.style.display = "block"
+                ng_box.style.display = "block"
+                weilinGlobalPastSettingBox.style.display = "flex";
+            }
+        }else if(e.data.handel == 'fullBoxWeilinPromptBoxResponse'){
+            syncWindowActionButtons()
+        }else if(e.data.handel == 'nomBoxWeilinPromptBoxResponse'){
+            syncWindowActionButtons()
+        }else if(e.data.handel == 'changeSettingWeilinPromptUIChangeClose'){
+            getSettingChangUI = localStorage.getItem("weilin_prompt_ui_change_close")
+            // console.log(getSettingChangUI)
+            if(getSettingChangUI == 'false'){
+                const El = document.getElementById("weilin_prompt_ui_right_close_btn")
+                const El3 = document.getElementById("weilin_prompt_ui_left_close_btn")
+                const El2 = document.getElementById("weilin_prompt_ui_left_refresh_btn")
+                El.style.display="none";
+                El3.style.display="flex";
+                El2.style.marginLeft ="50px"
+            }else{
+                const El = document.getElementById("weilin_prompt_ui_left_close_btn")
+                const El3 = document.getElementById("weilin_prompt_ui_right_close_btn")
+                const El2 = document.getElementById("weilin_prompt_ui_left_refresh_btn")
+                El.style.display="none";
+                El3.style.display="flex";
+                El2.style.marginLeft ="0px"
+            }
+        }
+    }, false);
+
+    function updateValue(e) {
+        // console.log(log.value)
+        syncPromptToHost(false);
+    }
+
+
+    function closeDialog(){
+        if(window_type =='prompt'){
+            syncPromptToHost(true)
+            window.top.postMessage({handel: 'closeWeilinPromptBox', randomid: thisRandomId}, "*");
+        }
+    }
+
+    // 刷新页面
+    function iNeedRefresh(){
+        window.top.postMessage({handel: 'refreshWeilinPromptBox', randomid: thisRandomId}, "*");
+    }
+
+    document.onkeydown=function(e){
+        var keyNum=window.event ? e.keyCode :e.which;
+        if(keyNum==27){  
+            closeDialog()
+        }  
+    }
+
+
+    function fullBox(){
+        window.top.postMessage({handel: 'fullBoxWeilinPromptBox', randomid: thisRandomId}, "*");
+    }
+    function nomBox(){
+        window.top.postMessage({handel: 'nomBoxWeilinPromptBox', randomid: thisRandomId}, "*");
+    }
+
+</script>
+<script src="./js/newbieXmlWizard.js"></script>
+<script src="/sd-webui-prompt-all-in-one-js?v=studio-suite-20260622-language-fix"></script>
+</html>
