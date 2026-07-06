@@ -118,12 +118,15 @@ def find_windows_pids_on_tcp_port(port):
     except Exception:
         return []
     pids = set()
-    pattern = re.compile(rf"^\s*TCP\s+\S+:{int(port)}\s+\S+\s+\S+\s+(\d+)\s*$", re.IGNORECASE)
+    pattern = re.compile(rf"^\s*TCP\s+\S+:{int(port)}\s+\S+\s+(\S+)\s+(\d+)\s*$", re.IGNORECASE)
     for line in (result.stdout or "").splitlines():
         match = pattern.match(line)
         if match:
             try:
-                pids.add(int(match.group(1)))
+                state = str(match.group(1) or "").upper()
+                pid = int(match.group(2))
+                if pid > 0 and state not in {"TIME_WAIT", "CLOSE_WAIT"}:
+                    pids.add(pid)
             except ValueError:
                 pass
     return sorted(pids)
@@ -2484,6 +2487,8 @@ def preprocess_task_inputs(task_type, inputs):
     original_raw_tags = str(prepared.get("raw_tags", "")).strip()
     if original_raw_tags and not prepared.get("wd14_raw_tags_en"):
         prepared["wd14_raw_tags_en"] = split_tag_like_text(original_raw_tags)
+    if original_raw_tags and not prepared.get("wd14_raw_tags_text"):
+        prepared["wd14_raw_tags_text"] = original_raw_tags
 
     if task_type in ("expand_anime_tags", "normalize_anime_tags"):
         rewritten_tags, tag_hits = resolve_character_aliases_in_tag_text(prepared.get("raw_tags", ""))
@@ -2898,7 +2903,10 @@ def build_newbie_xml_prompt(json_result):
 
 
 def build_training_two_line_text(tag_items, caption_text):
-    first_line = ", ".join([str(item).strip() for item in tag_items if str(item).strip()]).strip()
+    if isinstance(tag_items, str):
+        first_line = tag_items.strip()
+    else:
+        first_line = ", ".join([str(item).strip() for item in tag_items if str(item).strip()]).strip()
     second_line = str(caption_text or "").strip()
     if first_line and second_line:
         return first_line + "\n\n" + second_line
@@ -3257,14 +3265,15 @@ def profile_format_prompt(profile_name, json_result):
         tag_source = training_base_tags or dedupe_tags(base_positive)
         tag_source = filter_training_character_pollution(tag_source, json_result)
         training_tags = build_training_passthrough_tags(tag_source)
+        training_tag_text = str(json_result.get("wd14_raw_tags_text", "")).strip() or training_tags
         training_caption = select_training_caption(json_result, training_tags)
         training_caption = sanitize_training_caption_character_pollution(training_caption, json_result)
-        training_text = build_training_two_line_text(training_tags, training_caption)
+        training_text = build_training_two_line_text(training_tag_text, training_caption)
         return {
             "target_profile": "anima_train_v1",
             "formatted_prompt": training_text,
             "formatted_negative_prompt": "",
-            "formatted_prompt_tags": ", ".join(training_tags),
+            "formatted_prompt_tags": training_tag_text if isinstance(training_tag_text, str) else ", ".join(training_tags),
             "formatted_prompt_caption": training_caption,
             "formatted_training_text": training_text,
             "profile_notes_cn": "Anima 训练标注格式：第一段完全保留 WD14 tags，空一行后第二段为 LLM 补充自然语言；不添加质量词和负面词。",
@@ -3274,14 +3283,15 @@ def profile_format_prompt(profile_name, json_result):
         tag_source = training_base_tags or dedupe_tags(base_positive)
         tag_source = filter_training_character_pollution(tag_source, json_result)
         training_tags = build_training_passthrough_tags(tag_source)
+        training_tag_text = str(json_result.get("wd14_raw_tags_text", "")).strip() or training_tags
         training_caption = select_training_caption(json_result, training_tags)
         training_caption = sanitize_training_caption_character_pollution(training_caption, json_result)
-        training_text = build_training_two_line_text(training_tags, training_caption)
+        training_text = build_training_two_line_text(training_tag_text, training_caption)
         return {
             "target_profile": "illustrious_train_v1",
             "formatted_prompt": training_text,
             "formatted_negative_prompt": "",
-            "formatted_prompt_tags": ", ".join(training_tags),
+            "formatted_prompt_tags": training_tag_text if isinstance(training_tag_text, str) else ", ".join(training_tags),
             "formatted_prompt_caption": training_caption,
             "formatted_training_text": training_text,
             "profile_notes_cn": "Illustrious 训练标注格式：第一段完全保留 WD14 tags，空一行后第二段为 LLM 补充自然语言；不追加质量词和负面词。",
@@ -3291,14 +3301,15 @@ def profile_format_prompt(profile_name, json_result):
         tag_source = training_base_tags or dedupe_tags(base_positive)
         tag_source = filter_training_character_pollution(tag_source, json_result)
         training_tags = build_training_passthrough_tags(tag_source)
+        training_tag_text = str(json_result.get("wd14_raw_tags_text", "")).strip() or training_tags
         training_caption = select_training_caption(json_result, training_tags)
         training_caption = sanitize_training_caption_character_pollution(training_caption, json_result)
-        training_text = build_training_two_line_text(training_tags, training_caption)
+        training_text = build_training_two_line_text(training_tag_text, training_caption)
         return {
             "target_profile": "noobai_train_v1",
             "formatted_prompt": training_text,
             "formatted_negative_prompt": "",
-            "formatted_prompt_tags": ", ".join(training_tags),
+            "formatted_prompt_tags": training_tag_text if isinstance(training_tag_text, str) else ", ".join(training_tags),
             "formatted_prompt_caption": training_caption,
             "formatted_training_text": training_text,
             "profile_notes_cn": "NoobAI 训练标注格式：第一段完全保留 WD14 tags，空一行后第二段为 LLM 补充自然语言；不追加质量词和负面词。",
@@ -3393,6 +3404,8 @@ def enrich_json_result(task_type, json_result, inputs):
     if inputs.get("wd14_raw_tags_en"):
         enriched["wd14_raw_tags_en"] = list(inputs.get("wd14_raw_tags_en", []))
         enriched["training_base_tags_en"] = get_training_base_tags(enriched, inputs)
+    if str(inputs.get("wd14_raw_tags_text", "")).strip():
+        enriched["wd14_raw_tags_text"] = str(inputs.get("wd14_raw_tags_text", "")).strip()
     target_profile = inputs.get("target_profile", "generic_tag_model")
     enriched.update(profile_format_prompt(target_profile, enriched))
     return enriched
@@ -4648,10 +4661,18 @@ class ManagedBackend:
     def _complete_messages(self, payload):
         if self.is_inprocess_provider:
             return self._complete_inprocess_messages(payload)
-        health_payload = http_get_json(self.health_check_url, timeout=5)
-        if not self.backend_health_is_ready(health_payload):
-            raise RuntimeError(self.backend_not_ready_reason(health_payload))
-        response = http_post_json(self.openai_base_url + "/chat/completions", payload, timeout=900)
+        try:
+            response = http_post_json(self.openai_base_url + "/chat/completions", payload, timeout=900)
+        except Exception as error:
+            try:
+                health_payload = http_get_json(self.health_check_url, timeout=5)
+                if not self.backend_health_is_ready(health_payload):
+                    raise RuntimeError(self.backend_not_ready_reason(health_payload)) from error
+            except Exception as health_error:
+                raise RuntimeError(
+                    f"backend completion request failed: {error}; health_check={health_error}"
+                ) from error
+            raise
         return (
             response.get("choices", [{}])[0]
             .get("message", {})
@@ -4736,12 +4757,15 @@ class ManagedBackend:
         }
 
     def _start_windows_process(self, command, exe_parent, log_handle, temp_subdir):
+        backend = self.config.get("backend", {})
+        window_mode = str(backend.get("managed_process_window_mode", "hidden") or "hidden").strip().lower()
         creationflags = 0
-        for flag_name in ("CREATE_NO_WINDOW", "DETACHED_PROCESS", "CREATE_NEW_PROCESS_GROUP"):
-            creationflags |= int(getattr(subprocess, flag_name, 0) or 0)
+        if window_mode != "visible":
+            creationflags |= int(getattr(subprocess, "CREATE_NO_WINDOW", 0) or 0)
+        creationflags |= int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) or 0)
 
         startupinfo = None
-        if hasattr(subprocess, "STARTUPINFO") and hasattr(subprocess, "STARTF_USESHOWWINDOW"):
+        if window_mode != "visible" and hasattr(subprocess, "STARTUPINFO") and hasattr(subprocess, "STARTF_USESHOWWINDOW"):
             startupinfo = subprocess.STARTUPINFO()
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
             startupinfo.wShowWindow = 0
@@ -4802,6 +4826,12 @@ class ManagedBackend:
                 f"parent_temp_cleanup={parent_temp_cleanup}\n\n"
             )
             log_handle.write(header.encode("utf-8", errors="replace"))
+            print(
+                "[TaskAgentWorker] launching managed backend "
+                f"provider={self.backend_provider} profile={self.current_backend_profile} "
+                f"ctx={self.current_context_size} log={log_path}",
+                flush=True,
+            )
             if os.name == "nt":
                 self._start_windows_process(command, exe_parent, log_handle, launch_temp_subdir)
             else:
@@ -4822,6 +4852,12 @@ class ManagedBackend:
             try:
                 health_payload = http_get_json(self.health_check_url, timeout=3)
                 if self.backend_health_is_ready(health_payload):
+                    print(
+                        "[TaskAgentWorker] managed backend ready "
+                        f"provider={self.backend_provider} profile={self.current_backend_profile} "
+                        f"pid={self.process_pid} log={self.last_launch_log_path}",
+                        flush=True,
+                    )
                     return {
                         "status": "started",
                         "backend_profile": self.current_backend_profile,
@@ -4865,13 +4901,30 @@ class ManagedBackend:
             target_context = int(context_size) if context_size else int(profile.get("default_context_size", 0) or 0)
             custom_model_path = normalize_optional_path(custom_model_path)
             custom_mmproj_path = normalize_optional_path(custom_mmproj_path)
+            target_runtime_spec = self.resolve_model_runtime_spec(
+                resolved_profile,
+                target_context,
+                custom_model_path=custom_model_path,
+                custom_mmproj_path=custom_mmproj_path,
+            )
             current = self.status()
+            current_runtime_options = {}
+            target_runtime_options = normalize_runtime_options(runtime_options)
+            if self.runtime_kcpps_path and Path(self.runtime_kcpps_path).exists():
+                current_runtime_options = target_runtime_options
             if (
                 current["healthy"]
-                and current.get("current_backend_profile") == resolved_profile
+                and current.get("current_backend_profile") == target_runtime_spec["profile_name"]
                 and int(current.get("current_context_size") or 0) == target_context
-                and (not custom_model_path or current.get("model_name") == Path(custom_model_path).stem)
+                and current.get("model_name") == target_runtime_spec["effective_name"]
+                and runtime_options_cache_key(current_runtime_options) == runtime_options_cache_key(target_runtime_options)
             ):
+                print(
+                    "[TaskAgentWorker] reusing managed backend "
+                    f"provider={self.backend_provider} profile={target_runtime_spec['profile_name']} "
+                    f"pid={current.get('backend_pid')} log={current.get('last_launch_log_path')}",
+                    flush=True,
+                )
                 return {"status": "ready", "details": current}
             if current["healthy"] and self._is_managed_process_alive():
                 self.unload()

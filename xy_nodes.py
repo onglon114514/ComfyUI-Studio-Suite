@@ -678,6 +678,280 @@ class StudioSuiteXYAxisLoraFile:
         return (_axis_json(axis_label or "LoRA File", items), matched)
 
 
+class StudioSuiteXYAxisLoraStacker:
+    CATEGORY = "Studio Suite/XY"
+    RETURN_TYPES = ("STRING", "STRING")
+    RETURN_NAMES = ("x_or_y_axis_json", "parsed_stacks")
+    FUNCTION = "build_axis"
+    DESCRIPTION = "Build an axis for Efficiency Nodes TSC LoRA Stacker style widgets: lora_count, lora_name_i and weights."
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "target_node_id": ("STRING", {"default": "", "multiline": False}),
+                "axis_label": ("STRING", {"default": "LoRA Stack", "multiline": False}),
+                "stack_lines": (
+                    "STRING",
+                    {
+                        "default": "single_a|example_a.safetensors|1.0\ncombo_ab|example_a.safetensors|0.8|example_b.safetensors|0.6",
+                        "multiline": True,
+                        "tooltip": "Simple: label|lora|weight|lora|weight. Advanced: label|lora|model|clip|lora|model|clip.",
+                    },
+                ),
+                "line_mode": (["simple_weight", "advanced_model_clip"], {"default": "simple_weight"}),
+                "max_slots": ("INT", {"default": 10, "min": 1, "max": 50}),
+                "input_mode_input": ("STRING", {"default": "input_mode", "multiline": False}),
+                "input_mode_value": ("STRING", {"default": "simple", "multiline": False}),
+                "lora_count_input": ("STRING", {"default": "lora_count", "multiline": False}),
+                "lora_name_prefix": ("STRING", {"default": "lora_name_", "multiline": False}),
+                "simple_weight_prefix": ("STRING", {"default": "lora_wt_", "multiline": False}),
+                "model_strength_prefix": ("STRING", {"default": "model_str_", "multiline": False}),
+                "clip_strength_prefix": ("STRING", {"default": "clip_str_", "multiline": False}),
+                "clear_unused_slots": ("BOOLEAN", {"default": True}),
+            },
+            "optional": {
+                "target_ref": ("STRING", {"default": "", "forceInput": True}),
+            },
+        }
+
+    def _parse_stack_line(self, line, line_mode):
+        parts = [part.strip() for part in line.split("|")]
+        if len(parts) < 3:
+            raise ValueError(f"LoRA stack line is too short: {line}")
+        label = parts[0]
+        values = parts[1:]
+        group_size = 2 if line_mode == "simple_weight" else 3
+        if len(values) % group_size != 0:
+            raise ValueError(f"LoRA stack line has invalid field count: {line}")
+        entries = []
+        for index in range(0, len(values), group_size):
+            lora_name = values[index]
+            if not lora_name or lora_name == "None":
+                continue
+            if line_mode == "simple_weight":
+                weight = float(_coerce_value(values[index + 1]))
+                entries.append((lora_name, weight, weight))
+            else:
+                model_strength = float(_coerce_value(values[index + 1]))
+                clip_strength = float(_coerce_value(values[index + 2]))
+                entries.append((lora_name, model_strength, clip_strength))
+        return label, entries
+
+    def build_axis(
+        self,
+        target_node_id,
+        axis_label,
+        stack_lines,
+        line_mode,
+        max_slots,
+        input_mode_input,
+        input_mode_value,
+        lora_count_input,
+        lora_name_prefix,
+        simple_weight_prefix,
+        model_strength_prefix,
+        clip_strength_prefix,
+        clear_unused_slots,
+        target_ref="",
+    ):
+        target_node_id = _resolve_target_node_id(target_node_id, target_ref)
+        items = []
+        parsed_lines = []
+        max_slots = int(max_slots)
+        for line in str(stack_lines or "").splitlines():
+            line = _strip_comment(line)
+            if not line:
+                continue
+            label, entries = self._parse_stack_line(line, line_mode)
+            if not entries:
+                continue
+            if len(entries) > max_slots:
+                raise ValueError(f"LoRA stack '{label}' has {len(entries)} entries, but max_slots is {max_slots}")
+            assignments = [
+                _assignment(target_node_id, input_mode_input, input_mode_value),
+                _assignment(target_node_id, lora_count_input, len(entries)),
+            ]
+            for index, (lora_name, model_strength, clip_strength) in enumerate(entries, start=1):
+                assignments.append(_assignment(target_node_id, f"{lora_name_prefix}{index}", lora_name))
+                if line_mode == "simple_weight":
+                    assignments.append(_assignment(target_node_id, f"{simple_weight_prefix}{index}", float(model_strength)))
+                assignments.append(_assignment(target_node_id, f"{model_strength_prefix}{index}", float(model_strength)))
+                assignments.append(_assignment(target_node_id, f"{clip_strength_prefix}{index}", float(clip_strength)))
+            if clear_unused_slots:
+                for index in range(len(entries) + 1, max_slots + 1):
+                    assignments.append(_assignment(target_node_id, f"{lora_name_prefix}{index}", "None"))
+                    if line_mode == "simple_weight":
+                        assignments.append(_assignment(target_node_id, f"{simple_weight_prefix}{index}", 1.0))
+                    assignments.append(_assignment(target_node_id, f"{model_strength_prefix}{index}", 1.0))
+                    assignments.append(_assignment(target_node_id, f"{clip_strength_prefix}{index}", 1.0))
+            items.append({"label": label, "safe_label": _safe_label(label), "assignments": assignments})
+            parsed_lines.append(
+                label + ": " + ", ".join(f"{Path(name).stem}({model:g},{clip:g})" for name, model, clip in entries)
+            )
+        if not items:
+            raise ValueError("No LoRA stack presets were parsed")
+        return (_axis_json(axis_label or "LoRA Stack", items), "\n".join(parsed_lines))
+
+
+class StudioSuiteXYAxisLoraLoaderChain:
+    CATEGORY = "Studio Suite/XY"
+    RETURN_TYPES = ("STRING", "STRING")
+    RETURN_NAMES = ("x_or_y_axis_json", "parsed_chains")
+    FUNCTION = "build_axis"
+    DESCRIPTION = "Build an axis for several serial LoRA Loader nodes. Each preset assigns lora_name/strength_model/strength_clip per loader."
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "target_node_ids": ("STRING", {"default": "", "multiline": False}),
+                "axis_label": ("STRING", {"default": "LoRA Chain", "multiline": False}),
+                "chain_lines": (
+                    "STRING",
+                    {
+                        "default": "lora_a|example_a.safetensors|1.0|1.0\ncombo_ab|example_a.safetensors|0.8|0.8|example_b.safetensors|0.6|0.6",
+                        "multiline": True,
+                        "tooltip": "Line format: label|lora1|model1|clip1|lora2|model2|clip2. target_node_ids order decides loader slots.",
+                    },
+                ),
+                "lora_name_input": ("STRING", {"default": "lora_name", "multiline": False}),
+                "strength_model_input": ("STRING", {"default": "strength_model", "multiline": False}),
+                "strength_clip_input": ("STRING", {"default": "strength_clip", "multiline": False}),
+                "missing_slot_mode": (["disable_strength", "keep_existing", "set_none"], {"default": "disable_strength"}),
+            }
+        }
+
+    def build_axis(
+        self,
+        target_node_ids,
+        axis_label,
+        chain_lines,
+        lora_name_input,
+        strength_model_input,
+        strength_clip_input,
+        missing_slot_mode,
+    ):
+        node_ids = [item.strip() for item in str(target_node_ids or "").replace("\n", ",").split(",") if item.strip()]
+        if not node_ids:
+            raise ValueError("target_node_ids is required")
+        items = []
+        parsed_lines = []
+        for line in str(chain_lines or "").splitlines():
+            line = _strip_comment(line)
+            if not line:
+                continue
+            parts = [part.strip() for part in line.split("|")]
+            if len(parts) < 4 or (len(parts) - 1) % 3 != 0:
+                raise ValueError(f"LoRA chain line must be label|lora|model|clip...: {line}")
+            label = parts[0]
+            values = parts[1:]
+            entries = []
+            for index in range(0, len(values), 3):
+                entries.append((values[index], float(_coerce_value(values[index + 1])), float(_coerce_value(values[index + 2]))))
+            if len(entries) > len(node_ids):
+                raise ValueError(f"LoRA chain '{label}' needs {len(entries)} nodes, but only {len(node_ids)} target ids were provided")
+            assignments = []
+            for index, node_id in enumerate(node_ids):
+                if index < len(entries):
+                    lora_name, model_strength, clip_strength = entries[index]
+                    assignments.append(_assignment(node_id, lora_name_input, lora_name))
+                    assignments.append(_assignment(node_id, strength_model_input, model_strength))
+                    assignments.append(_assignment(node_id, strength_clip_input, clip_strength))
+                elif missing_slot_mode == "disable_strength":
+                    assignments.append(_assignment(node_id, strength_model_input, 0.0))
+                    assignments.append(_assignment(node_id, strength_clip_input, 0.0))
+                elif missing_slot_mode == "set_none":
+                    assignments.append(_assignment(node_id, lora_name_input, "None"))
+                    assignments.append(_assignment(node_id, strength_model_input, 0.0))
+                    assignments.append(_assignment(node_id, strength_clip_input, 0.0))
+            items.append({"label": label, "safe_label": _safe_label(label), "assignments": assignments})
+            parsed_lines.append(label + ": " + ", ".join(f"{Path(name).stem}({model:g},{clip:g})" for name, model, clip in entries))
+        if not items:
+            raise ValueError("No LoRA chain presets were parsed")
+        return (_axis_json(axis_label or "LoRA Chain", items), "\n".join(parsed_lines))
+
+
+class StudioSuiteXYAxisLoraBlockWeight:
+    CATEGORY = "Studio Suite/XY"
+    RETURN_TYPES = ("STRING", "STRING")
+    RETURN_NAMES = ("x_or_y_axis_json", "parsed_block_weights")
+    FUNCTION = "build_axis"
+    DESCRIPTION = "Build an axis for Inspire LoRA Block Weight nodes by assigning block_vector and optional strength/A/B/preset fields."
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "target_node_id": ("STRING", {"default": "", "multiline": False}),
+                "axis_label": ("STRING", {"default": "LoRA Block Weight", "multiline": False}),
+                "block_weight_lines": (
+                    "STRING",
+                    {
+                        "default": "all|1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1|1.0|1.0\nearly_off|0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1|1.0|1.0\nlate_off|1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0|1.0|1.0",
+                        "multiline": True,
+                        "tooltip": "Line format: label|block_vector|model_strength|clip_strength|A|B|preset. Fields after block_vector are optional.",
+                    },
+                ),
+                "block_vector_input": ("STRING", {"default": "block_vector", "multiline": False}),
+                "strength_model_input": ("STRING", {"default": "strength_model", "multiline": False}),
+                "strength_clip_input": ("STRING", {"default": "strength_clip", "multiline": False}),
+                "a_input": ("STRING", {"default": "A", "multiline": False}),
+                "b_input": ("STRING", {"default": "B", "multiline": False}),
+                "preset_input": ("STRING", {"default": "preset", "multiline": False}),
+                "set_preset_to_custom": ("BOOLEAN", {"default": False}),
+            },
+            "optional": {
+                "target_ref": ("STRING", {"default": "", "forceInput": True}),
+            },
+        }
+
+    def build_axis(
+        self,
+        target_node_id,
+        axis_label,
+        block_weight_lines,
+        block_vector_input,
+        strength_model_input,
+        strength_clip_input,
+        a_input,
+        b_input,
+        preset_input,
+        set_preset_to_custom,
+        target_ref="",
+    ):
+        target_node_id = _resolve_target_node_id(target_node_id, target_ref)
+        items = []
+        parsed_lines = []
+        for line in str(block_weight_lines or "").splitlines():
+            line = _strip_comment(line)
+            if not line:
+                continue
+            parts = [part.strip() for part in line.split("|")]
+            if len(parts) < 2:
+                raise ValueError(f"LoRA block weight line must be label|block_vector: {line}")
+            label = parts[0]
+            block_vector = parts[1]
+            assignments = [_assignment(target_node_id, block_vector_input, block_vector)]
+            if len(parts) >= 3 and parts[2]:
+                assignments.append(_assignment(target_node_id, strength_model_input, float(_coerce_value(parts[2]))))
+            if len(parts) >= 4 and parts[3]:
+                assignments.append(_assignment(target_node_id, strength_clip_input, float(_coerce_value(parts[3]))))
+            if len(parts) >= 5 and parts[4]:
+                assignments.append(_assignment(target_node_id, a_input, float(_coerce_value(parts[4]))))
+            if len(parts) >= 6 and parts[5]:
+                assignments.append(_assignment(target_node_id, b_input, float(_coerce_value(parts[5]))))
+            if len(parts) >= 7 and parts[6]:
+                assignments.append(_assignment(target_node_id, preset_input, parts[6]))
+            elif set_preset_to_custom:
+                assignments.append(_assignment(target_node_id, preset_input, "Preset"))
+            items.append({"label": label, "safe_label": _safe_label(label), "assignments": assignments})
+            parsed_lines.append(f"{label}: {block_vector}")
+        if not items:
+            raise ValueError("No LoRA block weight presets were parsed")
+        return (_axis_json(axis_label or "LoRA Block Weight", items), "\n".join(parsed_lines))
+
+
 class StudioSuiteXYMatrix:
     CATEGORY = "Studio Suite/XY"
     RETURN_TYPES = ("STRING", "STRING")
@@ -958,6 +1232,9 @@ NODE_CLASS_MAPPINGS = {
     "StudioSuiteXYAxisFreeU": StudioSuiteXYAxisFreeU,
     "StudioSuiteXYAxisLoraStrength": StudioSuiteXYAxisLoraStrength,
     "StudioSuiteXYAxisLoraFile": StudioSuiteXYAxisLoraFile,
+    "StudioSuiteXYAxisLoraStacker": StudioSuiteXYAxisLoraStacker,
+    "StudioSuiteXYAxisLoraLoaderChain": StudioSuiteXYAxisLoraLoaderChain,
+    "StudioSuiteXYAxisLoraBlockWeight": StudioSuiteXYAxisLoraBlockWeight,
     "StudioSuiteXYMatrix": StudioSuiteXYMatrix,
     "StudioSuiteXYQueue": StudioSuiteXYQueue,
     "StudioSuiteXYGridBuilder": StudioSuiteXYGridBuilder,
@@ -972,6 +1249,9 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "StudioSuiteXYAxisFreeU": "Studio Suite XY Axis - FreeU",
     "StudioSuiteXYAxisLoraStrength": "Studio Suite XY Axis - LoRA Strength",
     "StudioSuiteXYAxisLoraFile": "Studio Suite XY Axis - LoRA File",
+    "StudioSuiteXYAxisLoraStacker": "Studio Suite XY Axis - LoRA Stacker",
+    "StudioSuiteXYAxisLoraLoaderChain": "Studio Suite XY Axis - LoRA Loader Chain",
+    "StudioSuiteXYAxisLoraBlockWeight": "Studio Suite XY Axis - LoRA Block Weight",
     "StudioSuiteXYMatrix": "Studio Suite XY Matrix",
     "StudioSuiteXYQueue": "Studio Suite XY Queue",
     "StudioSuiteXYGridBuilder": "Studio Suite XY Grid Builder",

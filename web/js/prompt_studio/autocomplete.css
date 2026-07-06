@@ -1,0 +1,48 @@
+.prompt-studio-autocomplete {
+    position: static;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    width: 100%;
+    max-height: 220px;
+    overflow: auto;
+    padding: 8px;
+    border: 1px solid var(--border-color, #444);
+    border-radius: 10px;
+    background: rgba(24, 24, 28, 0.97);
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.32);
+}
+
+.prompt-studio-autocomplete-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+    line-height: 1.2;
+}
+
+.prompt-studio-autocomplete-item:hover,
+.prompt-studio-autocomplete-item--selected {
+    background: rgba(255, 184, 0, 0.16);
+}
+
+.prompt-studio-autocomplete-highlight {
+    color: #ffbe55;
+    font-weight: 600;
+}
+
+.prompt-studio-autocomplete-pill {
+    margin-left: auto;
+    padding: 2px 6px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.1);
+    font-size: 11px;
+}
+
+.prompt-studio-autocomplete-item-info {
+    color: inherit;
+    text-decoration: none;
+}

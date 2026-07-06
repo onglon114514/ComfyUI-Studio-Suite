@@ -1,0 +1,28 @@
+.prompt-studio-model-dialog {
+    min-width: min(960px, 92vw);
+    max-width: 92vw;
+}
+
+.prompt-studio-model-dialog main {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(260px, 340px);
+    gap: 20px;
+}
+
+.prompt-studio-model-dialog section {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.prompt-studio-model-dialog textarea {
+    min-height: 90px;
+    resize: vertical;
+}
+
+.prompt-studio-trained-word-list {
+    max-height: 320px;
+    overflow: auto;
+    margin: 0;
+    padding-left: 18px;
+}

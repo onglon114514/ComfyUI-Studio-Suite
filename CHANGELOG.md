@@ -23,6 +23,13 @@ This is the local development line intended for the next GitHub push after `v0.1
   - filter by substring or wildcard
   - combine LoRA file axis with strength axis
   - write manifest JSON for later grid generation
+- Added LoRA stack and block-weight XY helpers:
+  - Efficiency/TSC LoRA Stacker axis
+  - serial core `LoraLoader` chain axis
+  - Inspire LoRA block-weight axis for layer/block tests
+- Added Task Agent UI helpers:
+  - dynamic slot refresh for task/resource/context module nodes
+  - floating backend/task monitor panel
 - Added a documented conservative tagging baseline for 4060-class machines:
   - WD14 tags are preserved as the first line
   - Gemma 4 E4B Q4 in-process text captioning adds the natural-language line
@@ -32,6 +39,7 @@ This is the local development line intended for the next GitHub push after `v0.1
   - group tag YAML files
   - local complete tag CSV
   - prompt history/favorite/settings JSON copied from the local legacy Prompt Studio data
+- Added missing Prompt Studio frontend modules required by the output-node editor buttons.
 - Added documentation for XY matrix usage, LoRA comparison, and the stable tagging baseline.
 
 ### Changed
@@ -41,11 +49,10 @@ This is the local development line intended for the next GitHub push after `v0.1
 - Task Agent training-caption behavior now preserves WD14 tags for training workflows and uses the LLM mainly for natural-language caption assistance.
 - `chain_wd14_to_anima_train_caption.json` now uses `generate_natural_caption` directly instead of the heavier `refine_wd14_tags` step, because the refine step made captions too generic in baseline testing.
 - Managed KoboldCpp temp handling now uses unique per-launch temp directories and reports cleanup details.
+- Prompt Studio output nodes now reinstall the editor button after existing workflow nodes are loaded, which prevents missing buttons on some ComfyUI/frontend load orders.
 
 ### Known Limitations
 
-- LoRA stack comparison is not implemented yet.
-- LoRA block/layer weight testing is not implemented yet.
 - Task Agent local LLM execution has a tested low-VRAM text-only baseline, but long unattended batch stability still needs more testing.
 - Managed KoboldCpp auto-launch is not recommended as the default baseline yet; on the test machine the current KoboldCpp executable failed during PyInstaller self-extraction.
 - Prompt Studio is feature-complete enough for use, but opening the editor can still be slow and there are known UI bugs.

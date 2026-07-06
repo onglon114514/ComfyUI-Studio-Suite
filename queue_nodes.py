@@ -911,12 +911,12 @@ class IndependentResultWriterProxy:
 
 
 class IndependentResultWriter:
-    CATEGORY = "Studio Suite/Queue"
+    CATEGORY = "Studio Suite/Queue/Internal"
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("saved",)
     FUNCTION = "save"
     OUTPUT_NODE = True
-    DESCRIPTION = "Real output node used only inside queued child prompts. Saves image files, optional prompt .txt files, and optional workflow metadata sidecars."
+    DESCRIPTION = "Internal output node used only inside queued child prompts. Do not add manually; use Independent Result Writer (Proxy) in the parent workflow."
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -1296,7 +1296,7 @@ NODE_CLASS_MAPPINGS = {
 NODE_DISPLAY_NAME_MAPPINGS = {
     "IndependentLoadImagePath": "Independent Load Image Path",
     "IndependentResultWriterProxy": "Independent Result Writer (Proxy)",
-    "IndependentResultWriter": "Independent Result Writer",
+    "IndependentResultWriter": "Independent Result Writer (Internal)",
     "IndependentPromptFolderQueue": "Independent Prompt Folder Queue",
 }
 

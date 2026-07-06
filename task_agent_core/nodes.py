@@ -101,6 +101,13 @@ _CLEANUP_UTILS = load_cleanup_utils()
 cleanup_comfy_resources = _CLEANUP_UTILS.cleanup_comfy_resources
 get_combined_memory_snapshot = _CLEANUP_UTILS.get_combined_memory_snapshot
 
+from .runtime_state import (
+    fail_task_event,
+    finish_task_event,
+    start_task_event,
+    update_task_event,
+)
+
 
 def load_backend_profiles():
     if BACKEND_PROFILES_PATH.exists():
@@ -919,6 +926,50 @@ def parse_json_value_or_none(text):
         return None
 
 
+def clamp_int(value, default, minimum, maximum):
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        number = int(default)
+    return max(int(minimum), min(int(maximum), number))
+
+
+def numbered_values(kwargs, prefix, count, maximum, include_legacy=None):
+    values = []
+    legacy = include_legacy or {}
+    for index in range(1, int(maximum) + 1):
+        key = f"{prefix}_{index}"
+        value = kwargs.get(key, legacy.get(key, ""))
+        if index <= int(count) and str(value or "").strip():
+            values.append(str(value).strip())
+    return values
+
+
+def merge_context_slots(label, primary_text, primary_path, extra_text_values, extra_path_values):
+    merged = []
+    errors = []
+
+    def add_slot(slot_name, text_value="", path_value=""):
+        resolved, error = resolve_file_or_text(text_value, path_value)
+        if error:
+            errors.append(f"{slot_name}: {error}")
+        if str(resolved or "").strip():
+            merged.append((slot_name, str(resolved).strip()))
+
+    add_slot(label, primary_text, primary_path)
+    for index, text_value in enumerate(extra_text_values, start=2):
+        add_slot(f"{label}_{index}", text_value, "")
+    for index, path_value in enumerate(extra_path_values, start=2):
+        add_slot(f"{label}_path_{index}", "", path_value)
+
+    if not merged:
+        return "", errors
+    if len(merged) == 1:
+        return merged[0][1], errors
+    blocks = [f"[{slot_name}]\n{content}" for slot_name, content in merged]
+    return "\n\n".join(blocks), errors
+
+
 def compose_context_bundle_internal(
     *,
     task_type_override="",
@@ -1582,6 +1633,17 @@ def execute_tag_utility_internal(
         or str(context_bundle.get("purpose", "")).strip()
         or str(purpose).strip()
     )
+    monitor_task_id = start_task_event(
+        "tag_utility",
+        resolved_task_type,
+        {
+            "backend_provider": normalize_backend_provider_choice(backend_provider),
+            "backend_profile": parse_backend_profile_choice(backend_profile),
+            "model_source": str(model_source or ""),
+            "target_profile": resolved_target_profile,
+            "has_context_bundle": bool(context_bundle_raw),
+        },
+    )
     input_field = (
         str(task_config.get("input_field", "")).strip()
         or str(context_bundle.get("input_field", "")).strip()
@@ -1613,6 +1675,11 @@ def execute_tag_utility_internal(
 
     needs_direct_input = not has_task_chain
     if needs_direct_input and input_field and not str(inputs.get(input_field, "")).strip():
+        fail_task_event(
+            monitor_task_id,
+            f"missing_task_input: field={input_field}",
+            resolved_task_type,
+        )
         return (
             "",
             "",
@@ -1676,6 +1743,11 @@ def execute_tag_utility_internal(
                 payload.get("task_type", ""),
                 payload.get("inputs", {}),
             ):
+                fail_task_event(
+                    monitor_task_id,
+                    "missing_custom_mmproj_path",
+                    str(payload.get("task_type", "")).strip(),
+                )
                 return (
                     "",
                     "",
@@ -1685,6 +1757,17 @@ def execute_tag_utility_internal(
                 )
 
             try:
+                update_task_event(
+                    monitor_task_id,
+                    "chain_step",
+                    f"running step {index + 1}/{len(payloads)}: {payload.get('task_type', '')}",
+                    str(payload.get("task_type", "")).strip(),
+                    {
+                        "step_index": index + 1,
+                        "step_count": len(payloads),
+                        "max_tokens": int(payload.get("max_tokens", 900)),
+                    },
+                )
                 response = run_task_direct(
                     gateway_url=gateway_url,
                     backend_provider=backend_provider,
@@ -1701,12 +1784,39 @@ def execute_tag_utility_internal(
                     runtime_options=runtime_options,
                 )
             except Exception as error:
+                fail_task_event(
+                    monitor_task_id,
+                    str(error),
+                    str(payload.get("task_type", "")).strip(),
+                    {"step_index": index + 1, "step_count": len(payloads)},
+                )
                 raise RuntimeError(
                     f"TaskAgent chain step {index + 1}/{len(payloads)} failed "
                     f"({payload.get('task_type', '')}): {error}"
                 ) from error
 
-            response = ensure_task_response_ok(response, str(payload.get("task_type", "")).strip())
+            try:
+                response = ensure_task_response_ok(response, str(payload.get("task_type", "")).strip())
+            except Exception as error:
+                fail_task_event(
+                    monitor_task_id,
+                    str(error),
+                    str(payload.get("task_type", "")).strip(),
+                    {"step_index": index + 1, "step_count": len(payloads)},
+                )
+                raise
+            update_task_event(
+                monitor_task_id,
+                "chain_step_done",
+                f"finished step {index + 1}/{len(payloads)}: {payload.get('task_type', '')}",
+                str(payload.get("task_type", "")).strip(),
+                {
+                    "step_index": index + 1,
+                    "step_count": len(payloads),
+                    "status": response.get("status", "unknown"),
+                    "raw_text_preview": str(response.get("raw_text", ""))[:1200],
+                },
+            )
 
             chain_debug.append(
                 {
@@ -1732,6 +1842,11 @@ def execute_tag_utility_internal(
             resolved_task_type,
             inputs,
         ):
+            fail_task_event(
+                monitor_task_id,
+                "missing_custom_mmproj_path",
+                resolved_task_type,
+            )
             return (
                 "",
                 "",
@@ -1750,6 +1865,13 @@ def execute_tag_utility_internal(
             "inputs": inputs,
         }
         try:
+            update_task_event(
+                monitor_task_id,
+                "single_task",
+                f"running: {resolved_task_type}",
+                resolved_task_type,
+                {"max_tokens": int(payload.get("max_tokens", 900))},
+            )
             response = run_task_direct(
                 gateway_url=gateway_url,
                 backend_provider=backend_provider,
@@ -1766,11 +1888,17 @@ def execute_tag_utility_internal(
                 runtime_options=runtime_options,
             )
         except Exception as error:
+            fail_task_event(monitor_task_id, str(error), resolved_task_type)
             raise RuntimeError(f"TaskAgent tag utility backend failed ({resolved_task_type}): {error}") from error
 
-        response = ensure_task_response_ok(response, resolved_task_type)
+        try:
+            response = ensure_task_response_ok(response, resolved_task_type)
+        except Exception as error:
+            fail_task_event(monitor_task_id, str(error), resolved_task_type)
+            raise
 
     if response is None:
+        fail_task_event(monitor_task_id, "no_response", resolved_task_type)
         return ("", "", "", "", "no_response")
 
     raw_text = response.get("raw_text", "")
@@ -1779,6 +1907,17 @@ def execute_tag_utility_internal(
         json_result["_task_agent_chain"] = chain_debug
     json_text = json.dumps(json_result, ensure_ascii=False, indent=2)
     positive_prompt, negative_prompt, status = prompts_from_response(response)
+    finish_task_event(
+        monitor_task_id,
+        status="success",
+        message=status,
+        task_type=resolved_task_type,
+        output_text=raw_text or positive_prompt or json_text,
+        metadata={
+            "positive_prompt_preview": str(positive_prompt or "")[:1600],
+            "negative_prompt_preview": str(negative_prompt or "")[:800],
+        },
+    )
     return (positive_prompt, negative_prompt, raw_text, json_text, status)
 
 
@@ -2278,14 +2417,19 @@ class TaskAgentResourceLoaderNode:
 class TaskAgentResourceBundleMergeNode:
     @classmethod
     def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "resource_bundle_json_1": ("STRING", {"default": "", "multiline": True, "defaultInput": True}),
-                "resource_bundle_json_2": ("STRING", {"default": "", "multiline": True, "defaultInput": True}),
-                "resource_bundle_json_3": ("STRING", {"default": "", "multiline": True, "defaultInput": True}),
-                "resource_bundle_json_4": ("STRING", {"default": "", "multiline": True, "defaultInput": True}),
-            }
-        }
+        required = {}
+        for index in range(1, 5):
+            required[f"resource_bundle_json_{index}"] = (
+                "STRING",
+                {"default": "", "multiline": True, "defaultInput": True},
+            )
+        required["resource_bundle_count"] = ("INT", {"default": 4, "min": 1, "max": 12, "step": 1})
+        for index in range(5, 13):
+            required[f"resource_bundle_json_{index}"] = (
+                "STRING",
+                {"default": "", "multiline": True, "defaultInput": True},
+            )
+        return {"required": required}
 
     RETURN_TYPES = ("STRING", "STRING")
     RETURN_NAMES = ("resource_bundle_json", "status")
@@ -2293,24 +2437,12 @@ class TaskAgentResourceBundleMergeNode:
     CATEGORY = "Task Agent/配置"
     DESCRIPTION = "合并多个资源加载器输出，便于同时挂载任务链预设、词典、世界书、参考说明等上下文资源。"
 
-    def merge(
-        self,
-        resource_bundle_json_1,
-        resource_bundle_json_2,
-        resource_bundle_json_3,
-        resource_bundle_json_4,
-    ):
+    def merge(self, resource_bundle_count=4, **kwargs):
         bundles = []
         errors = []
-        for index, raw in enumerate(
-            [
-                resource_bundle_json_1,
-                resource_bundle_json_2,
-                resource_bundle_json_3,
-                resource_bundle_json_4,
-            ],
-            start=1,
-        ):
+        count = clamp_int(resource_bundle_count, 4, 1, 12)
+        for index in range(1, count + 1):
+            raw = kwargs.get(f"resource_bundle_json_{index}", "")
             text = str(raw or "").strip()
             if not text:
                 continue
@@ -2355,19 +2487,22 @@ class TaskAgentTaskModuleComposerNode:
             "structured_json_v1",
             "structured_json_train_v1",
         ]
-        return {
-            "required": {
-                "task_module_1": (task_options,),
-                "task_module_2": (task_options,),
-                "task_module_3": (task_options,),
-                "task_module_4": (task_options,),
+        required = {}
+        for index in range(1, 5):
+            required[f"task_module_{index}"] = (task_options,)
+        required.update(
+            {
                 "format_module": (format_options,),
                 "translate_direction": (["", "zh_to_en_tags", "en_to_zh_explain"],),
                 "style_hint": ("STRING", {"default": "", "multiline": True}),
                 "purpose": ("STRING", {"default": "", "multiline": True}),
                 "fixed_inputs_text": ("STRING", {"default": "", "multiline": True}),
             }
-        }
+        )
+        required["task_module_count"] = ("INT", {"default": 4, "min": 1, "max": 12, "step": 1})
+        for index in range(5, 13):
+            required[f"task_module_{index}"] = (task_options,)
+        return {"required": required}
 
     RETURN_TYPES = ("STRING", "STRING")
     RETURN_NAMES = ("task_bundle_json", "status")
@@ -2377,19 +2512,19 @@ class TaskAgentTaskModuleComposerNode:
 
     def compose_task_bundle(
         self,
-        task_module_1,
-        task_module_2,
-        task_module_3,
-        task_module_4,
         format_module,
         translate_direction,
         style_hint,
         purpose,
         fixed_inputs_text,
+        task_module_count=4,
+        **kwargs,
     ):
         fixed_inputs = parse_json_dict_or_none(fixed_inputs_text) or {}
+        count = clamp_int(task_module_count, 4, 1, 12)
+        task_modules = numbered_values(kwargs, "task_module", count, 12)
         bundle = build_task_bundle_struct(
-            [task_module_1, task_module_2, task_module_3, task_module_4],
+            task_modules,
             format_module,
             translate_direction=translate_direction,
             style_hint=style_hint,
@@ -2487,22 +2622,44 @@ class TaskAgentLegacyContextComposerNode:
 class TaskAgentContextComposerNode:
     @classmethod
     def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "system_prompt_text": ("STRING", {"default": "", "multiline": True, "defaultInput": True}),
-                "character_card_text": ("STRING", {"default": "", "multiline": True, "defaultInput": True}),
-                "world_book_text": ("STRING", {"default": "", "multiline": True, "defaultInput": True}),
-                "regex_rules_text": ("STRING", {"default": "", "multiline": True, "defaultInput": True}),
-                "extra_notes_text": ("STRING", {"default": "", "multiline": True, "defaultInput": True}),
-                "system_prompt_path": ("STRING", {"default": "", "multiline": False, "defaultInput": True}),
-                "character_card_path": ("STRING", {"default": "", "multiline": False, "defaultInput": True}),
-                "world_book_path": ("STRING", {"default": "", "multiline": False, "defaultInput": True}),
-                "regex_rules_path": ("STRING", {"default": "", "multiline": False, "defaultInput": True}),
+        required = {
+            "system_prompt_text": ("STRING", {"default": "", "multiline": True, "defaultInput": True}),
+            "character_card_text": ("STRING", {"default": "", "multiline": True, "defaultInput": True}),
+            "world_book_text": ("STRING", {"default": "", "multiline": True, "defaultInput": True}),
+            "regex_rules_text": ("STRING", {"default": "", "multiline": True, "defaultInput": True}),
+            "extra_notes_text": ("STRING", {"default": "", "multiline": True, "defaultInput": True}),
+            "system_prompt_path": ("STRING", {"default": "", "multiline": False, "defaultInput": True}),
+            "character_card_path": ("STRING", {"default": "", "multiline": False, "defaultInput": True}),
+            "world_book_path": ("STRING", {"default": "", "multiline": False, "defaultInput": True}),
+            "regex_rules_path": ("STRING", {"default": "", "multiline": False, "defaultInput": True}),
+        }
+        required.update(
+            {
                 "image_path": ("STRING", {"default": "", "multiline": False, "defaultInput": True}),
                 "task_bundle_json": ("STRING", {"default": "", "multiline": True, "defaultInput": True}),
                 "resource_bundle_json": ("STRING", {"default": "", "multiline": True, "defaultInput": True}),
+                "world_book_count": ("INT", {"default": 1, "min": 1, "max": 8, "step": 1}),
+                "regex_rules_count": ("INT", {"default": 1, "min": 1, "max": 8, "step": 1}),
             }
-        }
+        )
+        for index in range(2, 9):
+            required[f"world_book_text_{index}"] = (
+                "STRING",
+                {"default": "", "multiline": True, "defaultInput": True},
+            )
+            required[f"world_book_path_{index}"] = (
+                "STRING",
+                {"default": "", "multiline": False, "defaultInput": True},
+            )
+            required[f"regex_rules_text_{index}"] = (
+                "STRING",
+                {"default": "", "multiline": True, "defaultInput": True},
+            )
+            required[f"regex_rules_path_{index}"] = (
+                "STRING",
+                {"default": "", "multiline": False, "defaultInput": True},
+            )
+        return {"required": required}
 
     RETURN_TYPES = ("STRING", "STRING")
     RETURN_NAMES = ("context_bundle_json", "status")
@@ -2512,33 +2669,74 @@ class TaskAgentContextComposerNode:
 
     def compose(
         self,
-        system_prompt_text,
-        character_card_text,
-        world_book_text,
-        regex_rules_text,
-        extra_notes_text,
-        system_prompt_path,
-        character_card_path,
-        world_book_path,
-        regex_rules_path,
-        image_path,
-        task_bundle_json,
-        resource_bundle_json,
+        system_prompt_text="",
+        character_card_text="",
+        world_book_text="",
+        regex_rules_text="",
+        extra_notes_text="",
+        system_prompt_path="",
+        character_card_path="",
+        world_book_path="",
+        regex_rules_path="",
+        image_path="",
+        task_bundle_json="",
+        resource_bundle_json="",
+        world_book_count=1,
+        regex_rules_count=1,
+        **kwargs,
     ):
-        return compose_context_bundle_internal(
+        world_count = clamp_int(world_book_count, 1, 1, 8)
+        regex_count = clamp_int(regex_rules_count, 1, 1, 8)
+        world_text_values = [
+            kwargs.get(f"world_book_text_{index}", "")
+            for index in range(2, world_count + 1)
+        ]
+        world_path_values = [
+            kwargs.get(f"world_book_path_{index}", "")
+            for index in range(2, world_count + 1)
+        ]
+        regex_text_values = [
+            kwargs.get(f"regex_rules_text_{index}", "")
+            for index in range(2, regex_count + 1)
+        ]
+        regex_path_values = [
+            kwargs.get(f"regex_rules_path_{index}", "")
+            for index in range(2, regex_count + 1)
+        ]
+        world_book_merged, world_errors = merge_context_slots(
+            "world_book",
+            world_book_text,
+            world_book_path,
+            world_text_values,
+            world_path_values,
+        )
+        regex_rules_merged, regex_errors = merge_context_slots(
+            "regex_rules",
+            regex_rules_text,
+            regex_rules_path,
+            regex_text_values,
+            regex_path_values,
+        )
+        context_json, status = compose_context_bundle_internal(
             system_prompt_text=system_prompt_text,
             character_card_text=character_card_text,
-            world_book_text=world_book_text,
-            regex_rules_text=regex_rules_text,
+            world_book_text=world_book_merged,
+            regex_rules_text=regex_rules_merged,
             extra_notes_text=extra_notes_text,
             system_prompt_path=system_prompt_path,
             character_card_path=character_card_path,
-            world_book_path=world_book_path,
-            regex_rules_path=regex_rules_path,
+            world_book_path="",
+            regex_rules_path="",
             image_path=image_path,
             task_bundle_json=task_bundle_json,
             resource_bundle_json=resource_bundle_json,
         )
+        errors = []
+        if status and status != "ok":
+            errors.append(status)
+        errors.extend(world_errors)
+        errors.extend(regex_errors)
+        return (context_json, "ok" if not errors else "; ".join(errors))
 
 
 class TaskAgentImagePathBridgeNode:
@@ -2640,6 +2838,100 @@ class TaskAgentImagePathBridgeNode:
         return (str(output_path), image, status)
 
 
+class TaskAgentBackendWorkerNode:
+    CATEGORY = "Task Agent/后端管理"
+    RETURN_TYPES = ("STRING", "STRING", "STRING")
+    RETURN_NAMES = ("status", "status_json", "log_tail")
+    FUNCTION = "manage"
+    OUTPUT_NODE = False
+    DESCRIPTION = "Task Agent 后端 worker 管理节点。用于批量任务前预加载/复用 koboldcpp 或 llama.cpp 后端，查看日志，或在任务末尾手动卸载。"
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        common = build_common_inputs()
+        common.update(
+            {
+                "action": (
+                    ["load", "status", "unload", "restart"],
+                    {
+                        "default": "status",
+                        "tooltip": "load=预加载并复用后端；status=只查看状态；unload=释放后端；restart=先卸载再加载。",
+                    },
+                ),
+            }
+        )
+        return {"required": common}
+
+    def manage(
+        self,
+        gateway_url,
+        backend_provider,
+        model_source,
+        backend_profile,
+        custom_model_path,
+        custom_mmproj_path,
+        context_size,
+        llama_cpp_python_n_gpu_layers,
+        llama_cpp_python_n_batch,
+        llama_cpp_python_threads,
+        auto_load_backend,
+        unload_after_run,
+        action,
+    ):
+        del auto_load_backend, unload_after_run
+        runtime_options = build_runtime_options(
+            llama_cpp_python_n_gpu_layers,
+            llama_cpp_python_n_batch,
+            llama_cpp_python_threads,
+        )
+        backend_base_url = resolve_backend_base_url(gateway_url, backend_provider)
+        backend = get_direct_backend(
+            backend_base_url=backend_base_url,
+            backend_provider=backend_provider,
+        )
+        action_key = str(action or "status").strip().lower()
+        try:
+            if action_key == "unload":
+                result = backend.unload()
+            elif action_key == "restart":
+                unload_result = backend.unload()
+                load_result = backend.ensure_loaded(
+                    backend_profile=parse_backend_profile_choice(backend_profile),
+                    context_size=int(context_size),
+                    custom_model_path=(str(custom_model_path).strip() if model_source == "custom_path" else ""),
+                    custom_mmproj_path=str(custom_mmproj_path).strip(),
+                    runtime_options=runtime_options,
+                )
+                result = {"status": "restarted", "unload_result": unload_result, "load_result": load_result}
+            elif action_key == "load":
+                result = backend.ensure_loaded(
+                    backend_profile=parse_backend_profile_choice(backend_profile),
+                    context_size=int(context_size),
+                    custom_model_path=(str(custom_model_path).strip() if model_source == "custom_path" else ""),
+                    custom_mmproj_path=str(custom_mmproj_path).strip(),
+                    runtime_options=runtime_options,
+                )
+            else:
+                result = {"status": "status", "details": backend.status()}
+        except Exception as error:
+            result = {
+                "status": "error",
+                "action": action_key,
+                "error": str(error),
+            }
+
+        status_after = backend.status()
+        result["status_after"] = status_after
+        log_tail = str(status_after.get("last_launch_log_tail", "") or "")
+        status_text = str(result.get("status", action_key))
+        print(f"[TaskAgentWorkerNode] action={action_key} status={status_text}", flush=True)
+        return (
+            status_text,
+            json.dumps(result, ensure_ascii=False, indent=2),
+            log_tail,
+        )
+
+
 class TaskAgentCleanupNode:
     CATEGORY = "Task Agent/资源清理"
     RETURN_TYPES = ("STRING", "STRING")
@@ -2728,31 +3020,25 @@ class TaskAgentCleanupNode:
 
 
 NODE_CLASS_MAPPINGS = {
-    "TaskAgentCharacterDesignNode": TaskAgentCharacterDesignNode,
     "TaskAgentTagUtilityNode": TaskAgentTagUtilityNode,
-    "TaskAgentLegacyTagUtilityNode": TaskAgentLegacyTagUtilityNode,
-    "TaskAgentOutfitGeneratorNode": TaskAgentOutfitGeneratorNode,
     "TaskAgentFileConfigLoaderNode": TaskAgentFileConfigLoaderNode,
     "TaskAgentResourceLoaderNode": TaskAgentResourceLoaderNode,
     "TaskAgentResourceBundleMergeNode": TaskAgentResourceBundleMergeNode,
     "TaskAgentTaskModuleComposerNode": TaskAgentTaskModuleComposerNode,
     "TaskAgentContextComposerNode": TaskAgentContextComposerNode,
-    "TaskAgentLegacyContextComposerNode": TaskAgentLegacyContextComposerNode,
     "TaskAgentImagePathBridgeNode": TaskAgentImagePathBridgeNode,
+    "TaskAgentBackendWorkerNode": TaskAgentBackendWorkerNode,
     "TaskAgentCleanupNode": TaskAgentCleanupNode,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "TaskAgentCharacterDesignNode": "任务代理·角色设计（实验）",
     "TaskAgentTagUtilityNode": "任务代理·标签工具",
-    "TaskAgentLegacyTagUtilityNode": "任务代理·标签工具（兼容旧工作流）",
-    "TaskAgentOutfitGeneratorNode": "任务代理·服装生成（实验）",
     "TaskAgentFileConfigLoaderNode": "任务代理·文件配置加载",
     "TaskAgentResourceLoaderNode": "任务代理·资源加载器",
     "TaskAgentResourceBundleMergeNode": "任务代理·资源包合并",
     "TaskAgentTaskModuleComposerNode": "任务代理·任务模组拼装器",
     "TaskAgentContextComposerNode": "任务代理·上下文拼装",
-    "TaskAgentLegacyContextComposerNode": "任务代理·上下文拼装（兼容旧工作流）",
     "TaskAgentImagePathBridgeNode": "任务代理·图片路径桥接",
+    "TaskAgentBackendWorkerNode": "任务代理·后端Worker管理",
     "TaskAgentCleanupNode": "任务代理·结束清理",
 }
