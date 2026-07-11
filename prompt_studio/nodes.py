@@ -2,7 +2,7 @@ import locale
 
 
 def _is_chinese_locale():
-    value = locale.getdefaultlocale()[0] or ""
+    value = locale.getlocale()[0] or ""
     return value.lower().startswith("zh")
 
 

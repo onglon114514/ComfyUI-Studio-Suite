@@ -7,6 +7,7 @@ const WINDOW_KEYS = {
     firstOpen: "weilin_prompt_ui_onfirst",
     globalPast: "weilin_prompt_global_past_setting",
 };
+const PROMPT_STUDIO_UI_URL = "/studio-suite/prompt-studio/ui/index.html";
 
 function ensureLocalStorageDefaults() {
     const defaults = {
@@ -53,6 +54,14 @@ function syncWidgetValue(node, widget, value) {
     node.graph?.setDirtyCanvas?.(true, true);
 }
 
+function legacyPromptNodeName(node) {
+    const name = node?.comfyClass || node?.type || "PromptStudioOutput";
+    if (name === "PromptStudioPositiveOutput") return "WeiLinComfyUIPromptAllInOneGreat";
+    if (name === "PromptStudioNegativeOutput") return "WeiLinComfyUIPromptAllInOneNeg";
+    if (name === "PromptStudioOutput") return "WeiLinPromptToString";
+    return name;
+}
+
 class LegacyPromptStudioController {
     constructor() {
         ensureLocalStorageDefaults();
@@ -61,7 +70,6 @@ class LegacyPromptStudioController {
         this.randomId = null;
         this.iframeReady = false;
         this.loadedTheme = null;
-        this.extensionRoot = new URL("../../", import.meta.url).toString().replace(/\/$/, "");
         this.overlay = this.#createOverlay();
         document.body.appendChild(this.overlay);
         window.addEventListener("message", (event) => this.#handleMessage(event));
@@ -85,7 +93,7 @@ class LegacyPromptStudioController {
         this.randomId = (Math.random() + Date.now()).toString(32).slice(0, 10);
         localStorage.setItem(WINDOW_KEYS.randomId, this.randomId);
         const theme = localStorage.getItem(WINDOW_KEYS.theme) || "dark";
-        const src = `${this.extensionRoot}/prompt_static/index.html?type=prompt&refid=${encodeURIComponent(this.randomId)}&__theme=${encodeURIComponent(theme)}`;
+        const src = `${PROMPT_STUDIO_UI_URL}?type=prompt&refid=${encodeURIComponent(this.randomId)}&__theme=${encodeURIComponent(theme)}`;
         const shouldReload = !this.iframeReady || !this.iframe.src || this.loadedTheme !== theme;
         if (shouldReload) {
             this.iframeReady = false;
@@ -118,7 +126,7 @@ class LegacyPromptStudioController {
             n_value: this.fields?.negative ? widgetValue(this.fields.negative.widget) : "",
             randomid: this.randomId,
             type: "prompt",
-            nodeName: this.node?.comfyClass || this.node?.type || "PromptStudioOutput",
+            nodeName: legacyPromptNodeName(this.node),
         }, "*");
     }
 

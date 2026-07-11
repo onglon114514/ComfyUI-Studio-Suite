@@ -18,6 +18,7 @@ This repository is intended for early testing and integration. The core workflow
 - Folder-based queue helpers for image/text batch workflows
 - XY matrix testing for LoRA files, LoRA strength, sampler/scheduler, FreeU, and generic node inputs
 - Prompt Studio editor with bundled autocomplete / group-tag storage
+- Optional Prompt Studio LLM translation buttons through the Task Agent local backend
 - Fill / crop / resize image helper nodes
 
 ## Recommended Current Setup
@@ -33,6 +34,10 @@ Qwen-based paths may work, but the Gemma 4 E4B route is currently the safest rec
 
 ## Installation
 
+For first-time users, start with the minimal Chinese quick-start guide:
+
+- `docs/QUICK_START_zh-CN.md`
+
 1. Put this folder under:
 
 ```text
@@ -41,21 +46,49 @@ ComfyUI/custom_nodes/comfyui_studio_suite
 
 2. Restart ComfyUI.
 
-3. Create your local backend profile file:
+3. Install the minimum local LLM model (recommended).
+
+   Prompt Studio LLM translation and Task Agent text tasks require a local GGUF model. The minimum recommended model is stored under:
+
+```text
+models/llm/gemma-4-e2b-hauhau-q8/
+```
+
+   Try automatic download first:
+
+```powershell
+python scripts/install_min_llm_model.py
+```
+
+   If network or Hugging Face access fails, print manual download URLs:
+
+```powershell
+python scripts/install_min_llm_model.py --manual
+```
+
+4. Create your local backend profile file:
 
 ```text
 config/backend_profiles.example.json -> config/backend_profiles.json
 ```
 
-4. Edit `config/backend_profiles.json` and set your local `model_path` and `mmproj_path`.
+5. Edit `config/backend_profiles.json` and set your local `model_path` and `mmproj_path`.
 
-5. Open one of the example workflows from:
+   For text-only tasks, only `model_path` is required. `mmproj_path` is only needed for vision models.
+
+   If you used the minimum model installer, `gemma4_e2b_hauhau_q8` points to:
+
+```text
+models/llm/gemma-4-e2b-hauhau-q8/Gemma-4-E2B-Uncensored-HauhauCS-Aggressive-Q8_K_P.gguf
+```
+
+6. Open one of the example workflows from:
 
 ```text
 examples/workflows
 ```
 
-6. Run the release/install self-check from the node root:
+7. Run the release/install self-check from the node root:
 
 ```powershell
 python scripts/doctor_release.py
@@ -278,6 +311,7 @@ See:
 This repository integrates and rebuilds functionality from several development lines. See:
 
 - `docs/ATTRIBUTION.md`
+- `THIRD_PARTY_NOTICES.md`
 
 ## Release Preparation
 

@@ -38,7 +38,7 @@
 
 用途：
 - WD14 先输出可靠基础 tag。
-- 视觉 LLM 读取图片和 WD14 tag，只做补充、校正、自然语言训练描述。
+- 本地 LLM 读取 WD14 tag，只补自然语言训练描述。
 - 输出目标是 Anima 训练 caption：第一行 tag，第二行自然语言描述，不添加绘图质量词。
 
 默认链路：
@@ -48,30 +48,28 @@
   - 读取队列图片。
 - `WD14Tagger`
   - 输出基础 tag。
-- `任务代理·图片路径桥接`
-  - 把 ComfyUI 图片临时保存成视觉 LLM 可读路径。
 - `任务代理·任务模组拼装`
-  - `refine_wd14_tags`
   - `generate_natural_caption`
   - `format_module = anima_train_v1`
 - `任务代理·标签工具`
   - `backend_provider = llama_cpp_python_inproc`
-  - `model_source = custom_path`
-  - 通过两个文本节点填写 GGUF 模型路径和 mmproj 路径。
+  - 推荐先用 `model_source = profile_catalog`
+  - `backend_profile = gemma4_e4b_q4 | Gemma 4 E4B Q4`
 
 使用前需要：
-- 把“填视觉 LLM 的 GGUF 模型路径”文本节点改成实际模型路径。
-- 把“填视觉模型 mmproj 路径”文本节点改成实际 mmproj 路径。
+- 编辑 `config/backend_profiles.json`，把 `gemma4_e4b_q4.model_path` 指向本机 GGUF。
 - 把“填待打标图片文件夹路径”文本节点改成实际图片目录。
-- 如果没有视觉模型或 mmproj，这个工作流不能完整运行，只能改成纯文本 WD14 后处理。
+- 确认任务链只使用 `generate_natural_caption`，不要在稳定基线里加 `refine_wd14_tags`。
 
 推荐初始参数：
 - `context_size = 4096`
-- `llama_cpp_python_n_gpu_layers = 10`
-- `llama_cpp_python_n_batch = 512`
-- `unload_after_run = true`
+- `llama_cpp_python_n_gpu_layers = 0`
+- `llama_cpp_python_n_batch = 128`
+- `unload_after_run = false`
 
-批量打标时如果不接采样器，可以把 `unload_after_run` 改成 `false` 换速度；如果同一工作流后面还有采样或大模型加载，保持 `true`，否则 26B Q4 这类 LLM 很容易占住显存导致采样爆显存。
+批量打标时如果不接采样器，保持 `unload_after_run = false`，队列结束后接 `任务代理·结束清理` 统一释放。这样比每张图反复加载模型稳定。如果同一工作流后面还有采样或大模型加载，才改成 `true` 或在采样前接清理节点。
+
+视觉模型、图片路径桥接、`refine_wd14_tags` 可以作为实验扩展，但不属于低显存稳定基线。
 
 ## 分发注意事项
 

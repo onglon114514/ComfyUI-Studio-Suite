@@ -4,8 +4,8 @@
     "port": 8765
   },
   "backend": {
-    "mode": "managed_process",
-    "provider": "koboldcpp",
+    "mode": "inprocess",
+    "provider": "llama_cpp_python_inproc",
     "base_url": "http://127.0.0.1:5001",
     "koboldcpp_exe": "runtime/koboldcpp/koboldcpp.exe",
     "llama_cpp_server_exe": "runtime/llama.cpp/llama-server.exe",

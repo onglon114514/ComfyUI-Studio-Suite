@@ -2,6 +2,7 @@ import copy
 import fnmatch
 import json
 import re
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -10,6 +11,20 @@ import numpy as np
 import torch
 from PIL import Image, ImageDraw, ImageFont
 
+
+def _ensure_comfy_root_on_path():
+    for parent in Path(__file__).resolve().parents:
+        if (parent / "server.py").exists() and (parent / "utils" / "install_util.py").exists():
+            parent_text = str(parent)
+            if parent_text not in sys.path:
+                sys.path.insert(0, parent_text)
+            existing_utils = sys.modules.get("utils")
+            if existing_utils is not None and not hasattr(existing_utils, "__path__"):
+                sys.modules.pop("utils", None)
+            return
+
+
+_ensure_comfy_root_on_path()
 import utils.install_util  # Ensure ComfyUI's top-level utils package wins before server imports comfy.utils.
 import folder_paths
 from server import PromptServer
@@ -567,7 +582,7 @@ class StudioSuiteXYAxisLoraFile:
     RETURN_TYPES = ("STRING", "STRING")
     RETURN_NAMES = ("x_or_y_axis_json", "matched_loras")
     FUNCTION = "build_axis"
-    DESCRIPTION = "Build an axis that swaps the lora_name input of an existing LoRA Loader. Use folder scan filters or a manual list."
+    DESCRIPTION = "Build an axis that swaps LoRA files and optional strength_model / strength_clip values on an existing LoRA Loader."
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -575,15 +590,20 @@ class StudioSuiteXYAxisLoraFile:
             "required": {
                 "target_node_id": ("STRING", {"default": "", "multiline": False}),
                 "lora_name_input": ("STRING", {"default": "lora_name", "multiline": False}),
+                "strength_model_input": ("STRING", {"default": "strength_model", "multiline": False}),
+                "strength_clip_input": ("STRING", {"default": "strength_clip", "multiline": False}),
                 "axis_label": ("STRING", {"default": "LoRA File", "multiline": False}),
                 "lora_names_text": (
                     "STRING",
                     {
                         "default": "",
                         "multiline": True,
-                        "tooltip": "Optional manual list. One LoRA per line, using either lora_name or label|lora_name. Leave empty to scan ComfyUI loras.",
+                        "tooltip": "Optional manual list. Formats: lora, label|lora, label|lora|model_strength, label|lora|model_strength|clip_strength. Leave empty to scan ComfyUI loras.",
                     },
                 ),
+                "default_model_strength": ("FLOAT", {"default": 1.0, "min": -10.0, "max": 10.0, "step": 0.05}),
+                "default_clip_strength": ("FLOAT", {"default": 1.0, "min": -10.0, "max": 10.0, "step": 0.05}),
+                "write_strengths": ("BOOLEAN", {"default": True}),
                 "include_filter": (
                     "STRING",
                     {
@@ -609,28 +629,89 @@ class StudioSuiteXYAxisLoraFile:
             },
         }
 
-    def _manual_items(self, target_node_id, lora_name_input, lora_names_text):
+    def _lora_assignments(
+        self,
+        target_node_id,
+        lora_name_input,
+        strength_model_input,
+        strength_clip_input,
+        lora_name,
+        model_strength,
+        clip_strength,
+        write_strengths,
+    ):
+        assignments = [_assignment(target_node_id, lora_name_input, lora_name)]
+        if bool(write_strengths):
+            assignments.append(_assignment(target_node_id, strength_model_input, float(model_strength)))
+            assignments.append(_assignment(target_node_id, strength_clip_input, float(clip_strength)))
+        return assignments
+
+    def _manual_items(
+        self,
+        target_node_id,
+        lora_name_input,
+        strength_model_input,
+        strength_clip_input,
+        lora_names_text,
+        default_model_strength,
+        default_clip_strength,
+        write_strengths,
+    ):
         items = []
         for line in str(lora_names_text or "").splitlines():
             line = _strip_comment(line)
             if not line:
                 continue
-            parts = [part.strip() for part in line.split("|", 1)]
-            if len(parts) == 2:
-                label, lora_name = parts
+            parts = [part.strip() for part in line.split("|")]
+            if len(parts) >= 2:
+                label, lora_name = parts[0], parts[1]
             else:
                 lora_name = parts[0]
                 label = Path(lora_name).stem
+            model_strength = float(default_model_strength)
+            clip_strength = float(default_clip_strength)
+            if len(parts) >= 3 and parts[2]:
+                model_strength = float(_coerce_value(parts[2]))
+                clip_strength = model_strength
+            if len(parts) >= 4 and parts[3]:
+                clip_strength = float(_coerce_value(parts[3]))
+            if len(parts) > 4:
+                raise ValueError(f"LoRA File line has too many fields. Use label|lora|model|clip: {line}")
+            strength_suffix = ""
+            if bool(write_strengths):
+                strength_suffix = f" [{model_strength:g}/{clip_strength:g}]"
             items.append(
                 {
-                    "label": label,
-                    "safe_label": _safe_label(label),
-                    "assignments": [_assignment(target_node_id, lora_name_input, lora_name)],
+                    "label": f"{label}{strength_suffix}",
+                    "safe_label": _safe_label(f"{label}{strength_suffix}"),
+                    "assignments": self._lora_assignments(
+                        target_node_id,
+                        lora_name_input,
+                        strength_model_input,
+                        strength_clip_input,
+                        lora_name,
+                        model_strength,
+                        clip_strength,
+                        write_strengths,
+                    ),
                 }
             )
         return items
 
-    def _scanned_items(self, target_node_id, lora_name_input, include_filter, exclude_filter, sort_mode, limit):
+    def _scanned_items(
+        self,
+        target_node_id,
+        lora_name_input,
+        strength_model_input,
+        strength_clip_input,
+        include_filter,
+        exclude_filter,
+        sort_mode,
+        limit,
+        default_model_strength,
+        default_clip_strength,
+        write_strengths,
+    ):
         names = []
         for lora_name in _available_lora_names():
             if not _match_filter(lora_name, include_filter, default_match=True):
@@ -646,11 +727,22 @@ class StudioSuiteXYAxisLoraFile:
         items = []
         for lora_name in names:
             label = Path(lora_name).stem
+            if bool(write_strengths):
+                label = f"{label} [{float(default_model_strength):g}/{float(default_clip_strength):g}]"
             items.append(
                 {
                     "label": label,
                     "safe_label": _safe_label(label),
-                    "assignments": [_assignment(target_node_id, lora_name_input, lora_name)],
+                    "assignments": self._lora_assignments(
+                        target_node_id,
+                        lora_name_input,
+                        strength_model_input,
+                        strength_clip_input,
+                        lora_name,
+                        default_model_strength,
+                        default_clip_strength,
+                        write_strengths,
+                    ),
                 }
             )
         return items
@@ -659,8 +751,13 @@ class StudioSuiteXYAxisLoraFile:
         self,
         target_node_id,
         lora_name_input,
+        strength_model_input,
+        strength_clip_input,
         axis_label,
         lora_names_text,
+        default_model_strength,
+        default_clip_strength,
+        write_strengths,
         include_filter,
         exclude_filter,
         sort_mode,
@@ -669,9 +766,30 @@ class StudioSuiteXYAxisLoraFile:
     ):
         target_node_id = _resolve_target_node_id(target_node_id, target_ref)
         if str(lora_names_text or "").strip():
-            items = self._manual_items(target_node_id, lora_name_input, lora_names_text)
+            items = self._manual_items(
+                target_node_id,
+                lora_name_input,
+                strength_model_input,
+                strength_clip_input,
+                lora_names_text,
+                default_model_strength,
+                default_clip_strength,
+                write_strengths,
+            )
         else:
-            items = self._scanned_items(target_node_id, lora_name_input, include_filter, exclude_filter, sort_mode, limit)
+            items = self._scanned_items(
+                target_node_id,
+                lora_name_input,
+                strength_model_input,
+                strength_clip_input,
+                include_filter,
+                exclude_filter,
+                sort_mode,
+                limit,
+                default_model_strength,
+                default_clip_strength,
+                write_strengths,
+            )
         if not items:
             raise ValueError("No LoRA files matched. Check lora_names_text or include_filter.")
         matched = "\n".join(item["assignments"][0]["value"] for item in items)

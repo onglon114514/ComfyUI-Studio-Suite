@@ -8,6 +8,7 @@ _EVENTS = []
 _ACTIVE_TASK = None
 _LAST_OUTPUT = None
 _MAX_EVENTS = 120
+_MAX_STREAM_CHARS = 24000
 
 
 def _truncate(value, max_chars=12000):
@@ -68,6 +69,29 @@ def update_task_event(task_id, stage, message="", task_type="", metadata=None):
             if task_type:
                 _ACTIVE_TASK["task_type"] = str(task_type)
     record_task_event(stage, message, task_id=task_id, task_type=task_type, metadata=metadata)
+
+
+def append_task_stream(task_id, text_delta, task_type="", stage="stream", metadata=None):
+    delta = "" if text_delta is None else str(text_delta)
+    if not delta:
+        return
+    with _LOCK:
+        if _ACTIVE_TASK and _ACTIVE_TASK.get("task_id") == task_id:
+            current = str(_ACTIVE_TASK.get("stream_text", "") or "")
+            combined = current + delta
+            if len(combined) > _MAX_STREAM_CHARS:
+                combined = combined[-_MAX_STREAM_CHARS:]
+            _ACTIVE_TASK["stream_text"] = combined
+            _ACTIVE_TASK["stream_chars"] = int(_ACTIVE_TASK.get("stream_chars", 0) or 0) + len(delta)
+            _ACTIVE_TASK["stage"] = str(stage or "stream")
+            _ACTIVE_TASK["message"] = f"streaming... {int(_ACTIVE_TASK.get('stream_chars', 0) or 0)} chars"
+            _ACTIVE_TASK["updated_at"] = _now()
+            if task_type:
+                _ACTIVE_TASK["task_type"] = str(task_type)
+            if isinstance(metadata, dict) and metadata:
+                existing = _ACTIVE_TASK.setdefault("stream_metadata", {})
+                if isinstance(existing, dict):
+                    existing.update(metadata)
 
 
 def finish_task_event(task_id, status="success", message="", task_type="", output_text="", metadata=None):

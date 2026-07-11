@@ -377,14 +377,14 @@
         "Node name for S&R": "TaskAgentTaskModuleComposerNode"
       },
       "widgets_values": [
-        "refine_wd14_tags",
         "generate_natural_caption",
+        "",
         "",
         "",
         "anima_train_v1",
         "",
-        "training caption; keep reliable WD14 tags; add only corrections and concise natural-language description; no drawing quality tags.",
-        "训练打标示例：保留 WD14 纯 tag 作为第一行，让视觉 LLM 根据图片和 WD14 结果补充/校正，并输出第二行自然语言描述。",
+        "training caption; preserve the WD14 tag line exactly; add one concise natural-language description paragraph; no drawing quality tags.",
+        "训练打标稳定基线：第一行完全保留 WD14 原始 tag，LLM 只根据 WD14 写第二段自然语言描述，不重写 tag，不加质量词。",
         "{\"caption_mode\":\"training_tag_plus_nl\"}"
       ]
     },
@@ -555,16 +555,16 @@
       "widgets_values": [
         "http://127.0.0.1:8765",
         "llama_cpp_python_inproc",
-        "custom_path",
+        "profile_catalog",
         "gemma4_e4b_q4 | Gemma 4 E4B Q4",
         "",
         "",
         4096,
-        10,
-        512,
+        0,
+        128,
         0,
         true,
-        true,
+        false,
         "WD14 tags will be connected here."
       ]
     },

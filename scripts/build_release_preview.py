@@ -14,6 +14,7 @@ EXCLUDE_DIRS = {
 }
 
 EXCLUDE_FILES = {
+    "backend_profiles.json",
     "task_agent_config.local.json",
 }
 
@@ -42,6 +43,23 @@ def should_skip(path, include_large_resources):
     if parts & EXCLUDE_DIRS:
         return True
     if path.name in EXCLUDE_FILES:
+        return True
+    if rel.parts[:3] == ("prompt_studio", "storage", "prompt_data") and (
+        path.name.startswith("history.") or path.name.startswith("favorite.")
+    ):
+        return True
+    if rel.parts[:3] == ("prompt_studio", "storage", "notes"):
+        return True
+    if rel.as_posix() == "prompt_studio/storage/autocomplete/custom_words.csv":
+        return True
+    if rel.parts and rel.parts[0] == "models":
+        return True
+    if rel.parts[:2] in {
+        ("runtime", "images"),
+        ("runtime", "koboldcpp"),
+        ("runtime", "llama.cpp"),
+        ("runtime", "python_libs"),
+    }:
         return True
     if "runtime" in rel.parts and path.suffix.lower() in GENERATED_RUNTIME_SUFFIXES:
         return True

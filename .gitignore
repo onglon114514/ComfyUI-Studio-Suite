@@ -22,6 +22,12 @@ config/backend_profiles.json
 config/task_agent_config.local.json
 task_agent_bundle_root.local.txt
 
+# Prompt Studio per-user state. Keep shared group_tags and preset defaults tracked.
+prompt_studio/storage/prompt_data/history.*.json
+prompt_studio/storage/prompt_data/favorite.*.json
+prompt_studio/storage/notes/
+prompt_studio/storage/autocomplete/custom_words.csv
+
 # Large optional Danbooru/resource files.
 # Host these on Hugging Face or another release asset store instead.
 resources/danbooru_character_aliases.generated.json

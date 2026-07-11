@@ -33,6 +33,7 @@ KOBOLDCPP_TEMP_ROOT = Path(
 )
 PROMPT_PROFILES_PATH = PROJECT_DIR / "config" / "prompt_profiles.json"
 BACKEND_PROFILES_PATH = PROJECT_DIR / "config" / "backend_profiles.json"
+BACKEND_PROFILES_EXAMPLE_PATH = PROJECT_DIR / "config" / "backend_profiles.example.json"
 CHARACTER_ALIASES_PATH = PROJECT_DIR / "resources" / "danbooru_character_aliases.json"
 GENERATED_CHARACTER_ALIASES_PATH = PROJECT_DIR / "resources" / "danbooru_character_aliases.generated.json"
 CHARACTER_ALIAS_SAFETY_PATH = PROJECT_DIR / "resources" / "character_alias_safety.json"
@@ -282,7 +283,19 @@ def load_prompt_profiles():
 def load_backend_profiles():
     if BACKEND_PROFILES_PATH.exists():
         return load_json_file(BACKEND_PROFILES_PATH)
+    if BACKEND_PROFILES_EXAMPLE_PATH.exists():
+        return load_json_file(BACKEND_PROFILES_EXAMPLE_PATH)
     return {}
+
+
+def default_gateway_config_path():
+    local_path = PROJECT_DIR / "config" / "task_agent_config.local.json"
+    if local_path.exists():
+        return local_path
+    example_path = PROJECT_DIR / "config" / "task_agent_config.example.json"
+    if example_path.exists():
+        return example_path
+    return local_path
 
 
 def normalize_optional_path(text):
@@ -1294,6 +1307,70 @@ def http_post_json(url, payload, timeout=600):
     )
     with urllib.request.urlopen(request, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+def extract_stream_text_delta(chunk):
+    if not isinstance(chunk, dict):
+        return ""
+    choices = chunk.get("choices")
+    if isinstance(choices, list) and choices:
+        choice = choices[0] if isinstance(choices[0], dict) else {}
+        delta = choice.get("delta")
+        if isinstance(delta, dict):
+            content = delta.get("content")
+            if isinstance(content, str):
+                return content
+        message = choice.get("message")
+        if isinstance(message, dict):
+            content = message.get("content")
+            if isinstance(content, str):
+                return content
+        text = choice.get("text")
+        if isinstance(text, str):
+            return text
+    for key in ("content", "text", "token", "response"):
+        value = chunk.get(key)
+        if isinstance(value, str):
+            return value
+    return ""
+
+
+def http_post_openai_stream(url, payload, timeout=900, stream_callback=None):
+    stream_payload = dict(payload)
+    stream_payload["stream"] = True
+    data = json.dumps(stream_payload).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=data,
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream",
+        },
+        method="POST",
+    )
+    chunks = []
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        for raw_line in response:
+            line = raw_line.decode("utf-8", errors="replace").strip()
+            if not line:
+                continue
+            if line.startswith(":"):
+                continue
+            if line.startswith("data:"):
+                line = line[5:].strip()
+            if not line or line == "[DONE]":
+                continue
+            try:
+                chunk = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            delta = extract_stream_text_delta(chunk)
+            if not delta:
+                continue
+            chunks.append(delta)
+            if stream_callback:
+                stream_callback(delta)
+    return "".join(chunks)
 
 
 def parse_context_bundle_json(text):
@@ -3389,6 +3466,21 @@ def enrich_json_result(task_type, json_result, inputs):
         return json_result
 
     enriched = dict(json_result or {})
+    if task_type == "translate_anime_tags" and str(inputs.get("direction", "")).strip() in {"zh_to_en_text", "en_to_zh_text"}:
+        source_text = str(inputs.get("raw_text", "")).strip()
+        enriched.setdefault("source_text", source_text)
+        enriched.setdefault("translated_text", str(enriched.get("raw_text", "") or "").strip())
+        pairs = enriched.get("translation_pairs", [])
+        enriched["translation_pairs"] = pairs if isinstance(pairs, list) else []
+        if str(inputs.get("translation_mode", "")).strip() == "sentence":
+            enriched["translation_pairs"] = [
+                {
+                    "source": source_text,
+                    "translated": str(enriched.get("translated_text", "") or "").strip(),
+                }
+            ]
+        return enriched
+
     for carry_key in ("natural_language_en", "caption_short_en", "caption_long_en"):
         if not str(enriched.get(carry_key, "")).strip() and str(inputs.get(carry_key, "")).strip():
             enriched[carry_key] = str(inputs.get(carry_key, "")).strip()
@@ -3788,7 +3880,89 @@ def build_translate_tags_prompts(inputs):
     raw_text = inputs.get("raw_text", "").strip()
     direction = inputs.get("direction", "zh_to_en_tags").strip()
     target_profile = inputs.get("target_profile", "generic_tag_model").strip()
+    translation_mode = inputs.get("translation_mode", "").strip() or "tags"
     alias_reference = build_alias_reference_text(inputs.get("resolved_character_tags", []))
+    if direction in {"zh_to_en_text", "en_to_zh_text"}:
+        target_language = "English" if direction == "zh_to_en_text" else "Chinese"
+        source_language = "Chinese" if direction == "zh_to_en_text" else "English"
+        sentence_mode = translation_mode == "sentence"
+        if sentence_mode:
+            system_prompt = (
+                f"Translate image-generation prompt text from {source_language} to {target_language}. "
+                "Output only the translation. No JSON. No markdown. No tag list."
+            )
+            user_prompt = f"""
+Translate as one complete prompt phrase. Keep LoRA/embedding names and weights unchanged. Do not split natural language into tags.
+{raw_text}
+""".strip()
+            return system_prompt, user_prompt
+
+        mode_rules = (
+            "- 当前 translation_mode=sentence：把整个输入框内容视为一个完整句子或完整短语，即使末尾有逗号也不要拆成 tag\n"
+            "- translated_text 必须是一个完整、连贯、自然的目标语言句子/短语，不要输出逗号分隔的 Danbooru tag 列表\n"
+            "- translation_pairs 必须只包含一个映射：source 等于完整输入文本，translated 等于完整 translated_text\n"
+            "- 必须输出紧凑单行 JSON，不要换行，不要缩进\n"
+            "- 错误示例：girl, lolita, ornate dress, backless\n"
+            "- 正确示例：{{\"direction\":\"zh_to_en_text\",\"source_text\":\"女孩穿着Lolita风格华丽的露背裙,\",\"translated_text\":\"A girl wearing an ornate backless Lolita-style dress,\",\"translation_pairs\":[{{\"source\":\"女孩穿着Lolita风格华丽的露背裙,\",\"translated\":\"A girl wearing an ornate backless Lolita-style dress,\"}}],\"notes_cn\":\"整句翻译。\"}}"
+            if sentence_mode
+            else "- 当前 translation_mode=tags：如果输入本来是逗号分隔 tag/短语，可以逐项翻译并保持列表式 prompt"
+        )
+        system_prompt = (
+            "You are a bilingual prompt translation assistant for image generation. "
+            "Translate Prompt Studio text blocks while preserving the user's editing intent. "
+            "Natural-language text blocks must remain natural-language text blocks; do not convert them into Danbooru tags unless explicitly requested. "
+            "Output only one JSON object with no markdown, no prose, and no prefix text. "
+            "Your first character must be { and your last character must be }."
+        )
+        user_prompt = f"""
+请做 Prompt Studio 双语显示用翻译，并严格输出 JSON。
+
+输入文本：
+{raw_text}
+
+方向：
+{direction}
+
+源语言：
+{source_language}
+
+目标语言：
+{target_language}
+
+目标模型范式：
+{target_profile}
+
+翻译模式：
+{translation_mode}
+
+角色规范 tag 参考：
+{alias_reference or "无"}
+
+请输出一个 JSON 对象，字段必须包含：
+{{
+  "direction": "{direction}",
+  "source_text": "string",
+  "translated_text": "string",
+  "translation_pairs": [
+    {{"source": "string", "translated": "string"}}
+  ],
+  "notes_cn": "string"
+}}
+
+要求：
+- translated_text 是实际写入提示词输入框的文本，必须使用目标语言
+- 一个 Prompt Studio 输入框/textarea 块默认就是一个完整输入单元，不要因为里面出现“风格、裙子、露背”等视觉词就改写成 tag 列表
+{mode_rules}
+- 不要把自然语言强制拆成 Danbooru tag；只有输入本来就是 tag 且 translation_mode=tags 时才保留 tag 风格
+- 如果输入是逗号分隔的 tag/短语，translation_pairs 要逐项对齐，source 保留原词，translated 是对应译文
+- 如果输入是完整自然语言句子，translation_pairs 可以只包含一个整句映射
+- 已经是英文的角色 tag、LoRA tag、embedding tag、转义括号和权重语法要尽量原样保留
+- 如果角色规范 tag 参考不为空，并且输入明确涉及这些角色，英文目标语言下可以使用规范 Danbooru tag；不要把普通外观描述误当角色
+- 输出必须是 JSON，不要 markdown，不要前言
+- 你的输出第一字符必须是 {{，最后字符必须是 }}
+""".strip()
+        return system_prompt, user_prompt
+
     system_prompt = (
         "You are an anime tag translation assistant. "
         "Translate between Chinese descriptive tag phrases and compact English drawing tags. "
@@ -3821,6 +3995,7 @@ def build_translate_tags_prompts(inputs):
 
 要求：
 - 如果是中文转英文，translated_text 要偏绘图 prompt/tag 风格
+- 中文转英文时优先使用 Danbooru/WebUI tag 写法：人物数量用 1girl/1boy/2girls，不要输出 girl/boy 这类孤立普通词；发色用 white hair/black hair 等拆分 tag，不要拼成 white hair girl 这种自然短语
 - 如果是英文转中文，保留二次元语义，不要翻得过于口语
 - tag_list 尽量拆成清晰短 tag
 - 如果角色规范 tag 参考不为空，涉及这些角色时必须直接使用规范 Danbooru tag，不要翻译成普通英文词
@@ -4618,7 +4793,7 @@ class ManagedBackend:
             },
         }
 
-    def _complete_inprocess_messages(self, payload):
+    def _complete_inprocess_messages(self, payload, stream_callback=None):
         provider = self.backend_provider
         if provider == "llama_cpp_python_inproc":
             if self.inprocess_model is None:
@@ -4637,31 +4812,72 @@ class ManagedBackend:
                 f"memory_before={get_combined_memory_snapshot()}",
                 flush=True,
             )
-            response = self.inprocess_model.create_chat_completion(
-                messages=messages,
-                temperature=float(payload.get("temperature", 0.4)),
-                max_tokens=int(payload.get("max_tokens", 900)),
-            )
+            if stream_callback:
+                response_chunks = []
+                stream = self.inprocess_model.create_chat_completion(
+                    messages=messages,
+                    temperature=float(payload.get("temperature", 0.4)),
+                    max_tokens=int(payload.get("max_tokens", 900)),
+                    stream=True,
+                )
+                for chunk in stream:
+                    delta = extract_stream_text_delta(chunk)
+                    if not delta:
+                        continue
+                    response_chunks.append(delta)
+                    stream_callback(delta)
+                response_text = "".join(response_chunks)
+            else:
+                response = self.inprocess_model.create_chat_completion(
+                    messages=messages,
+                    temperature=float(payload.get("temperature", 0.4)),
+                    max_tokens=int(payload.get("max_tokens", 900)),
+                )
+                response_text = (
+                    response.get("choices", [{}])[0]
+                    .get("message", {})
+                    .get("content", "")
+                )
             print(
                 "[TaskAgent] llama.cpp in-process completion end "
                 f"profile={self.current_backend_profile} memory_after={get_combined_memory_snapshot()}",
                 flush=True,
             )
-            return (
-                response.get("choices", [{}])[0]
-                .get("message", {})
-                .get("content", "")
-            )
+            return response_text
         if provider == "transformers_inproc":
             raise NotImplementedError("transformers_inproc is planned but not implemented yet.")
         if provider == "clip_reuse":
             raise NotImplementedError("clip_reuse is planned but not implemented yet.")
         raise ValueError(f"Unsupported in-process provider: {provider}")
 
-    def _complete_messages(self, payload):
+    def _complete_messages(self, payload, stream_callback=None):
         if self.is_inprocess_provider:
-            return self._complete_inprocess_messages(payload)
+            return self._complete_inprocess_messages(payload, stream_callback=stream_callback)
         try:
+            if stream_callback:
+                try:
+                    streamed_text = http_post_openai_stream(
+                        self.openai_base_url + "/chat/completions",
+                        payload,
+                        timeout=900,
+                        stream_callback=stream_callback,
+                    )
+                    if streamed_text:
+                        return streamed_text
+                    print(
+                        "[TaskAgent] streaming completion returned empty text; falling back to non-stream "
+                        f"provider={self.backend_provider}",
+                        flush=True,
+                    )
+                except urllib.error.HTTPError as stream_error:
+                    # Some OpenAI-compatible servers expose /chat/completions but not SSE.
+                    if stream_error.code not in {400, 404, 405, 422, 501}:
+                        raise
+                    print(
+                        "[TaskAgent] streaming completion unsupported; falling back to non-stream "
+                        f"provider={self.backend_provider} status={stream_error.code}",
+                        flush=True,
+                    )
             response = http_post_json(self.openai_base_url + "/chat/completions", payload, timeout=900)
         except Exception as error:
             try:
@@ -5054,6 +5270,7 @@ class ManagedBackend:
         custom_model_path=None,
         custom_mmproj_path=None,
         runtime_options=None,
+        stream_callback=None,
     ):
         if auto_load_backend:
             self.ensure_loaded(
@@ -5099,15 +5316,36 @@ class ManagedBackend:
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
-        raw_text = self._complete_messages(payload)
+        raw_text = self._complete_messages(payload, stream_callback=stream_callback)
         parse_error = None
-        try:
-            json_result = extract_first_json_object(raw_text)
+        if (
+            task_type == "translate_anime_tags"
+            and str(inputs.get("direction", "")).strip() in {"zh_to_en_text", "en_to_zh_text"}
+            and str(inputs.get("translation_mode", "")).strip() == "sentence"
+        ):
+            translated_text = str(raw_text or "").strip().strip('"').strip()
+            source_text = str(inputs.get("raw_text", "") or "").strip()
+            json_result = {
+                "direction": str(inputs.get("direction", "")).strip(),
+                "source_text": source_text,
+                "translated_text": translated_text,
+                "translation_pairs": [
+                    {
+                        "source": source_text,
+                        "translated": translated_text,
+                    }
+                ],
+                "notes_cn": "Prompt Studio 整句快速翻译，模型输出为纯文本。",
+            }
             status = "success"
-        except Exception as error:
-            parse_error = str(error)
-            json_result = fallback_json_result(task_type, raw_text, inputs, parse_error)
-            status = "parse_fallback"
+        else:
+            try:
+                json_result = extract_first_json_object(raw_text)
+                status = "success"
+            except Exception as error:
+                parse_error = str(error)
+                json_result = fallback_json_result(task_type, raw_text, inputs, parse_error)
+                status = "parse_fallback"
         json_result = enrich_json_result(task_type, json_result, inputs)
         if task_type == "generate_outfit_tags":
             json_result["retrieved_clothing_candidates"] = [
@@ -5131,7 +5369,7 @@ class ManagedBackend:
                 "temperature": temperature,
                 "max_tokens": max_tokens,
             }
-            expand_raw_text = self._complete_messages(expand_payload)
+            expand_raw_text = self._complete_messages(expand_payload, stream_callback=stream_callback)
             try:
                 expand_json = extract_first_json_object(expand_raw_text)
                 expand_json = enrich_json_result("expand_anime_tags", expand_json, expand_inputs)
@@ -5278,7 +5516,7 @@ def main():
     parser = argparse.ArgumentParser(description="Gemma4 E4B task gateway baseline")
     parser.add_argument(
         "--config",
-        default=str(PROJECT_DIR / "config" / "task_agent_config.local.json"),
+        default=str(default_gateway_config_path()),
         help="Path to gateway config JSON",
     )
     args = parser.parse_args()

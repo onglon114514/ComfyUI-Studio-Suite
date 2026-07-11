@@ -16,18 +16,18 @@ This package is an in-progress integrated ComfyUI node suite assembled from seve
   - Integrated as `task_agent_core/`, `task_agent_gateway.py`, `config/`, and `resources/`.
   - Provides local LLM task execution, task bundles, resource loading, and backend adapters.
 
-## Reference-Only Source
+## Retained And Adapted MIT Frontend
 
-- `weilin-comfyui-prompt-all-in-one-page-unlock`
-  - Used as a reference for prompt editor UX, tag editing interaction, autocomplete, and LoRA helper behavior.
-  - Not intended to remain as a direct structural copy.
-  - The Prompt Studio subsystem should continue moving toward a distinct implementation.
+- [`weilin9999/WeiLin-ComfyUI-prompt-all-in-one`](https://github.com/weilin9999/WeiLin-ComfyUI-prompt-all-in-one)
+  - Original author: WeiLin, copyright 2024, MIT License.
+  - Prompt Studio retains and adapts the editor bundle, static UI assets, tag interaction data, and i18n data.
+  - Studio Suite replaces the original backend, translation/network path, ComfyUI node integration, storage handling, LoRA metadata adapter, and local LLM workflow.
+  - The required copyright and MIT notice are included in `THIRD_PARTY_NOTICES.md`.
 
 ## Release Hygiene Still Required
 
 Before a fully public stable release:
 
-1. Add original repository URLs for any external source that remains relevant.
-2. Confirm the license compatibility of every directly merged or referenced module.
-3. Document which files are direct modifications and which are rewrites.
-4. Keep internal source paths, private model paths, API keys, and local runtime artifacts out of Git.
+1. Confirm the license compatibility of every other directly merged module.
+2. Document which remaining files are direct modifications and which are rewrites.
+3. Keep internal source paths, private model paths, API keys, and local runtime artifacts out of Git.

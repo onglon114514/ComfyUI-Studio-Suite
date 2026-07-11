@@ -1,6 +1,7 @@
 import copy
 import json
 import os
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -10,7 +11,28 @@ import torch
 from PIL import Image, ImageOps
 from PIL.PngImagePlugin import PngInfo
 
-import utils.install_util  # Ensure ComfyUI's top-level utils package wins before server imports comfy.utils.
+
+def _ensure_comfy_root_on_path():
+    for parent in Path(__file__).resolve().parents:
+        if (parent / "server.py").exists() and (parent / "utils" / "install_util.py").exists():
+            parent_text = str(parent)
+            if parent_text not in sys.path:
+                sys.path.insert(0, parent_text)
+            existing_utils = sys.modules.get("utils")
+            if existing_utils is not None and not hasattr(existing_utils, "__path__"):
+                sys.modules.pop("utils", None)
+            return
+
+
+_ensure_comfy_root_on_path()
+try:
+    import utils.install_util  # Ensure ComfyUI's top-level utils package wins before server imports comfy.utils.
+except Exception:
+    existing_utils = sys.modules.get("utils")
+    utils_paths = getattr(existing_utils, "__path__", []) if existing_utils is not None else []
+    has_comfy_install_util = any((Path(path) / "install_util.py").exists() for path in utils_paths)
+    if existing_utils is not None and not has_comfy_install_util:
+        sys.modules.pop("utils", None)
 import folder_paths
 from server import PromptServer
 import nodes as comfy_nodes

@@ -1,0 +1,19 @@
+{
+  "minimum_text_llm": {
+    "profile_key": "gemma4_e2b_hauhau_q8",
+    "repo_id": "HauhauCS/Gemma-4-E2B-Uncensored-HauhauCS-Aggressive",
+    "revision": "main",
+    "files": [
+      {
+        "filename": "Gemma-4-E2B-Uncensored-HauhauCS-Aggressive-Q8_K_P.gguf",
+        "target": "models/llm/gemma-4-e2b-hauhau-q8/Gemma-4-E2B-Uncensored-HauhauCS-Aggressive-Q8_K_P.gguf",
+        "required": true
+      },
+      {
+        "filename": "mmproj-Gemma-4-E2B-Uncensored-HauhauCS-Aggressive-f16.gguf",
+        "target": "models/llm/gemma-4-e2b-hauhau-q8/mmproj-Gemma-4-E2B-Uncensored-HauhauCS-Aggressive-f16.gguf",
+        "required": false
+      }
+    ]
+  }
+}

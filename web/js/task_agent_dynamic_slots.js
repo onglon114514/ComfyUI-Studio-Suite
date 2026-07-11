@@ -17,6 +17,12 @@ const SLOT_CONFIGS = {
 
 const MODEL_SOURCE_NODES = new Set([
   "TaskAgentTagUtilityNode",
+  "TaskAgentLocalLLMTextToolNode",
+  "TaskAgentBackendWorkerNode",
+]);
+
+const BACKEND_PROVIDER_NODES = new Set([
+  "TaskAgentTagUtilityNode",
   "TaskAgentBackendWorkerNode",
 ]);
 
@@ -49,25 +55,52 @@ function setWidgetVisible(widget, visible) {
   if (!widget.__studioSuiteOriginalType) {
     widget.__studioSuiteOriginalType = widget.type;
     widget.__studioSuiteOriginalComputeSize = widget.computeSize;
+    widget.__studioSuiteOriginalDraw = widget.draw;
+    widget.__studioSuiteOriginalHidden = widget.hidden;
+    widget.__studioSuiteOriginalDisabled = widget.disabled;
   }
   if (visible) {
     widget.type = widget.__studioSuiteOriginalType;
     widget.computeSize = widget.__studioSuiteOriginalComputeSize;
+    widget.draw = widget.__studioSuiteOriginalDraw;
+    widget.hidden = widget.__studioSuiteOriginalHidden;
+    widget.disabled = widget.__studioSuiteOriginalDisabled;
   } else {
-    widget.type = "hidden";
-    widget.computeSize = () => [0, -4];
+    widget.type = "studio_suite_hidden";
+    widget.hidden = true;
+    widget.disabled = true;
+    widget.computeSize = () => [0, 0];
+    widget.draw = () => {};
   }
 }
 
 function setModelSourceVisibility(node) {
   if (!MODEL_SOURCE_NODES.has(node.comfyClass || node.type)) return;
   const sourceWidget = widgetByName(node, "model_source");
+  const providerWidget = widgetByName(node, "backend_provider");
   const source = String(sourceWidget?.value || "").trim();
+  const provider = String(providerWidget?.value || "").trim();
   const isCustomPath = source === "custom_path";
+  const isAttachBackend = ["lm_studio", "vllm", "custom_openai_compat"].includes(provider);
+  const usesLocalModelSelection = !isAttachBackend;
 
-  setWidgetVisible(widgetByName(node, "backend_profile"), !isCustomPath);
-  setWidgetVisible(widgetByName(node, "custom_model_path"), isCustomPath);
-  setWidgetVisible(widgetByName(node, "custom_mmproj_path"), isCustomPath);
+  setWidgetVisible(widgetByName(node, "model_source"), usesLocalModelSelection);
+  setWidgetVisible(widgetByName(node, "backend_profile"), usesLocalModelSelection && !isCustomPath);
+  setWidgetVisible(widgetByName(node, "custom_model_path"), usesLocalModelSelection && isCustomPath);
+  setWidgetVisible(widgetByName(node, "custom_mmproj_path"), usesLocalModelSelection && isCustomPath);
+}
+
+function setBackendProviderVisibility(node) {
+  if (!BACKEND_PROVIDER_NODES.has(node.comfyClass || node.type)) return;
+  const providerWidget = widgetByName(node, "backend_provider");
+  const provider = String(providerWidget?.value || "").trim();
+  const needsUrl = ["isolated_worker", "lm_studio", "vllm", "custom_openai_compat"].includes(provider);
+  const usesLlamaCppPythonParams = ["config_default", "llama_cpp_python_inproc", "private_llama_cpp_worker"].includes(provider);
+
+  setWidgetVisible(widgetByName(node, "gateway_url"), needsUrl);
+  setWidgetVisible(widgetByName(node, "llama_cpp_python_n_gpu_layers"), usesLlamaCppPythonParams);
+  setWidgetVisible(widgetByName(node, "llama_cpp_python_n_batch"), usesLlamaCppPythonParams);
+  setWidgetVisible(widgetByName(node, "llama_cpp_python_threads"), usesLlamaCppPythonParams);
 }
 
 function setInputVisible(node, name, visible) {
@@ -105,12 +138,17 @@ function updateDynamicSlots(node) {
     }
   }
   setModelSourceVisibility(node);
+  setBackendProviderVisibility(node);
   node.setSize?.(node.computeSize());
   app.graph?.setDirtyCanvas(true, true);
 }
 
 function installDynamicSlotNode(nodeType, nodeData) {
-  if (!SLOT_CONFIGS[nodeData.name] && !MODEL_SOURCE_NODES.has(nodeData.name)) return;
+  if (
+    !SLOT_CONFIGS[nodeData.name]
+    && !MODEL_SOURCE_NODES.has(nodeData.name)
+    && !BACKEND_PROVIDER_NODES.has(nodeData.name)
+  ) return;
 
   const originalOnNodeCreated = nodeType.prototype.onNodeCreated;
   nodeType.prototype.onNodeCreated = function () {
@@ -136,6 +174,15 @@ function installDynamicSlotNode(nodeType, nodeData) {
         updateDynamicSlots(this);
       };
       modelSourceWidget.__studioSuiteSourceVisibilityInstalled = true;
+    }
+    const backendProviderWidget = widgetByName(this, "backend_provider");
+    if (backendProviderWidget && !backendProviderWidget.__studioSuiteBackendVisibilityInstalled) {
+      const originalCallback = backendProviderWidget.callback;
+      backendProviderWidget.callback = (...args) => {
+        originalCallback?.apply(backendProviderWidget, args);
+        updateDynamicSlots(this);
+      };
+      backendProviderWidget.__studioSuiteBackendVisibilityInstalled = true;
     }
     requestAnimationFrame(() => updateDynamicSlots(this));
   };

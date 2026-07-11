@@ -1,9 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sys
 import time
+import importlib.util
+import subprocess
+import atexit
+import queue
+import threading
+import uuid
 from io import BytesIO
 from pathlib import Path
 from urllib.parse import urlencode
@@ -29,11 +36,10 @@ from .model_info import build_model_payload, save_model_notes
 
 NODE_DIR = Path(__file__).resolve().parent
 PACKAGE_DIR = NODE_DIR.parent
-CUSTOM_NODES_DIR = PACKAGE_DIR.parent
-WEB_DIR = PACKAGE_DIR / "web"
-PROMPT_STATIC_DIR = WEB_DIR / "prompt_static"
-PROMPT_BUNDLE_DIR = WEB_DIR / "prompt_bundle"
+PROMPT_STATIC_DIR = NODE_DIR / "frontend"
+PROMPT_BUNDLE_DIR = NODE_DIR / "bundle"
 PROMPT_BUNDLE_FILE = PROMPT_BUNDLE_DIR / "main.entry.js"
+I18N_PATH = NODE_DIR / "i18n.json"
 
 STORAGE_DIR = NODE_DIR / "storage"
 AUTOCOMPLETE_DIR = STORAGE_DIR / "autocomplete"
@@ -44,19 +50,13 @@ PROMPT_DATA_DIR = STORAGE_DIR / "prompt_data"
 CUSTOM_WORDS_PATH = AUTOCOMPLETE_DIR / "custom_words.csv"
 AUTOCOMPLETE_WORDS_PATH = AUTOCOMPLETE_DIR / "autocomplete.txt"
 
-LEGACY_DISABLED_DIR = CUSTOM_NODES_DIR / ".disabled" / "weilin-comfyui-prompt-all-in-one-page-unlock"
-LEGACY_SRC_DIR = LEGACY_DISABLED_DIR / "src"
-LEGACY_CONFIG_DIR = LEGACY_SRC_DIR / "functional" / "config"
-LEGACY_CUSTOM_WORDS_PATH = LEGACY_SRC_DIR / "prompt_storage" / "autocomplete" / "autocomplete" / "autocomplete.txt"
-LEGACY_GROUP_TAGS_DIR = LEGACY_SRC_DIR / "prompt_storage" / "group_tags" / "group_tags"
-LEGACY_LOCAL_COMPLETE_TAGS_DIR = LEGACY_SRC_DIR / "prompt_storage" / "local_complete_tags" / "local_complete_tags"
-LEGACY_PROMPT_DATA_DIR = LEGACY_SRC_DIR / "prompt_storage" / "data" / "prompt_storage"
-LEGACY_PROMPT_STATIC_DIR = LEGACY_SRC_DIR / "ui" / "web_static" / "prompt_static"
-LEGACY_PROMPT_BUNDLE_FILE = LEGACY_SRC_DIR / "ui" / "web_bundle" / "prompt_js" / "main.entry.js"
-LEGACY_I18N_PATH = LEGACY_CONFIG_DIR / "i18n.json"
-LEGACY_TRANSLATE_APIS_PATH = LEGACY_CONFIG_DIR / "translate_apis.json"
-
 ROUTES_REGISTERED = False
+_LLM_TRANSLATE_BACKEND = None
+_LLM_TRANSLATE_MODULE = None
+_PROMPT_STUDIO_PRIVATE_WORKER = None
+_PROMPT_STUDIO_PRIVATE_WORKER_LOCK = threading.Lock()
+_PROMPT_STUDIO_PRIVATE_WORKER_TIMER = None
+_PROMPT_STUDIO_PROMPT_GUARD_REGISTERED = False
 _TEXT_CACHE: dict[str, tuple[tuple[int, int], str]] = {}
 _VALUE_CACHE: dict[str, tuple[float, object]] = {}
 _FOLDER_LIST_CACHE_TTL = 20.0
@@ -277,8 +277,6 @@ def _custom_words_source() -> Path | None:
         return CUSTOM_WORDS_PATH
     if AUTOCOMPLETE_WORDS_PATH.exists():
         return AUTOCOMPLETE_WORDS_PATH
-    if LEGACY_CUSTOM_WORDS_PATH.exists():
-        return LEGACY_CUSTOM_WORDS_PATH
     return None
 
 
@@ -299,13 +297,7 @@ def _storage_path_for_key(key: str) -> Path:
 
 
 def _storage_read_path_for_key(key: str) -> Path:
-    primary_path = _storage_path_for_key(key)
-    if primary_path.exists():
-        return primary_path
-    legacy_path = LEGACY_PROMPT_DATA_DIR / f"{_sanitize_key(key)}.json"
-    if legacy_path.exists():
-        return legacy_path
-    return primary_path
+    return _storage_path_for_key(key)
 
 
 def _storage_get(key: str):
@@ -373,13 +365,6 @@ def _storage_list_get(key: str, index: int):
 
 def _storage_list_clear(key: str):
     _storage_set(key, [])
-
-
-def _copy_legacy_bundle_if_needed() -> None:
-    if PROMPT_BUNDLE_FILE.exists() or not LEGACY_PROMPT_BUNDLE_FILE.exists():
-        return
-    PROMPT_BUNDLE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    PROMPT_BUNDLE_FILE.write_text(_read_text_best_effort(LEGACY_PROMPT_BUNDLE_FILE), encoding="utf-8")
 
 
 def _list_loras() -> list[str]:
@@ -464,7 +449,7 @@ def _safe_join(root: Path, relative: str) -> Path | None:
 
 
 def _load_group_tags(lang: str) -> str:
-    source_dir = GROUP_TAGS_DIR if GROUP_TAGS_DIR.exists() else LEGACY_GROUP_TAGS_DIR
+    source_dir = GROUP_TAGS_DIR
     if not source_dir.exists():
         return ""
 
@@ -499,7 +484,7 @@ def _load_group_tags(lang: str) -> str:
 
 
 def _group_tags_dir() -> Path:
-    return GROUP_TAGS_DIR if GROUP_TAGS_DIR.exists() else LEGACY_GROUP_TAGS_DIR
+    return GROUP_TAGS_DIR
 
 
 def _group_tags_file(name: str) -> Path:
@@ -606,30 +591,24 @@ async def _request_json_dict(request) -> dict:
 def _list_csvs():
     csvs = []
     seen = set()
-    for source_dir in (LOCAL_COMPLETE_TAGS_DIR, LEGACY_LOCAL_COMPLETE_TAGS_DIR):
-        if not source_dir.exists():
+    for file in sorted(LOCAL_COMPLETE_TAGS_DIR.glob("*.csv")):
+        if file.name in seen:
             continue
-        for file in sorted(source_dir.glob("*.csv")):
-            if file.name in seen:
-                continue
-            seen.add(file.name)
-            csvs.append({
-                "key": file.name,
-                "name": file.name,
-                "size": file.stat().st_size,
-                "path": str(file),
-            })
+        seen.add(file.name)
+        csvs.append({
+            "key": file.name,
+            "name": file.name,
+            "size": file.stat().st_size,
+            "path": str(file),
+        })
     return csvs
 
 
 def _resolve_csv_path(key: str) -> Path | None:
     if not key:
         return None
-    for source_dir in (LOCAL_COMPLETE_TAGS_DIR, LEGACY_LOCAL_COMPLETE_TAGS_DIR):
-        candidate = source_dir / Path(key).name
-        if candidate.exists():
-            return candidate
-    return None
+    candidate = LOCAL_COMPLETE_TAGS_DIR / Path(key).name
+    return candidate if candidate.exists() else None
 
 
 def _load_json_file(path: Path, default):
@@ -642,7 +621,7 @@ def _load_json_file(path: Path, default):
 
 
 def _load_i18n():
-    return _load_json_file(LEGACY_I18N_PATH, {"default": "zh_CN", "languages": []})
+    return _load_json_file(I18N_PATH, {"default": "zh_CN", "languages": []})
 
 
 def _load_translate_apis():
@@ -650,26 +629,478 @@ def _load_translate_apis():
     return []
 
 
+def _task_agent_config_path() -> Path:
+    local_path = PACKAGE_DIR / "config" / "task_agent_config.local.json"
+    if local_path.exists():
+        return local_path
+    example_path = PACKAGE_DIR / "config" / "task_agent_config.example.json"
+    if example_path.exists():
+        return example_path
+    return local_path
+
+
+def _load_task_agent_gateway_module():
+    global _LLM_TRANSLATE_MODULE
+    if _LLM_TRANSLATE_MODULE is not None:
+        return _LLM_TRANSLATE_MODULE
+    module_path = PACKAGE_DIR / "task_agent_gateway.py"
+    if not module_path.exists():
+        raise RuntimeError(f"task_agent_gateway.py not found: {module_path}")
+    spec = importlib.util.spec_from_file_location("prompt_studio_task_agent_gateway", str(module_path))
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"failed to load task_agent_gateway.py: {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    _LLM_TRANSLATE_MODULE = module
+    return module
+
+
+def _get_llm_translate_backend():
+    global _LLM_TRANSLATE_BACKEND
+    if _LLM_TRANSLATE_BACKEND is not None:
+        return _LLM_TRANSLATE_BACKEND
+    module = _load_task_agent_gateway_module()
+    config_path = _task_agent_config_path()
+    if not config_path.exists():
+        raise RuntimeError(
+            "Task Agent config is missing. Copy config/task_agent_config.example.json "
+            "to config/task_agent_config.local.json, or keep the example file in place."
+        )
+    config = module.load_json_file(config_path)
+    _LLM_TRANSLATE_BACKEND = module.ManagedBackend(config)
+    return _LLM_TRANSLATE_BACKEND
+
+
+def _unload_llm_translate_backend():
+    global _LLM_TRANSLATE_BACKEND
+    if _LLM_TRANSLATE_BACKEND is None:
+        return {"status": "idle"}
+    backend = _LLM_TRANSLATE_BACKEND
+    _LLM_TRANSLATE_BACKEND = None
+    try:
+        return backend.unload()
+    except Exception as error:
+        return {"status": "failed", "error": str(error)}
+
+
+def _prompt_studio_queue_state() -> dict:
+    prompt_server = getattr(PromptServer, "instance", None)
+    prompt_queue = getattr(prompt_server, "prompt_queue", None)
+    if prompt_queue is None:
+        return {"busy": False, "running": 0, "pending": 0}
+    try:
+        running, pending = prompt_queue.get_current_queue_volatile()
+        running_count = len(running or [])
+        pending_count = len(pending or [])
+        return {
+            "busy": (running_count + pending_count) > 0,
+            "running": running_count,
+            "pending": pending_count,
+        }
+    except Exception:
+        try:
+            remaining = int(prompt_queue.get_tasks_remaining() or 0)
+        except Exception:
+            remaining = 0
+        return {"busy": remaining > 0, "running": 0, "pending": remaining}
+
+
+def _prompt_studio_worker_state() -> dict:
+    worker = _PROMPT_STUDIO_PRIVATE_WORKER
+    process = getattr(worker, "process", None) if worker is not None else None
+    alive = bool(process is not None and process.poll() is None)
+    return {"alive": alive, "pid": process.pid if alive else None}
+
+
+def _prompt_studio_queue_guard_error() -> web.Response | None:
+    queue_state = _prompt_studio_queue_state()
+    if not queue_state["busy"]:
+        return None
+    return web.json_response(
+        {
+            "success": False,
+            "error": "comfy_queue_busy",
+            "message": "ComfyUI queue is running or waiting; Prompt Studio LLM is disabled.",
+            "queue": queue_state,
+        },
+        status=409,
+    )
+
+
+def _pick_translation_text(response: dict) -> str:
+    result = response.get("json_result", {}) if isinstance(response, dict) else {}
+    if isinstance(result, dict):
+        for key in ("translated_text", "formatted_prompt", "formatted_prompt_tags", "raw_text"):
+            value = result.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        for key in ("tag_list", "tag_list_en", "normalized_tags_en", "expanded_tags_en"):
+            value = result.get(key)
+            if isinstance(value, list) and value:
+                return ", ".join(str(item).strip() for item in value if str(item).strip())
+    raw_text = response.get("raw_text", "") if isinstance(response, dict) else ""
+    return str(raw_text or "").strip()
+
+
+def _default_prompt_studio_translate_profile() -> str | None:
+    candidates = _prompt_studio_translate_profile_candidates()
+    return candidates[0] if candidates else None
+
+
+def _prompt_studio_translate_profile_candidates() -> list[str]:
+    profiles = _load_backend_profiles_for_prompt_studio()
+    preferred = (
+        "gemma4_e2b_hauhau_q8",
+        "gemma4_e2b_hauhau_q8_vision",
+        "gemma4_e2b_q8",
+        "gemma4_e4b_q4",
+        "gemma4_e4b_hauhau_q4_vision",
+        "gemma4_e4b_hauhau_q8_vision",
+    )
+    result = [key for key in preferred if key in profiles]
+    for key in profiles:
+        if key not in result:
+            result.append(key)
+    return result
+
+
+def _load_backend_profiles_for_prompt_studio() -> dict:
+    profiles_path = PACKAGE_DIR / "config" / "backend_profiles.json"
+    example_path = PACKAGE_DIR / "config" / "backend_profiles.example.json"
+    profiles = {}
+    for path in (profiles_path, example_path):
+        try:
+            if path.exists():
+                loaded = json.loads(_read_text_best_effort(path))
+                if isinstance(loaded, dict):
+                    profiles.update(loaded)
+        except Exception:
+            continue
+    return profiles
+
+
+def _prompt_studio_config_uses_inprocess() -> bool:
+    try:
+        module = _load_task_agent_gateway_module()
+        config_path = _task_agent_config_path()
+        if not config_path.exists():
+            return False
+        config = module.load_json_file(config_path)
+        backend = config.get("backend", {}) if isinstance(config, dict) else {}
+        provider = str(backend.get("provider", "") or "").strip()
+        mode = str(backend.get("mode", "") or "").strip()
+        return provider == "llama_cpp_python_inproc" or mode == "inprocess"
+    except Exception:
+        return False
+
+
+def _text_only_model_path_for_profile(profile_key: str) -> str | None:
+    """Prompt Studio inline translation is text-only; do not inherit mmproj."""
+    profile = _load_backend_profiles_for_prompt_studio().get(profile_key)
+    if not isinstance(profile, dict):
+        return None
+    if not profile.get("mmproj_path") and not profile.get("supports_vision"):
+        return None
+    model_path = str(profile.get("model_path", "") or "").strip()
+    return model_path or None
+
+
+def _private_llama_worker_script_path() -> Path:
+    return PACKAGE_DIR / "task_agent_core" / "private_llama_worker.py"
+
+
+def _private_llama_runtime_available() -> bool:
+    runtime_root = PACKAGE_DIR / "runtime" / "python_libs" / "llama_cpp_python_cu130"
+    return (
+        _private_llama_worker_script_path().exists()
+        and (runtime_root / "llama_cpp" / "__init__.py").exists()
+        and (
+            (runtime_root / "llama_cpp" / "lib" / "llama.dll").exists()
+            or (runtime_root / "llama_cpp" / "lib" / "libllama.so").exists()
+            or (runtime_root / "llama_cpp" / "lib" / "libllama.dylib").exists()
+        )
+    )
+
+
+def _run_private_llama_worker(payload: dict, timeout_sec: int = 420) -> dict:
+    script_path = _private_llama_worker_script_path()
+    if not script_path.exists():
+        raise RuntimeError(f"private llama worker missing: {script_path}")
+
+    temp_dir = PACKAGE_DIR / "runtime" / "temp" / "prompt_studio_private_llama_worker"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    env = os.environ.copy()
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    for key in ("TEMP", "TMP", "TMPDIR"):
+        env[key] = str(temp_dir)
+
+    creationflags = 0
+    if os.name == "nt" and hasattr(subprocess, "CREATE_NO_WINDOW"):
+        creationflags = subprocess.CREATE_NO_WINDOW
+
+    completed = subprocess.run(
+        [sys.executable, str(script_path)],
+        input=json.dumps(payload, ensure_ascii=False),
+        text=True,
+        encoding="utf-8",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=timeout_sec,
+        env=env,
+        creationflags=creationflags,
+    )
+    lines = [line.strip() for line in str(completed.stdout or "").splitlines() if line.strip()]
+    json_line = None
+    for line in reversed(lines):
+        if line.startswith("{") and '"ok"' in line:
+            json_line = line
+            break
+    if json_line is None:
+        stderr_tail = str(completed.stderr or "")[-2000:]
+        stdout_tail = str(completed.stdout or "")[-2000:]
+        raise RuntimeError(
+            "private llama worker did not return JSON. "
+            f"exit={completed.returncode} stderr_tail={stderr_tail} stdout_tail={stdout_tail}"
+        )
+    result = json.loads(json_line)
+    if not result.get("ok"):
+        raise RuntimeError(str(result.get("error") or "private llama worker failed"))
+    worker_result = result.get("result")
+    if not isinstance(worker_result, dict):
+        raise RuntimeError("private llama worker returned invalid result")
+    return worker_result
+
+
+class _PromptStudioPrivateWorker:
+    def __init__(self, script_path: Path):
+        self.script_path = script_path
+        self.process = None
+        self.lines = queue.Queue()
+        self.stderr_lines = queue.Queue()
+        self.reader_thread = None
+        self.stderr_thread = None
+        self.request_lock = threading.Lock()
+
+    def _reader(self, pipe, target_queue):
+        try:
+            for line in iter(pipe.readline, ""):
+                if not line:
+                    break
+                target_queue.put(line.rstrip("\r\n"))
+        except Exception as error:
+            target_queue.put(json.dumps({"ok": False, "error": str(error), "reader_error": True}))
+
+    def start(self):
+        if self.process is not None and self.process.poll() is None:
+            return
+        temp_dir = PACKAGE_DIR / "runtime" / "temp" / "prompt_studio_private_llama_daemon"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        env = os.environ.copy()
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
+        for key in ("TEMP", "TMP", "TMPDIR"):
+            env[key] = str(temp_dir)
+        creationflags = 0
+        if os.name == "nt" and hasattr(subprocess, "CREATE_NO_WINDOW"):
+            creationflags = subprocess.CREATE_NO_WINDOW
+        self.process = subprocess.Popen(
+            [sys.executable, str(self.script_path), "--stdio-server"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=str(PACKAGE_DIR),
+            env=env,
+            creationflags=creationflags,
+            bufsize=1,
+        )
+        self.lines = queue.Queue()
+        self.stderr_lines = queue.Queue()
+        self.reader_thread = threading.Thread(target=self._reader, args=(self.process.stdout, self.lines), daemon=True)
+        self.stderr_thread = threading.Thread(target=self._reader, args=(self.process.stderr, self.stderr_lines), daemon=True)
+        self.reader_thread.start()
+        self.stderr_thread.start()
+
+    def request(self, payload: dict, timeout_sec: int = 420) -> dict:
+        with self.request_lock:
+            self.start()
+            if self.process is None or self.process.stdin is None or self.process.poll() is not None:
+                raise RuntimeError("Prompt Studio private worker is not running")
+            request_id = str(uuid.uuid4())
+            payload = dict(payload)
+            payload["request_id"] = request_id
+            self.process.stdin.write(json.dumps(payload, ensure_ascii=False) + "\n")
+            self.process.stdin.flush()
+
+            deadline = time.time() + max(1, timeout_sec)
+            last_lines = []
+            while time.time() < deadline:
+                remaining = max(0.05, deadline - time.time())
+                try:
+                    line = self.lines.get(timeout=min(0.5, remaining))
+                except queue.Empty:
+                    if self.process.poll() is not None:
+                        break
+                    continue
+                if line:
+                    last_lines.append(str(line)[-1000:])
+                    if len(last_lines) > 8:
+                        last_lines = last_lines[-8:]
+                try:
+                    response = json.loads(line)
+                except Exception:
+                    continue
+                if response.get("request_id") != request_id:
+                    continue
+                if not response.get("ok"):
+                    raise RuntimeError(str(response.get("error") or "private worker failed"))
+                result = response.get("result")
+                if not isinstance(result, dict):
+                    raise RuntimeError("private worker returned invalid result")
+                return result
+
+            stderr_tail = []
+            while not self.stderr_lines.empty() and len(stderr_tail) < 8:
+                try:
+                    stderr_tail.append(str(self.stderr_lines.get_nowait())[-1000:])
+                except Exception:
+                    break
+            raise RuntimeError(
+                "Prompt Studio private worker timed out or exited. "
+                f"returncode={self.process.poll() if self.process else None}, "
+                f"stdout_tail={' | '.join(last_lines[-4:])}, stderr_tail={' | '.join(stderr_tail[-4:])}"
+            )
+
+    def stop(self, timeout_sec: float = 3.0):
+        process = self.process
+        if process is None:
+            return {"status": "idle"}
+        try:
+            if process.poll() is None and process.stdin is not None:
+                request_id = str(uuid.uuid4())
+                process.stdin.write(json.dumps({"command": "shutdown", "request_id": request_id}, ensure_ascii=False) + "\n")
+                process.stdin.flush()
+                deadline = time.time() + timeout_sec
+                while time.time() < deadline:
+                    try:
+                        line = self.lines.get(timeout=0.2)
+                    except queue.Empty:
+                        if process.poll() is not None:
+                            break
+                        continue
+                    try:
+                        response = json.loads(line)
+                    except Exception:
+                        continue
+                    if response.get("request_id") == request_id:
+                        break
+        except Exception:
+            pass
+        try:
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=timeout_sec)
+                except Exception:
+                    process.kill()
+        finally:
+            self.process = None
+        return {"status": "stopped"}
+
+
+def _stop_prompt_studio_private_worker():
+    global _PROMPT_STUDIO_PRIVATE_WORKER, _PROMPT_STUDIO_PRIVATE_WORKER_TIMER
+    with _PROMPT_STUDIO_PRIVATE_WORKER_LOCK:
+        if _PROMPT_STUDIO_PRIVATE_WORKER_TIMER is not None:
+            try:
+                _PROMPT_STUDIO_PRIVATE_WORKER_TIMER.cancel()
+            except Exception:
+                pass
+            _PROMPT_STUDIO_PRIVATE_WORKER_TIMER = None
+        worker = _PROMPT_STUDIO_PRIVATE_WORKER
+        _PROMPT_STUDIO_PRIVATE_WORKER = None
+    if worker is not None:
+        return worker.stop()
+    return {"status": "idle"}
+
+
+def _schedule_prompt_studio_private_worker_idle_shutdown(idle_seconds: int):
+    global _PROMPT_STUDIO_PRIVATE_WORKER_TIMER
+    if idle_seconds <= 0:
+        return
+    if _PROMPT_STUDIO_PRIVATE_WORKER_TIMER is not None:
+        try:
+            _PROMPT_STUDIO_PRIVATE_WORKER_TIMER.cancel()
+        except Exception:
+            pass
+    timer = threading.Timer(float(idle_seconds), _stop_prompt_studio_private_worker)
+    timer.daemon = True
+    _PROMPT_STUDIO_PRIVATE_WORKER_TIMER = timer
+    timer.start()
+
+
+def _run_private_llama_worker_daemon(payload: dict, timeout_sec: int = 420, idle_seconds: int = 90) -> dict:
+    global _PROMPT_STUDIO_PRIVATE_WORKER
+    script_path = _private_llama_worker_script_path()
+    if not script_path.exists():
+        raise RuntimeError(f"private llama worker missing: {script_path}")
+    with _PROMPT_STUDIO_PRIVATE_WORKER_LOCK:
+        if _PROMPT_STUDIO_PRIVATE_WORKER is None:
+            _PROMPT_STUDIO_PRIVATE_WORKER = _PromptStudioPrivateWorker(script_path)
+        worker = _PROMPT_STUDIO_PRIVATE_WORKER
+    result = worker.request(payload, timeout_sec=timeout_sec)
+    with _PROMPT_STUDIO_PRIVATE_WORKER_LOCK:
+        _schedule_prompt_studio_private_worker_idle_shutdown(int(idle_seconds))
+    return result
+
+
+atexit.register(_stop_prompt_studio_private_worker)
+
+
+def _prompt_studio_should_use_private_worker(data: dict) -> bool:
+    if str(data.get("backend_mode", "") or "").strip() == "managed_backend":
+        return False
+    if str(data.get("disable_private_worker", "") or "").lower() in {"1", "true", "yes"}:
+        return False
+    return _private_llama_runtime_available()
+
+
+def _dynamic_prompt_studio_context_size(text: str, direction: str) -> int:
+    length = len(str(text or ""))
+    if direction.endswith("_text"):
+        if length <= 160:
+            return 512
+        if length <= 520:
+            return 1024
+        if length <= 1200:
+            return 1536
+        return 2048
+    if length <= 220:
+        return 1024
+    if length <= 900:
+        return 1536
+    return 2048
+
+
+def _dynamic_prompt_studio_max_tokens(text: str, direction: str) -> int:
+    length = len(str(text or ""))
+    if direction.endswith("_text"):
+        return max(64, min(160, 64 + length // 2))
+    return max(160, min(640, 160 + length))
+
 
 def _get_packages_state():
-    return {}
+    # The retained legacy frontend iterates this value directly.
+    return []
 
 
 def _get_extensions():
-    extensions_dir = CUSTOM_NODES_DIR / "extensions"
-    if not extensions_dir.exists():
-        return []
-    result = []
-    for item in sorted(extensions_dir.iterdir()):
-        if item.is_dir():
-            result.append(item.name)
-    return result
+    return []
 
 
 def _get_extension_css_list():
     styles_extensions_dir = PROMPT_STATIC_DIR / "styles" / "extensions"
-    if not styles_extensions_dir.exists():
-        styles_extensions_dir = LEGACY_PROMPT_STATIC_DIR / "styles" / "extensions"
     if not styles_extensions_dir.exists():
         return []
 
@@ -851,17 +1282,27 @@ def _guess_lang(request) -> str:
 
 
 def register_prompt_studio_routes():
-    global ROUTES_REGISTERED
+    global ROUTES_REGISTERED, _PROMPT_STUDIO_PROMPT_GUARD_REGISTERED
     if ROUTES_REGISTERED:
         return True
 
     _ensure_dirs()
-    _copy_legacy_bundle_if_needed()
     prompt_server = getattr(PromptServer, "instance", None)
     if prompt_server is None:
         return False
     routes = prompt_server.routes
     history = _HistoryStore()
+
+    if not _PROMPT_STUDIO_PROMPT_GUARD_REGISTERED:
+        def release_prompt_studio_llm_before_queue(json_data):
+            # This hook runs before ComfyUI accepts a workflow, so drawing never
+            # races a resident Prompt Studio model for GPU/RAM.
+            if _prompt_studio_worker_state()["alive"]:
+                _stop_prompt_studio_private_worker()
+            return json_data
+
+        prompt_server.add_on_prompt_handler(release_prompt_studio_llm_before_queue)
+        _PROMPT_STUDIO_PROMPT_GUARD_REGISTERED = True
 
     @routes.get("/studio-suite/prompt-studio/autocomplete/custom")
     async def prompt_studio_get_custom_words(request):
@@ -978,20 +1419,24 @@ def register_prompt_studio_routes():
             return web.Response(status=200, text=_read_text_cached(PROMPT_BUNDLE_FILE), content_type="application/javascript")
         return web.Response(status=404, text="legacy bundle not found")
 
-    @routes.get("/weilin/web_ui/{file_path:.*}")
-    async def prompt_studio_legacy_static(request):
+    async def _serve_prompt_studio_ui(request):
         file_path = request.match_info.get("file_path", "")
-        root = PROMPT_STATIC_DIR if PROMPT_STATIC_DIR.exists() else LEGACY_PROMPT_STATIC_DIR
-        target = _safe_join(root, file_path)
+        target = _safe_join(PROMPT_STATIC_DIR, file_path)
         if target and target.is_file():
             return web.FileResponse(target)
         raise web.HTTPNotFound()
 
+    @routes.get("/studio-suite/prompt-studio/ui/{file_path:.*}")
+    async def prompt_studio_static(request):
+        return await _serve_prompt_studio_ui(request)
+
+    @routes.get("/weilin/web_ui/{file_path:.*}")
+    async def prompt_studio_legacy_static(request):
+        return await _serve_prompt_studio_ui(request)
+
     async def _serve_style_file(request):
         rel = str(request.query.get("file", "")).strip()
         target = _safe_join(PROMPT_STATIC_DIR / "styles", rel)
-        if target is None or not target.is_file():
-            target = _safe_join(LEGACY_PROMPT_STATIC_DIR / "styles", rel)
         if target and target.is_file():
             return web.FileResponse(target)
         raise web.HTTPNotFound()
@@ -1004,35 +1449,6 @@ def register_prompt_studio_routes():
     async def prompt_studio_styles_legacy(request):
         return await _serve_style_file(request)
 
-    def _try_register_exact_legacy_backend() -> bool:
-        if os.environ.get("STUDIO_SUITE_PROMPT_STUDIO_EXACT_LEGACY", "").strip() != "1":
-            return False
-        if not LEGACY_DISABLED_DIR.exists() or not LEGACY_SRC_DIR.exists():
-            return False
-        try:
-            legacy_root = str(LEGACY_DISABLED_DIR)
-            if legacy_root not in sys.path:
-                sys.path.insert(0, legacy_root)
-            import importlib
-            try:
-                import gradio  # noqa: F401
-            except Exception:
-                import types
-                dummy_gradio = types.ModuleType("gradio")
-                class _DummyBlocks:
-                    pass
-                dummy_gradio.Blocks = _DummyBlocks
-                sys.modules["gradio"] = dummy_gradio
-            importlib.import_module("src.functional.sd_webui_prompt_all_in_one_app.sd_webui_prompt_all_in_one.scripts.on_app_started")
-            importlib.import_module("src.functional.script.autocomplete")
-            return True
-        except Exception as exc:
-            print(f"[PromptStudio] exact legacy backend import failed: {exc}")
-            return False
-
-    if _try_register_exact_legacy_backend():
-        ROUTES_REGISTERED = True
-        return
     @routes.get("/weilin/physton_prompt/get_version")
     async def prompt_studio_get_version(request):
         return web.json_response({"version": "studio-suite-legacy-compat", "latest_version": "studio-suite-legacy-compat"})
@@ -1060,6 +1476,196 @@ def register_prompt_studio_routes():
         text = str(data.get("text", ""))
         token_count = len([part for part in text.replace("\n", " ").split(" ") if part.strip()])
         return web.json_response({"token_count": token_count, "max_length": 4096})
+
+    @routes.post("/studio-suite/prompt-studio/llm_translate")
+    async def prompt_studio_llm_translate(request):
+        queue_error = _prompt_studio_queue_guard_error()
+        if queue_error is not None:
+            return queue_error
+        data = await _request_json_dict(request)
+        text = str(data.get("text", "") or "").strip()
+        if not text:
+            return web.json_response({"success": False, "error": "empty_text"}, status=400)
+
+        direction = str(data.get("direction", "") or "zh_to_en_tags").strip()
+        backend_profile = str(data.get("backend_profile", "") or "").strip() or _default_prompt_studio_translate_profile()
+        dynamic_runtime = bool(data.get("dynamic_runtime", True))
+        context_size = (
+            _dynamic_prompt_studio_context_size(text, direction)
+            if dynamic_runtime
+            else int(data.get("context_size", 2048) or 2048)
+        )
+        max_tokens = (
+            _dynamic_prompt_studio_max_tokens(text, direction)
+            if dynamic_runtime
+            else int(data.get("max_tokens", 512) or 512)
+        )
+        temperature = float(data.get("temperature", 0.22 if direction.endswith("_text") else 0.18) or 0.15)
+        keep_warm = bool(data.get("keep_warm", True))
+        unload_after_run = False if keep_warm else bool(data.get("unload_after_run", False))
+        keep_warm_seconds = int(data.get("keep_warm_seconds", 600) or 600)
+        custom_model_path = str(data.get("custom_model_path", "") or "").strip() or None
+        use_private_worker = _prompt_studio_should_use_private_worker(data)
+        if custom_model_path is None and (use_private_worker or _prompt_studio_config_uses_inprocess()):
+            custom_model_path = _text_only_model_path_for_profile(backend_profile)
+
+        try:
+            task_inputs = {
+                "raw_text": text,
+                "direction": direction,
+                "target_profile": str(data.get("target_profile", "") or "generic_tag_model"),
+                "translation_mode": str(data.get("translation_mode", "") or "sentence").strip(),
+                "purpose": "Prompt Studio inline translation for anime / Danbooru prompt editing.",
+            }
+            runtime_options = {
+                "llama_cpp_python_n_gpu_layers": int(data.get("n_gpu_layers", 999) if dynamic_runtime else data.get("n_gpu_layers", 0) or 0),
+                "llama_cpp_python_max_safe_gpu_layers": int(data.get("max_safe_gpu_layers", 8) or 8),
+                "llama_cpp_python_n_batch": int(data.get("n_batch", 256 if dynamic_runtime else 128) or 128),
+                "llama_cpp_python_threads": int(data.get("threads", 0) or 0),
+            }
+            if use_private_worker:
+                worker_payload = {
+                    "task_type": "translate_anime_tags",
+                    "inputs": task_inputs,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                    "auto_load_backend": True,
+                    "unload_after_run": unload_after_run,
+                    "backend_profile": backend_profile,
+                    "context_size": context_size,
+                    "custom_model_path": custom_model_path,
+                    "custom_mmproj_path": None,
+                    "runtime_options": runtime_options,
+                }
+                if keep_warm:
+                    response = await asyncio.to_thread(
+                        _run_private_llama_worker_daemon,
+                        worker_payload,
+                        int(data.get("timeout_sec", 420) or 420),
+                        keep_warm_seconds,
+                    )
+                else:
+                    response = await asyncio.to_thread(_run_private_llama_worker, worker_payload)
+            else:
+                backend = _get_llm_translate_backend()
+                response = await asyncio.to_thread(
+                    backend.run_task,
+                    task_type="translate_anime_tags",
+                    inputs=task_inputs,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    auto_load_backend=True,
+                    unload_after_run=unload_after_run,
+                    backend_profile=backend_profile,
+                    context_size=context_size,
+                    custom_model_path=custom_model_path,
+                    custom_mmproj_path=None,
+                    runtime_options=runtime_options,
+                )
+            translated = _pick_translation_text(response)
+            if not translated:
+                return web.json_response(
+                    {
+                        "success": False,
+                        "error": "empty_translation",
+                        "raw_text": response.get("raw_text", "") if isinstance(response, dict) else "",
+                    },
+                    status=502,
+                )
+            return web.json_response({
+                "success": True,
+                "translated_text": translated,
+                "source_text": response.get("json_result", {}).get("source_text", text) if isinstance(response, dict) else text,
+                "translation_pairs": response.get("json_result", {}).get("translation_pairs", []) if isinstance(response, dict) else [],
+                "raw_text": response.get("raw_text", "") if isinstance(response, dict) else "",
+                "json_result": response.get("json_result", {}) if isinstance(response, dict) else {},
+                "backend_mode": "private_llama_cpp_worker" if use_private_worker else "managed_backend",
+                "backend_profile": backend_profile,
+                "runtime": {
+                    "dynamic_runtime": dynamic_runtime,
+                    "keep_warm": keep_warm,
+                    "keep_warm_seconds": keep_warm_seconds if keep_warm else 0,
+                    "context_size": context_size,
+                    "max_tokens": max_tokens,
+                    "temperature": temperature,
+                    "n_gpu_layers": runtime_options.get("llama_cpp_python_n_gpu_layers"),
+                    "max_safe_gpu_layers": runtime_options.get("llama_cpp_python_max_safe_gpu_layers"),
+                    "n_batch": runtime_options.get("llama_cpp_python_n_batch"),
+                },
+            })
+        except Exception as error:
+            if _prompt_studio_queue_state()["busy"]:
+                return web.json_response(
+                    {"success": False, "error": "comfy_queue_busy", "queue": _prompt_studio_queue_state()},
+                    status=409,
+                )
+            return web.json_response({"success": False, "error": str(error)}, status=500)
+
+    @routes.get("/studio-suite/prompt-studio/llm_status")
+    async def prompt_studio_llm_status(request):
+        return web.json_response({
+            "success": True,
+            "queue": _prompt_studio_queue_state(),
+            "worker": _prompt_studio_worker_state(),
+        })
+
+    @routes.post("/studio-suite/prompt-studio/llm_preload")
+    async def prompt_studio_llm_preload(request):
+        queue_error = _prompt_studio_queue_guard_error()
+        if queue_error is not None:
+            return queue_error
+        data = await _request_json_dict(request)
+        if not _private_llama_runtime_available():
+            return web.json_response({"success": False, "error": "private_llama_runtime_missing"}, status=503)
+        backend_profile = str(data.get("backend_profile", "") or "").strip() or _default_prompt_studio_translate_profile()
+        context_size = max(512, min(2048, int(data.get("context_size", 512) or 512)))
+        custom_model_path = str(data.get("custom_model_path", "") or "").strip() or None
+        if custom_model_path is None:
+            custom_model_path = _text_only_model_path_for_profile(backend_profile)
+        runtime_options = {
+            "llama_cpp_python_n_gpu_layers": int(data.get("n_gpu_layers", 999) or 999),
+            "llama_cpp_python_max_safe_gpu_layers": int(data.get("max_safe_gpu_layers", 8) or 8),
+            "llama_cpp_python_n_batch": int(data.get("n_batch", 128) or 128),
+            "llama_cpp_python_threads": int(data.get("threads", 0) or 0),
+        }
+        payload = {
+            "command": "preload",
+            "backend_profile": backend_profile,
+            "context_size": context_size,
+            "custom_model_path": custom_model_path,
+            "runtime_options": runtime_options,
+        }
+        started_at = time.monotonic()
+        try:
+            result = await asyncio.to_thread(
+                _run_private_llama_worker_daemon,
+                payload,
+                int(data.get("timeout_sec", 420) or 420),
+                int(data.get("keep_warm_seconds", 600) or 600),
+            )
+            return web.json_response({
+                "success": True,
+                "result": result,
+                "worker": _prompt_studio_worker_state(),
+                "elapsed_seconds": round(time.monotonic() - started_at, 3),
+            })
+        except Exception as error:
+            if _prompt_studio_queue_state()["busy"]:
+                return web.json_response(
+                    {"success": False, "error": "comfy_queue_busy", "queue": _prompt_studio_queue_state()},
+                    status=409,
+                )
+            return web.json_response({"success": False, "error": str(error)}, status=500)
+
+    @routes.post("/studio-suite/prompt-studio/llm_unload")
+    async def prompt_studio_llm_unload(request):
+        private_result = _stop_prompt_studio_private_worker()
+        result = _unload_llm_translate_backend()
+        if isinstance(result, dict):
+            result["private_worker"] = private_result
+        status = str(result.get("status", "") if isinstance(result, dict) else "").lower()
+        ok = status not in {"failed", "error"}
+        return web.json_response({"success": ok, "result": result}, status=200 if ok else 500)
 
     @routes.get("/weilin/physton_prompt/get_data")
     async def prompt_studio_get_data(request):

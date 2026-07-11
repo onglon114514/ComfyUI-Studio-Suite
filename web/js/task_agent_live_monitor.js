@@ -376,7 +376,8 @@ function renderPayload(dom, payload) {
   setText(
     dom.panel,
     "live_output",
-    latestOutputEvent?.output_text
+    activeTask?.stream_text
+      || latestOutputEvent?.output_text
       || latestOutputEvent?.metadata?.raw_text_preview
       || lastOutput?.output_text
       || activeTask?.message
@@ -470,7 +471,7 @@ function installMonitor() {
 
   const schedule = () => {
     clearInterval(timer);
-    timer = setInterval(() => fetchMonitorStatus(dom), open ? 2000 : 8000);
+    timer = setInterval(() => fetchMonitorStatus(dom), open ? 750 : 8000);
   };
 
   dom.bubble.addEventListener("click", () => {

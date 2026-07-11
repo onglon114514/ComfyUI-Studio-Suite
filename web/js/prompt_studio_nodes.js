@@ -1,5 +1,5 @@
 import { app } from "/scripts/app.js";
-import { getLegacyPromptStudioController } from "./prompt_studio/legacy_iframe_controller.js";
+import { getLegacyPromptStudioController } from "./prompt_studio_controller.js";
 
 const SUPPORTED_NODE_NAMES = new Set([
     "PromptStudioOutput",

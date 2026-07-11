@@ -18,6 +18,7 @@ ComfyUI Studio Suite 是一个面向 ComfyUI 的预览版自定义节点包，�
 - 文件夹批处理队列节点
 - LoRA 文件、LoRA 强度、采样器/调度器、FreeU、通用节点输入的 XY 矩阵测试
 - 带内置 autocomplete / 分组 tag 存储的 Prompt Studio 编辑器
+- Prompt Studio 内置可选 LLM 翻译按钮，可复用 Task Agent 本地后端
 - 图像填充、裁切、缩放辅助节点
 
 ## 当前推荐路线
@@ -33,6 +34,10 @@ Qwen 路线现在也可以接，但整体完善度还不如 Gemma 4 E4B。
 
 ## 安装
 
+如果是第一次使用，建议先按最小可用配置跑通：
+
+- `docs/QUICK_START_zh-CN.md`
+
 1. 把本仓库放到：
 
 ```text
@@ -41,21 +46,49 @@ ComfyUI/custom_nodes/comfyui_studio_suite
 
 2. 重启 ComfyUI。
 
-3. 复制后端配置模板：
+3. 安装最小本地 LLM 模型（推荐）。
+
+   Prompt Studio 的 LLM 翻译和 Task Agent 文本任务需要本地 GGUF 模型。最小推荐模型会放到节点目录：
+
+```text
+models/llm/gemma-4-e2b-hauhau-q8/
+```
+
+   可尝试自动下载：
+
+```powershell
+python scripts/install_min_llm_model.py
+```
+
+   如果网络或 Hugging Face 访问失败，打印手动下载链接：
+
+```powershell
+python scripts/install_min_llm_model.py --manual
+```
+
+4. 复制后端配置模板：
 
 ```text
 config/backend_profiles.example.json -> config/backend_profiles.json
 ```
 
-4. 编辑 `config/backend_profiles.json`，把 `model_path` 和 `mmproj_path` 改成你本机的模型路径。
+5. 编辑 `config/backend_profiles.json`，把 `model_path` 和 `mmproj_path` 改成你本机的模型路径。
 
-5. 打开示例工作流目录：
+   只跑纯文本任务时只需要改 `model_path`，不需要填写 `mmproj_path`。
+
+   如果使用上面的最小模型安装脚本，`gemma4_e2b_hauhau_q8` 会自动指向：
+
+```text
+models/llm/gemma-4-e2b-hauhau-q8/Gemma-4-E2B-Uncensored-HauhauCS-Aggressive-Q8_K_P.gguf
+```
+
+6. 打开示例工作流目录：
 
 ```text
 examples/workflows
 ```
 
-6. 在节点包根目录运行自检：
+7. 在节点包根目录运行自检：
 
 ```powershell
 python scripts/doctor_release.py
@@ -278,6 +311,7 @@ ComfyUI/custom_nodes/comfyui_studio_suite/resources
 这个仓库整合和重构了多条开发线的功能，说明见：
 
 - `docs/ATTRIBUTION.md`
+- `THIRD_PARTY_NOTICES.md`
 
 ## 发布前检查
 

@@ -66,8 +66,11 @@ RUNTIME_DIR = PROJECT_DIR / "runtime"
 RUNTIME_LOG_DIR = RUNTIME_DIR / "logs"
 RUNTIME_TEMP_DIR = RUNTIME_DIR / "temp"
 BACKEND_PROFILES_PATH = PROJECT_DIR / "config" / "backend_profiles.json"
+BACKEND_PROFILES_EXAMPLE_PATH = PROJECT_DIR / "config" / "backend_profiles.example.json"
 GATEWAY_CONFIG_PATH = PROJECT_DIR / "config" / "task_agent_config.local.json"
+GATEWAY_CONFIG_EXAMPLE_PATH = PROJECT_DIR / "config" / "task_agent_config.example.json"
 GATEWAY_SCRIPT_PATH = PROJECT_DIR / "task_agent_gateway.py"
+PRIVATE_LLAMA_WORKER_SCRIPT_PATH = PROJECT_DIR / "task_agent_core" / "private_llama_worker.py"
 LOCAL_GATEWAY_BUILD_ID = str(GATEWAY_SCRIPT_PATH.stat().st_mtime_ns) if GATEWAY_SCRIPT_PATH.exists() else ""
 _GATEWAY_PROCESS = None
 _GATEWAY_PROCESS_PID = None
@@ -102,6 +105,7 @@ cleanup_comfy_resources = _CLEANUP_UTILS.cleanup_comfy_resources
 get_combined_memory_snapshot = _CLEANUP_UTILS.get_combined_memory_snapshot
 
 from .runtime_state import (
+    append_task_stream,
     fail_task_event,
     finish_task_event,
     start_task_event,
@@ -112,7 +116,17 @@ from .runtime_state import (
 def load_backend_profiles():
     if BACKEND_PROFILES_PATH.exists():
         return json.loads(BACKEND_PROFILES_PATH.read_text(encoding="utf-8"))
+    if BACKEND_PROFILES_EXAMPLE_PATH.exists():
+        return json.loads(BACKEND_PROFILES_EXAMPLE_PATH.read_text(encoding="utf-8"))
     return {}
+
+
+def resolve_gateway_config_path():
+    if GATEWAY_CONFIG_PATH.exists():
+        return GATEWAY_CONFIG_PATH
+    if GATEWAY_CONFIG_EXAMPLE_PATH.exists():
+        return GATEWAY_CONFIG_EXAMPLE_PATH
+    return GATEWAY_CONFIG_PATH
 
 
 LEGACY_BACKEND_PROFILE_OPTIONS = {
@@ -145,6 +159,7 @@ BACKEND_PROFILE_OPTIONS = get_backend_profile_options()
 DEFAULT_BACKEND_PROFILE = BACKEND_PROFILE_OPTIONS[0]
 BACKEND_PROVIDER_OPTIONS = [
     "config_default",
+    "private_llama_cpp_worker",
     "isolated_worker",
     "llama_cpp_python_inproc",
     "transformers_inproc",
@@ -154,6 +169,21 @@ BACKEND_PROVIDER_OPTIONS = [
     "lm_studio",
     "vllm",
     "custom_openai_compat",
+]
+TEXT_TASK_OPTIONS = [
+    "expand_anime_tags",
+    "translate_anime_tags",
+    "normalize_anime_tags",
+    "refine_wd14_tags",
+    "generate_natural_caption",
+    "vision_tagging",
+    "image_captioning",
+]
+TEXT_GENERATE_TEMPLATE_OPTIONS = [
+    "plain_system_user",
+    "gemma_chat",
+    "qwen_chat",
+    "raw_user_only",
 ]
 MANAGED_BACKEND_PROVIDERS = {"koboldcpp", "llama_cpp_server"}
 ATTACH_BACKEND_PROVIDERS = {"lm_studio", "vllm", "custom_openai_compat"}
@@ -183,6 +213,10 @@ def default_base_url_for_provider(provider_choice):
 
 def provider_uses_isolated_worker(provider_choice):
     return normalize_backend_provider_choice(provider_choice) == "isolated_worker"
+
+
+def provider_uses_private_llama_worker(provider_choice):
+    return normalize_backend_provider_choice(provider_choice) == "private_llama_cpp_worker"
 
 
 def post_json(url, payload, timeout=600):
@@ -228,7 +262,7 @@ def direct_backend_cache_key(config_path, backend_base_url, backend_provider):
 
 
 def get_direct_backend(config_path=None, backend_base_url=None, backend_provider=None):
-    config_path = str(config_path or GATEWAY_CONFIG_PATH)
+    config_path = str(config_path or resolve_gateway_config_path())
     cache_key = direct_backend_cache_key(config_path, backend_base_url, backend_provider)
     with _DIRECT_BACKENDS_LOCK:
         backend = _DIRECT_BACKENDS.get(cache_key)
@@ -323,6 +357,7 @@ def run_task_isolated_worker(
     custom_model_path,
     custom_mmproj_path,
     runtime_options=None,
+    stream_callback=None,
 ):
     ensure_gateway_available(gateway_url, auto_start=True, timeout_sec=45)
     runtime_options = runtime_options or {}
@@ -374,6 +409,116 @@ def run_task_isolated_worker(
         ) from error
 
 
+def run_task_private_llama_worker(
+    *,
+    task_type,
+    inputs,
+    temperature,
+    max_tokens,
+    auto_load_backend,
+    unload_after_run,
+    backend_profile,
+    context_size,
+    custom_model_path,
+    custom_mmproj_path,
+    runtime_options=None,
+    stream_callback=None,
+):
+    runtime_options = runtime_options or {}
+    if not PRIVATE_LLAMA_WORKER_SCRIPT_PATH.exists():
+        raise RuntimeError(f"private_llama_cpp_worker script not found: {PRIVATE_LLAMA_WORKER_SCRIPT_PATH}")
+    payload = {
+        "task_type": task_type,
+        "inputs": inputs,
+        "temperature": float(temperature),
+        "max_tokens": int(max_tokens),
+        "auto_load_backend": bool(auto_load_backend),
+        "unload_after_run": bool(unload_after_run),
+        "backend_profile": backend_profile,
+        "context_size": int(context_size),
+        "runtime_options": runtime_options,
+    }
+    resolved_custom_model_path = str(custom_model_path or "").strip()
+    resolved_custom_mmproj_path = str(custom_mmproj_path or "").strip()
+    if not task_inputs_need_vision(task_type, inputs):
+        # Text-only jobs should not inherit a vision profile's mmproj. This keeps
+        # Prompt Studio / tag utilities lightweight and avoids handler conflicts.
+        resolved_custom_mmproj_path = ""
+        if not resolved_custom_model_path:
+            profile_key = parse_backend_profile_choice(backend_profile)
+            profile = load_backend_profiles().get(profile_key, {})
+            if isinstance(profile, dict) and (profile.get("mmproj_path") or profile.get("supports_vision")):
+                resolved_custom_model_path = str(profile.get("model_path", "") or "").strip()
+    if resolved_custom_model_path:
+        payload["custom_model_path"] = resolved_custom_model_path
+    if resolved_custom_mmproj_path:
+        payload["custom_mmproj_path"] = resolved_custom_mmproj_path
+
+    timeout_sec = int(runtime_options.get("private_llama_worker_timeout_sec") or runtime_options.get("isolated_worker_timeout_sec") or 420)
+    worker_temp_dir = RUNTIME_TEMP_DIR / "private_llama_worker"
+    worker_temp_dir.mkdir(parents=True, exist_ok=True)
+    env = dict(os.environ)
+    env.update(
+        {
+            "TEMP": str(worker_temp_dir),
+            "TMP": str(worker_temp_dir),
+            "TMPDIR": str(worker_temp_dir),
+            "PYTHONDONTWRITEBYTECODE": "1",
+        }
+    )
+    print(
+        "[TaskAgent] private_llama_cpp_worker request start "
+        f"task={task_type} profile={backend_profile} ctx={int(context_size)} "
+        f"max_tokens={int(max_tokens)} timeout={timeout_sec}s unload_after_run={bool(unload_after_run)}",
+        flush=True,
+    )
+    creationflags = 0
+    if os.name == "nt" and hasattr(subprocess, "CREATE_NO_WINDOW"):
+        creationflags = subprocess.CREATE_NO_WINDOW
+    result = subprocess.run(
+        [sys.executable, str(PRIVATE_LLAMA_WORKER_SCRIPT_PATH)],
+        input=json.dumps(payload, ensure_ascii=False),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        cwd=str(PROJECT_DIR),
+        env=env,
+        timeout=timeout_sec,
+        check=False,
+        creationflags=creationflags,
+    )
+    stdout = (result.stdout or "").strip()
+    stderr = (result.stderr or "").strip()
+    lines = [line.strip() for line in stdout.splitlines() if line.strip()]
+    response_payload = None
+    for line in reversed(lines):
+        try:
+            response_payload = json.loads(line)
+            break
+        except Exception:
+            continue
+    if response_payload is None:
+        raise RuntimeError(
+            "private_llama_cpp_worker did not return JSON. "
+            f"returncode={result.returncode}, stdout_tail={stdout[-4000:]}, stderr_tail={stderr[-4000:]}"
+        )
+    if not response_payload.get("ok"):
+        raise RuntimeError(
+            "private_llama_cpp_worker failed. "
+            f"returncode={result.returncode}, error={response_payload.get('error')}, "
+            f"stderr_tail={stderr[-4000:]}"
+        )
+    print(
+        "[TaskAgent] private_llama_cpp_worker request done "
+        f"task={task_type} status={response_payload.get('result', {}).get('status')} "
+        f"backend_profile={response_payload.get('result', {}).get('backend_profile')}",
+        flush=True,
+    )
+    return response_payload.get("result", {})
+
+
 def run_task_direct(
     *,
     gateway_url,
@@ -389,7 +534,23 @@ def run_task_direct(
     custom_model_path,
     custom_mmproj_path,
     runtime_options=None,
+    stream_callback=None,
 ):
+    if provider_uses_private_llama_worker(backend_provider):
+        return run_task_private_llama_worker(
+            task_type=task_type,
+            inputs=inputs,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            auto_load_backend=auto_load_backend,
+            unload_after_run=unload_after_run,
+            backend_profile=backend_profile,
+            context_size=context_size,
+            custom_model_path=custom_model_path,
+            custom_mmproj_path=custom_mmproj_path,
+            runtime_options=runtime_options,
+            stream_callback=stream_callback,
+        )
     if provider_uses_isolated_worker(backend_provider):
         return run_task_isolated_worker(
             gateway_url=gateway_url,
@@ -404,13 +565,14 @@ def run_task_direct(
             custom_model_path=custom_model_path,
             custom_mmproj_path=custom_mmproj_path,
             runtime_options=runtime_options,
+            stream_callback=stream_callback,
         )
     backend_base_url = resolve_backend_base_url(gateway_url, backend_provider)
     last_error = None
     for attempt in range(2):
         try:
             backend = get_direct_backend(
-                config_path=GATEWAY_CONFIG_PATH,
+                config_path=resolve_gateway_config_path(),
                 backend_base_url=backend_base_url,
                 backend_provider=backend_provider,
             )
@@ -426,6 +588,7 @@ def run_task_direct(
                 custom_model_path=custom_model_path,
                 custom_mmproj_path=custom_mmproj_path,
                 runtime_options=runtime_options or {},
+                stream_callback=stream_callback,
             )
         except Exception as error:
             last_error = error
@@ -658,7 +821,8 @@ def kill_processes_on_port(port):
 def start_local_gateway(gateway_url):
     global _GATEWAY_PROCESS, _GATEWAY_PROCESS_PID
 
-    if not GATEWAY_SCRIPT_PATH.exists() or not GATEWAY_CONFIG_PATH.exists():
+    config_path = resolve_gateway_config_path()
+    if not GATEWAY_SCRIPT_PATH.exists() or not config_path.exists():
         raise RuntimeError("Local gateway script or config is missing.")
 
     if _GATEWAY_PROCESS is not None and _GATEWAY_PROCESS.poll() is None:
@@ -681,7 +845,7 @@ def start_local_gateway(gateway_url):
         gateway_temp_dir.mkdir(parents=True, exist_ok=True)
         py_escaped = str(sys.executable).replace("'", "''")
         script_escaped = str(GATEWAY_SCRIPT_PATH).replace("'", "''")
-        config_escaped = str(GATEWAY_CONFIG_PATH).replace("'", "''")
+        config_escaped = str(config_path).replace("'", "''")
         cwd_escaped = str(PROJECT_DIR).replace("'", "''")
         temp_escaped = str(gateway_temp_dir).replace("'", "''")
         ps_script = (
@@ -712,7 +876,7 @@ def start_local_gateway(gateway_url):
         _GATEWAY_PROCESS_PID = int(pid_text.splitlines()[-1].strip())
         return
 
-    command = [sys.executable, str(GATEWAY_SCRIPT_PATH), "--config", str(GATEWAY_CONFIG_PATH)]
+    command = [sys.executable, str(GATEWAY_SCRIPT_PATH), "--config", str(config_path)]
     _GATEWAY_PROCESS = subprocess.Popen(
         command,
         cwd=str(PROJECT_DIR),
@@ -800,6 +964,31 @@ def build_common_inputs():
     }
 
 
+def build_local_inprocess_inputs():
+    return {
+        "model_source": (
+            ["profile_catalog", "custom_path"],
+        ),
+        "backend_profile": (
+            BACKEND_PROFILE_OPTIONS,
+        ),
+        "custom_model_path": (
+            "STRING",
+            {"default": "", "multiline": False},
+        ),
+        "custom_mmproj_path": (
+            "STRING",
+            {"default": "", "multiline": False},
+        ),
+        "context_size": ("INT", {"default": 8192, "min": 2048, "max": 65536, "step": 1024}),
+        "llama_cpp_python_n_gpu_layers": ("INT", {"default": 0, "min": -1, "max": 999, "step": 1}),
+        "llama_cpp_python_n_batch": ("INT", {"default": 256, "min": 32, "max": 4096, "step": 32}),
+        "llama_cpp_python_threads": ("INT", {"default": 0, "min": 0, "max": 128, "step": 1}),
+        "auto_load_backend": ("BOOLEAN", {"default": True}),
+        "unload_after_run": ("BOOLEAN", {"default": False}),
+    }
+
+
 def build_runtime_options(llama_cpp_python_n_gpu_layers, llama_cpp_python_n_batch, llama_cpp_python_threads):
     options = {
         "llama_cpp_python_n_gpu_layers": int(llama_cpp_python_n_gpu_layers),
@@ -834,6 +1023,12 @@ def custom_model_looks_like_vision_family(custom_model_path):
     return "gemma" in path_text and ("hauhaucs" in path_text or "vision" in path_text or "aggressive" in path_text)
 
 
+def task_inputs_need_vision(resolved_task_type, inputs):
+    image_path = str((inputs or {}).get("image_path", "")).strip()
+    image_tasks = {"extract_tags_from_image", "vision_tagging", "image_captioning"}
+    return bool(image_path) or str(resolved_task_type or "").strip() in image_tasks
+
+
 def request_needs_mmproj(model_source, custom_model_path, custom_mmproj_path, resolved_task_type, inputs):
     if model_source != "custom_path":
         return False
@@ -842,9 +1037,7 @@ def request_needs_mmproj(model_source, custom_model_path, custom_mmproj_path, re
     if not custom_model_looks_like_vision_family(custom_model_path):
         return False
 
-    image_path = str(inputs.get("image_path", "")).strip()
-    image_tasks = {"extract_tags_from_image", "vision_tagging", "image_captioning"}
-    return bool(image_path) or str(resolved_task_type or "").strip() in image_tasks
+    return task_inputs_need_vision(resolved_task_type, inputs)
 
 
 def build_context_optional_inputs():
@@ -1706,6 +1899,32 @@ def execute_tag_utility_internal(
     response = None
     chain_debug = []
 
+    def make_stream_callback(stream_task_type, step_index=None, step_count=None):
+        prefix_sent = {"value": False}
+
+        def _on_stream(delta):
+            if not prefix_sent["value"]:
+                prefix_sent["value"] = True
+                if step_index is not None and step_count is not None:
+                    append_task_stream(
+                        monitor_task_id,
+                        f"\n\n[Step {step_index}/{step_count}: {stream_task_type}]\n",
+                        stream_task_type,
+                        stage="stream",
+                    )
+            append_task_stream(
+                monitor_task_id,
+                delta,
+                stream_task_type,
+                stage="stream",
+                metadata={
+                    "step_index": step_index,
+                    "step_count": step_count,
+                } if step_index is not None else None,
+            )
+
+        return _on_stream
+
     if isinstance(task_bundle, dict) and task_bundle.get("task_modules"):
         sequential_base_inputs = dict(inputs)
         if raw_input_value and input_field:
@@ -1782,6 +2001,11 @@ def execute_tag_utility_internal(
                     custom_model_path=(str(custom_model_path).strip() if model_source == "custom_path" else ""),
                     custom_mmproj_path=str(custom_mmproj_path).strip(),
                     runtime_options=runtime_options,
+                    stream_callback=make_stream_callback(
+                        str(payload.get("task_type", "")).strip(),
+                        index + 1,
+                        len(payloads),
+                    ),
                 )
             except Exception as error:
                 fail_task_event(
@@ -1886,6 +2110,7 @@ def execute_tag_utility_internal(
                 custom_model_path=(str(custom_model_path).strip() if model_source == "custom_path" else ""),
                 custom_mmproj_path=str(custom_mmproj_path).strip(),
                 runtime_options=runtime_options,
+                stream_callback=make_stream_callback(resolved_task_type),
             )
         except Exception as error:
             fail_task_event(monitor_task_id, str(error), resolved_task_type)
@@ -1919,6 +2144,178 @@ def execute_tag_utility_internal(
         },
     )
     return (positive_prompt, negative_prompt, raw_text, json_text, status)
+
+
+def user_message_content_to_prompt_text(content):
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text":
+                parts.append(str(item.get("text", "")).strip())
+        return "\n\n".join(part for part in parts if part)
+    return str(content or "")
+
+
+def format_text_generate_prompt(system_prompt, user_prompt, template_mode):
+    mode = str(template_mode or "plain_system_user").strip()
+    system_text = str(system_prompt or "").strip()
+    user_text = str(user_prompt or "").strip()
+    if mode == "raw_user_only":
+        return user_text
+    if mode == "gemma_chat":
+        return (
+            f"<start_of_turn>system\n{system_text}<end_of_turn>\n"
+            f"<start_of_turn>user\n{user_text}<end_of_turn>\n"
+            f"<start_of_turn>model\n"
+        )
+    if mode == "qwen_chat":
+        return (
+            f"<|im_start|>system\n{system_text}<|im_end|>\n"
+            f"<|im_start|>user\n{user_text}<|im_end|>\n"
+            f"<|im_start|>assistant\n"
+        )
+    return f"System:\n{system_text}\n\nUser:\n{user_text}\n\nAssistant:"
+
+
+def build_text_generate_prompt_internal(
+    *,
+    task_type,
+    text_input,
+    style_hint,
+    purpose,
+    translate_direction,
+    target_profile,
+    context_bundle_json,
+    template_mode,
+):
+    context_bundle_raw = str(context_bundle_json or "").strip()
+    context_bundle = parse_json_dict_or_none(context_bundle_raw) or {}
+    task_config = context_bundle.get("task_config", {})
+    if not isinstance(task_config, dict):
+        task_config = {}
+    task_bundle = context_bundle.get("task_bundle", {})
+    if not isinstance(task_bundle, dict):
+        task_bundle = {}
+    if not task_bundle and isinstance(task_config, dict):
+        if task_config.get("task_modules") or task_config.get("format_module"):
+            task_bundle = dict(task_config)
+
+    resolved_task_type = (
+        str(task_config.get("task_type", "")).strip()
+        or str(context_bundle.get("task_type", "")).strip()
+        or str(task_type).strip()
+    )
+    resolved_target_profile = (
+        str(task_config.get("target_profile", "")).strip()
+        or str(context_bundle.get("target_profile", "")).strip()
+        or str(target_profile).strip()
+    )
+    resolved_direction = (
+        str(task_config.get("translate_direction", "")).strip()
+        or str(context_bundle.get("translate_direction", "")).strip()
+        or str(translate_direction).strip()
+    )
+    resolved_style_hint = (
+        str(task_config.get("style_hint", "")).strip()
+        or str(context_bundle.get("style_hint", "")).strip()
+        or str(style_hint).strip()
+    )
+    resolved_purpose = (
+        str(task_config.get("purpose", "")).strip()
+        or str(context_bundle.get("purpose", "")).strip()
+        or str(purpose).strip()
+    )
+
+    input_field = (
+        str(task_config.get("input_field", "")).strip()
+        or str(context_bundle.get("input_field", "")).strip()
+        or default_task_input_field(resolved_task_type)
+    )
+    fixed_inputs = {}
+    for candidate in (context_bundle.get("fixed_inputs", {}), task_config.get("fixed_inputs", {})):
+        if isinstance(candidate, dict):
+            fixed_inputs.update({str(key): value for key, value in candidate.items()})
+
+    inputs = dict(fixed_inputs)
+    raw_input_value = str(text_input or "").strip()
+    has_task_chain = isinstance(task_bundle, dict) and bool(task_bundle.get("task_modules"))
+    if raw_input_value:
+        if has_task_chain:
+            modules = task_bundle.get("task_modules", [])
+            first_module = ""
+            if isinstance(modules, list) and modules and isinstance(modules[0], dict):
+                first_module = str(modules[0].get("type", "")).strip()
+            inputs["raw_text" if first_module == "translate_anime_tags" else "raw_tags"] = raw_input_value
+        elif input_field:
+            inputs[input_field] = raw_input_value
+
+    if resolved_task_type in ("expand_anime_tags", "normalize_anime_tags"):
+        if resolved_style_hint and "style_hint" not in inputs:
+            inputs["style_hint"] = resolved_style_hint
+        if resolved_purpose and "purpose" not in inputs:
+            inputs["purpose"] = resolved_purpose
+    if resolved_task_type == "translate_anime_tags" and resolved_direction and "direction" not in inputs:
+        inputs["direction"] = resolved_direction
+    if resolved_target_profile and "target_profile" not in inputs:
+        inputs["target_profile"] = resolved_target_profile
+    if context_bundle_raw:
+        inputs["context_bundle_json"] = context_bundle_raw
+    if str(context_bundle.get("image_path", "")).strip() and "image_path" not in inputs:
+        inputs["image_path"] = str(context_bundle.get("image_path", "")).strip()
+
+    chain_note = ""
+    if has_task_chain:
+        payloads = build_sequential_payloads(
+            task_bundle,
+            dict(inputs),
+            resolved_task_type,
+            resolved_target_profile,
+            resolved_direction,
+            resolved_style_hint,
+            resolved_purpose,
+        )
+        if payloads:
+            first_payload = payloads[0]
+            resolved_task_type = str(first_payload.get("task_type", "")).strip()
+            inputs = dict(first_payload.get("inputs", {}) or {})
+            if len(payloads) > 1:
+                chain_note = f"TextGenerate bridge only exports the first step of {len(payloads)} task modules."
+
+    gateway_module = load_direct_gateway_module()
+    resolved_task_type, inputs = gateway_module.resolve_task_request(resolved_task_type, inputs)
+    inputs = gateway_module.preprocess_task_inputs(resolved_task_type, inputs)
+    inputs["enable_image_input"] = False
+
+    if resolved_task_type == "expand_anime_tags":
+        system_prompt, user_prompt = gateway_module.build_expand_tags_prompts(inputs)
+    elif resolved_task_type == "translate_anime_tags":
+        system_prompt, user_prompt = gateway_module.build_translate_tags_prompts(inputs)
+    elif resolved_task_type == "normalize_anime_tags":
+        system_prompt, user_prompt = gateway_module.build_normalize_tags_prompts(inputs)
+    elif resolved_task_type in ("extract_tags_from_image", "vision_tagging", "image_captioning"):
+        system_prompt, user_prompt = gateway_module.build_visual_tagging_prompts(inputs)
+    elif resolved_task_type == "refine_wd14_tags":
+        system_prompt, user_prompt = gateway_module.build_refine_wd14_prompts(inputs)
+    elif resolved_task_type == "generate_natural_caption":
+        system_prompt, user_prompt = gateway_module.build_natural_caption_prompts(inputs)
+    else:
+        raise ValueError(f"Unsupported TextGenerate prompt task_type: {resolved_task_type}")
+
+    system_prompt, user_prompt = gateway_module.apply_runtime_context(system_prompt, user_prompt, inputs)
+    user_content = gateway_module.build_user_message_content(resolved_task_type, user_prompt, inputs)
+    user_prompt = user_message_content_to_prompt_text(user_content)
+    prompt_text = format_text_generate_prompt(system_prompt, user_prompt, template_mode)
+    debug = {
+        "task_type": resolved_task_type,
+        "target_profile": inputs.get("target_profile", ""),
+        "template_mode": str(template_mode or ""),
+        "has_context_bundle": bool(context_bundle_raw),
+        "chain_note": chain_note,
+    }
+    status = "ok" if not chain_note else f"ok_first_step_only: {chain_note}"
+    return prompt_text, system_prompt, user_prompt, json.dumps(debug, ensure_ascii=False, indent=2), status
 
 
 class TaskAgentLegacyTagUtilityNode:
@@ -2098,6 +2495,139 @@ class TaskAgentTagUtilityNode:
             auto_load_backend=auto_load_backend,
             unload_after_run=unload_after_run,
             context_bundle_json=context_bundle_json,
+        )
+
+
+class TaskAgentLocalLLMTextToolNode:
+    @classmethod
+    def IS_CHANGED(cls, *args, **kwargs):
+        return float("nan")
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        common = build_local_inprocess_inputs()
+        common.update(
+            {
+                "text_input": (
+                    "STRING",
+                    {
+                        "default": "1girl, school uniform, black hair, stern expression",
+                        "multiline": True,
+                    },
+                ),
+            }
+        )
+        return {"required": common, "optional": build_context_optional_inputs()}
+
+    RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING", "STRING")
+    RETURN_NAMES = ("positive_prompt", "negative_prompt", "raw_text", "json_text", "status")
+    FUNCTION = "run_task"
+    CATEGORY = "Task Agent/本地推理"
+    DESCRIPTION = "简化的本地 llama.cpp Python in-process 执行节点。用于不依赖外部后端的文本任务，可连接上下文拼装/任务模组/资源加载器。"
+
+    def run_task(
+        self,
+        model_source,
+        backend_profile,
+        custom_model_path,
+        custom_mmproj_path,
+        context_size,
+        llama_cpp_python_n_gpu_layers,
+        llama_cpp_python_n_batch,
+        llama_cpp_python_threads,
+        text_input,
+        auto_load_backend,
+        unload_after_run,
+        context_bundle_json=None,
+    ):
+        return execute_tag_utility_internal(
+            gateway_url="",
+            backend_provider="llama_cpp_python_inproc",
+            model_source=model_source,
+            backend_profile=backend_profile,
+            custom_model_path=custom_model_path,
+            custom_mmproj_path=custom_mmproj_path,
+            context_size=context_size,
+            llama_cpp_python_n_gpu_layers=llama_cpp_python_n_gpu_layers,
+            llama_cpp_python_n_batch=llama_cpp_python_n_batch,
+            llama_cpp_python_threads=llama_cpp_python_threads,
+            task_type="",
+            text_input=text_input,
+            style_hint="",
+            purpose="",
+            translate_direction="",
+            target_profile="",
+            auto_load_backend=auto_load_backend,
+            unload_after_run=unload_after_run,
+            context_bundle_json=context_bundle_json,
+        )
+
+
+class TaskAgentTextGeneratePromptBridgeNode:
+    @classmethod
+    def IS_CHANGED(cls, *args, **kwargs):
+        return float("nan")
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "task_type": (TEXT_TASK_OPTIONS,),
+                "text_input": (
+                    "STRING",
+                    {
+                        "default": "1girl, school uniform, black hair, stern expression",
+                        "multiline": True,
+                    },
+                ),
+                "style_hint": (
+                    "STRING",
+                    {
+                        "default": "anime, galgame, clean sdxl style",
+                        "multiline": True,
+                    },
+                ),
+                "purpose": (
+                    "STRING",
+                    {"default": "用于 Comfy 原生 TextGenerate 的任务 prompt 拼装", "multiline": True},
+                ),
+                "translate_direction": (
+                    ["zh_to_en_tags", "en_to_zh_explain"],
+                ),
+                "target_profile": (
+                    ["generic_tag_model", "anima_v1", "noobai_xl_1_1", "illustrious_xl", "newbie_image_exp"],
+                ),
+                "template_mode": (TEXT_GENERATE_TEMPLATE_OPTIONS,),
+            },
+            "optional": build_context_optional_inputs(),
+        }
+
+    RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING", "STRING")
+    RETURN_NAMES = ("prompt_text", "system_prompt", "user_prompt", "debug_json", "status")
+    FUNCTION = "compose_prompt"
+    CATEGORY = "Task Agent/本地推理"
+    DESCRIPTION = "把 Task Agent 的任务/上下文拼装转换为 Comfy 原生 Generate Text 可用的 prompt；模型、CLIP、图片仍由 Comfy 原生节点连线管理。"
+
+    def compose_prompt(
+        self,
+        task_type,
+        text_input,
+        style_hint,
+        purpose,
+        translate_direction,
+        target_profile,
+        template_mode,
+        context_bundle_json=None,
+    ):
+        return build_text_generate_prompt_internal(
+            task_type=task_type,
+            text_input=text_input,
+            style_hint=style_hint,
+            purpose=purpose,
+            translate_direction=translate_direction,
+            target_profile=target_profile,
+            context_bundle_json=context_bundle_json,
+            template_mode=template_mode,
         )
 
 
@@ -3021,6 +3551,8 @@ class TaskAgentCleanupNode:
 
 NODE_CLASS_MAPPINGS = {
     "TaskAgentTagUtilityNode": TaskAgentTagUtilityNode,
+    "TaskAgentLocalLLMTextToolNode": TaskAgentLocalLLMTextToolNode,
+    "TaskAgentTextGeneratePromptBridgeNode": TaskAgentTextGeneratePromptBridgeNode,
     "TaskAgentFileConfigLoaderNode": TaskAgentFileConfigLoaderNode,
     "TaskAgentResourceLoaderNode": TaskAgentResourceLoaderNode,
     "TaskAgentResourceBundleMergeNode": TaskAgentResourceBundleMergeNode,
@@ -3033,6 +3565,8 @@ NODE_CLASS_MAPPINGS = {
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "TaskAgentTagUtilityNode": "任务代理·标签工具",
+    "TaskAgentLocalLLMTextToolNode": "任务代理·本地LLM文本工具",
+    "TaskAgentTextGeneratePromptBridgeNode": "任务代理·TextGenerate提示词桥接",
     "TaskAgentFileConfigLoaderNode": "任务代理·文件配置加载",
     "TaskAgentResourceLoaderNode": "任务代理·资源加载器",
     "TaskAgentResourceBundleMergeNode": "任务代理·资源包合并",

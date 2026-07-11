@@ -17,7 +17,7 @@ This directory contains default Prompt Studio data shipped with the node package
 
 Prompt Studio reads this package-local storage first.
 
-If a legacy disabled `weilin-comfyui-prompt-all-in-one-page-unlock` directory exists, it is only used as a fallback for older local installs.
+Prompt Studio is self-contained and does not read data or code from a disabled legacy node directory at runtime.
 
 New writes go to this package-local `prompt_studio/storage` directory.
 
