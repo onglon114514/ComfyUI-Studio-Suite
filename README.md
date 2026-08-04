@@ -279,18 +279,4 @@ This repository integrates and rebuilds functionality from several development l
 
 - `docs/ATTRIBUTION.md`
 
-## Release Preparation
 
-Before packaging or publishing updates:
-
-```powershell
-python scripts/doctor_release.py
-python scripts/build_release_preview.py
-```
-
-This checks for:
-
-- missing required files
-- local-path leakage
-- large-resource packaging mistakes
-- release structure problems
