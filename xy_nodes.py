@@ -20,6 +20,9 @@ XY_VERSION = 1
 DEFAULT_XY_OUTPUT_SUBDIR = "studio_suite_xy"
 XY_QUEUE_NODE_CLASS = "StudioSuiteXYQueue"
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff")
+TARGET_NODE_ID_TOOLTIP = "目标节点右上角的编号。已连接 target_ref 时此项会被覆盖，可留空。"
+TARGET_REF_TOOLTIP = "推荐用法：连接 Target Bridge 的 target_ref，以免手填节点编号。连接后优先于 target_node_id。"
+INPUT_NAME_TOOLTIP = "填写目标节点在工作流 JSON 中的真实输入名，不是界面翻译后的显示名。"
 
 
 def _send_status(unique_id, text):
@@ -286,8 +289,8 @@ class StudioSuiteXYTargetModelClipBridge:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "model": ("MODEL",),
-                "clip": ("CLIP",),
+                "model": ("MODEL", {"tooltip": "连接要测试的 LoRA Loader 的 MODEL 输出；MODEL 会原样传给后续生图链。"}),
+                "clip": ("CLIP", {"tooltip": "连接同一个 LoRA Loader 的 CLIP 输出；CLIP 会原样传给后续文本编码链。"}),
             },
             "hidden": {
                 "prompt": "PROMPT",
@@ -311,7 +314,7 @@ class StudioSuiteXYTargetModelBridge:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "model": ("MODEL",),
+                "model": ("MODEL", {"tooltip": "连接 model-only LoRA Loader 的 MODEL 输出；MODEL 会原样传给后续生图链。"}),
             },
             "hidden": {
                 "prompt": "PROMPT",
@@ -335,21 +338,21 @@ class StudioSuiteXYAxisGeneric:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "axis_label": ("STRING", {"default": "Steps", "multiline": False}),
-                "target_node_id": ("STRING", {"default": "", "multiline": False}),
-                "input_names": ("STRING", {"default": "steps", "multiline": False}),
+                "axis_label": ("STRING", {"default": "Steps", "multiline": False, "tooltip": "图表上显示的轴名称，例如 Steps、CFG 或 Seed。"}),
+                "target_node_id": ("STRING", {"default": "", "multiline": False, "tooltip": TARGET_NODE_ID_TOOLTIP}),
+                "input_names": ("STRING", {"default": "steps", "multiline": False, "tooltip": INPUT_NAME_TOOLTIP + " 多个输入用英文逗号分隔。"}),
                 "values_text": (
                     "STRING",
                     {
                         "default": "20\n30\n40",
                         "multiline": True,
-                        "tooltip": "One value per line. For two inputs use: label|value1|value2",
+                        "tooltip": "每行一个值。单输入可写 value 或 标签|value；多输入写 标签|value1|value2。",
                     },
                 ),
             }
             ,
             "optional": {
-                "target_ref": ("STRING", {"default": "", "forceInput": True}),
+                "target_ref": ("STRING", {"default": "", "forceInput": True, "tooltip": TARGET_REF_TOOLTIP}),
             },
         }
 
@@ -393,20 +396,21 @@ class StudioSuiteXYAxisSamplerScheduler:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "target_node_id": ("STRING", {"default": "", "multiline": False}),
-                "sampler_input_name": ("STRING", {"default": "sampler_name", "multiline": False}),
-                "scheduler_input_name": ("STRING", {"default": "scheduler", "multiline": False}),
+                "target_node_id": ("STRING", {"default": "", "multiline": False, "tooltip": TARGET_NODE_ID_TOOLTIP}),
+                "sampler_input_name": ("STRING", {"default": "sampler_name", "multiline": False, "tooltip": INPUT_NAME_TOOLTIP + " KSampler 通常为 sampler_name。"}),
+                "scheduler_input_name": ("STRING", {"default": "scheduler", "multiline": False, "tooltip": INPUT_NAME_TOOLTIP + " KSampler 通常为 scheduler。"}),
                 "combos_text": (
                     "STRING",
                     {
                         "default": "euler normal|euler|normal\neuler karras|euler|karras\ndpmpp_2m karras|dpmpp_2m|karras\ndpmpp_2m sgm_uniform|dpmpp_2m|sgm_uniform\ndpmpp_3m_sde karras|dpmpp_3m_sde|karras",
                         "multiline": True,
+                        "tooltip": "每行格式：显示名|sampler_name|scheduler。名称必须是当前 ComfyUI 可用值。",
                     },
                 ),
             }
             ,
             "optional": {
-                "target_ref": ("STRING", {"default": "", "forceInput": True}),
+                "target_ref": ("STRING", {"default": "", "forceInput": True, "tooltip": TARGET_REF_TOOLTIP}),
             },
         }
 
@@ -447,19 +451,20 @@ class StudioSuiteXYAxisFreeU:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "target_node_id": ("STRING", {"default": "", "multiline": False}),
-                "input_names": ("STRING", {"default": "b1,b2,s1,s2", "multiline": False}),
+                "target_node_id": ("STRING", {"default": "", "multiline": False, "tooltip": TARGET_NODE_ID_TOOLTIP}),
+                "input_names": ("STRING", {"default": "b1,b2,s1,s2", "multiline": False, "tooltip": INPUT_NAME_TOOLTIP + " FreeU 必须按 b1,b2,s1,s2 填四项。"}),
                 "presets_text": (
                     "STRING",
                     {
                         "default": "off|1.0|1.0|1.0|1.0\nsoft|1.05|1.08|0.95|0.8\nbalanced|1.1|1.2|0.9|0.6\nstrong|1.2|1.4|0.8|0.4",
                         "multiline": True,
+                        "tooltip": "每行格式：显示名|b1|b2|s1|s2。",
                     },
                 ),
             }
             ,
             "optional": {
-                "target_ref": ("STRING", {"default": "", "forceInput": True}),
+                "target_ref": ("STRING", {"default": "", "forceInput": True, "tooltip": TARGET_REF_TOOLTIP}),
             },
         }
 
@@ -503,23 +508,23 @@ class StudioSuiteXYAxisLoraStrength:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "target_node_id": ("STRING", {"default": "", "multiline": False}),
-                "strength_model_input": ("STRING", {"default": "strength_model", "multiline": False}),
-                "strength_clip_input": ("STRING", {"default": "strength_clip", "multiline": False}),
+                "target_node_id": ("STRING", {"default": "", "multiline": False, "tooltip": TARGET_NODE_ID_TOOLTIP}),
+                "strength_model_input": ("STRING", {"default": "strength_model", "multiline": False, "tooltip": INPUT_NAME_TOOLTIP + " 标准 LoraLoader 为 strength_model。"}),
+                "strength_clip_input": ("STRING", {"default": "strength_clip", "multiline": False, "tooltip": INPUT_NAME_TOOLTIP + " 标准 LoraLoader 为 strength_clip。"}),
                 "strengths_text": (
                     "STRING",
                     {
                         "default": "0, 0.25, 0.5, 0.75, 1.0",
                         "multiline": True,
-                        "tooltip": "Comma or newline separated model strengths.",
+                        "tooltip": "模型强度列表，可用英文逗号或换行分隔，例如 0, 0.5, 0.75, 1.0。",
                     },
                 ),
-                "clip_strength_mode": (["same_as_model", "fixed", "zero"], {"default": "same_as_model"}),
-                "fixed_clip_strength": ("FLOAT", {"default": 1.0, "min": -10.0, "max": 10.0, "step": 0.05}),
+                "clip_strength_mode": (["same_as_model", "fixed", "zero"], {"default": "same_as_model", "tooltip": "same_as_model 跟随模型强度；fixed 使用固定值；zero 关闭 CLIP LoRA。"}),
+                "fixed_clip_strength": ("FLOAT", {"default": 1.0, "min": -10.0, "max": 10.0, "step": 0.05, "tooltip": "仅在 clip_strength_mode=fixed 时生效。"}),
             }
             ,
             "optional": {
-                "target_ref": ("STRING", {"default": "", "forceInput": True}),
+                "target_ref": ("STRING", {"default": "", "forceInput": True, "tooltip": TARGET_REF_TOOLTIP}),
             },
         }
 
@@ -573,15 +578,15 @@ class StudioSuiteXYAxisLoraFile:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "target_node_id": ("STRING", {"default": "", "multiline": False}),
-                "lora_name_input": ("STRING", {"default": "lora_name", "multiline": False}),
-                "axis_label": ("STRING", {"default": "LoRA File", "multiline": False}),
+                "target_node_id": ("STRING", {"default": "", "multiline": False, "tooltip": TARGET_NODE_ID_TOOLTIP}),
+                "lora_name_input": ("STRING", {"default": "lora_name", "multiline": False, "tooltip": INPUT_NAME_TOOLTIP + " 标准 LoraLoader 为 lora_name。"}),
+                "axis_label": ("STRING", {"default": "LoRA File", "multiline": False, "tooltip": "图表上显示的轴名称。"}),
                 "lora_names_text": (
                     "STRING",
                     {
                         "default": "",
                         "multiline": True,
-                        "tooltip": "Optional manual list. One LoRA per line, using either lora_name or label|lora_name. Leave empty to scan ComfyUI loras.",
+                        "tooltip": "可选手动列表，每行写 lora_name 或 显示名|lora_name；留空则扫描 ComfyUI/models/loras。",
                     },
                 ),
                 "include_filter": (
@@ -589,7 +594,7 @@ class StudioSuiteXYAxisLoraFile:
                     {
                         "default": "*",
                         "multiline": False,
-                        "tooltip": "Used only when lora_names_text is empty. Supports comma separated substrings or wildcards, e.g. my_lora*, epoch_*.safetensors.",
+                        "tooltip": "仅在手动列表为空时生效。支持逗号分隔的关键词或通配符，例如 my_lora*、epoch_*.safetensors。",
                     },
                 ),
                 "exclude_filter": (
@@ -597,15 +602,15 @@ class StudioSuiteXYAxisLoraFile:
                     {
                         "default": "",
                         "multiline": False,
-                        "tooltip": "Comma separated substrings or wildcards to exclude from scanned LoRA names.",
+                        "tooltip": "扫描时排除的关键词或通配符，多个条件用英文逗号分隔。",
                     },
                 ),
-                "sort_mode": (["name_asc", "name_desc"], {"default": "name_asc"}),
-                "limit": ("INT", {"default": 0, "min": 0, "max": 1000}),
+                "sort_mode": (["name_asc", "name_desc"], {"default": "name_asc", "tooltip": "匹配到的 LoRA 按文件名升序或降序排列。"}),
+                "limit": ("INT", {"default": 0, "min": 0, "max": 1000, "tooltip": "0 表示不限制；正数只取排序后的前 N 个。"}),
             }
             ,
             "optional": {
-                "target_ref": ("STRING", {"default": "", "forceInput": True}),
+                "target_ref": ("STRING", {"default": "", "forceInput": True, "tooltip": TARGET_REF_TOOLTIP}),
             },
         }
 
@@ -689,29 +694,29 @@ class StudioSuiteXYAxisLoraStacker:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "target_node_id": ("STRING", {"default": "", "multiline": False}),
-                "axis_label": ("STRING", {"default": "LoRA Stack", "multiline": False}),
+                "target_node_id": ("STRING", {"default": "", "multiline": False, "tooltip": "LoRA Stacker 节点编号。连接 target_ref 时会被覆盖。"}),
+                "axis_label": ("STRING", {"default": "LoRA Stack", "multiline": False, "tooltip": "图表上显示的 LoRA 堆轴名称。"}),
                 "stack_lines": (
                     "STRING",
                     {
                         "default": "single_a|example_a.safetensors|1.0\ncombo_ab|example_a.safetensors|0.8|example_b.safetensors|0.6",
                         "multiline": True,
-                        "tooltip": "Simple: label|lora|weight|lora|weight. Advanced: label|lora|model|clip|lora|model|clip.",
+                        "tooltip": "simple_weight：标签|LoRA1|强度1|LoRA2|强度2；advanced_model_clip：标签|LoRA1|模型强度1|CLIP强度1|LoRA2|模型强度2|CLIP强度2。每行是一组对比方案。",
                     },
                 ),
-                "line_mode": (["simple_weight", "advanced_model_clip"], {"default": "simple_weight"}),
-                "max_slots": ("INT", {"default": 10, "min": 1, "max": 50}),
-                "input_mode_input": ("STRING", {"default": "input_mode", "multiline": False}),
-                "input_mode_value": ("STRING", {"default": "simple", "multiline": False}),
-                "lora_count_input": ("STRING", {"default": "lora_count", "multiline": False}),
-                "lora_name_prefix": ("STRING", {"default": "lora_name_", "multiline": False}),
-                "simple_weight_prefix": ("STRING", {"default": "lora_wt_", "multiline": False}),
-                "model_strength_prefix": ("STRING", {"default": "model_str_", "multiline": False}),
-                "clip_strength_prefix": ("STRING", {"default": "clip_str_", "multiline": False}),
-                "clear_unused_slots": ("BOOLEAN", {"default": True}),
+                "line_mode": (["simple_weight", "advanced_model_clip"], {"default": "simple_weight", "tooltip": "选择 stack_lines 每组 LoRA 使用一个总强度，还是分别填写模型/CLIP 强度。"}),
+                "max_slots": ("INT", {"default": 10, "min": 1, "max": 50, "tooltip": "目标 Stacker 可用的最大 LoRA 槽位数。"}),
+                "input_mode_input": ("STRING", {"default": "input_mode", "multiline": False, "tooltip": INPUT_NAME_TOOLTIP}),
+                "input_mode_value": ("STRING", {"default": "simple", "multiline": False, "tooltip": "写入目标 Stacker 的输入模式值。"}),
+                "lora_count_input": ("STRING", {"default": "lora_count", "multiline": False, "tooltip": INPUT_NAME_TOOLTIP}),
+                "lora_name_prefix": ("STRING", {"default": "lora_name_", "multiline": False, "tooltip": "LoRA 名称槽位前缀，例如 lora_name_ 会对应 lora_name_1。"}),
+                "simple_weight_prefix": ("STRING", {"default": "lora_wt_", "multiline": False, "tooltip": "简单模式总强度槽位前缀。"}),
+                "model_strength_prefix": ("STRING", {"default": "model_str_", "multiline": False, "tooltip": "模型强度槽位前缀。"}),
+                "clip_strength_prefix": ("STRING", {"default": "clip_str_", "multiline": False, "tooltip": "CLIP 强度槽位前缀。"}),
+                "clear_unused_slots": ("BOOLEAN", {"default": True, "tooltip": "清空当前方案未使用的后续槽位，避免上一格残留 LoRA。"}),
             },
             "optional": {
-                "target_ref": ("STRING", {"default": "", "forceInput": True}),
+                "target_ref": ("STRING", {"default": "", "forceInput": True, "tooltip": TARGET_REF_TOOLTIP}),
             },
         }
 
@@ -805,20 +810,20 @@ class StudioSuiteXYAxisLoraLoaderChain:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "target_node_ids": ("STRING", {"default": "", "multiline": False}),
-                "axis_label": ("STRING", {"default": "LoRA Chain", "multiline": False}),
+                "target_node_ids": ("STRING", {"default": "", "multiline": False, "tooltip": "按模型链顺序填写多个 LoraLoader 节点编号，用英文逗号分隔。"}),
+                "axis_label": ("STRING", {"default": "LoRA Chain", "multiline": False, "tooltip": "图表上显示的串联 LoRA 轴名称。"}),
                 "chain_lines": (
                     "STRING",
                     {
                         "default": "lora_a|example_a.safetensors|1.0|1.0\ncombo_ab|example_a.safetensors|0.8|0.8|example_b.safetensors|0.6|0.6",
                         "multiline": True,
-                        "tooltip": "Line format: label|lora1|model1|clip1|lora2|model2|clip2. target_node_ids order decides loader slots.",
+                        "tooltip": "每行格式：标签|LoRA1|模型强度1|CLIP强度1|LoRA2|模型强度2|CLIP强度2。节点编号顺序决定槽位。",
                     },
                 ),
-                "lora_name_input": ("STRING", {"default": "lora_name", "multiline": False}),
-                "strength_model_input": ("STRING", {"default": "strength_model", "multiline": False}),
-                "strength_clip_input": ("STRING", {"default": "strength_clip", "multiline": False}),
-                "missing_slot_mode": (["disable_strength", "keep_existing", "set_none"], {"default": "disable_strength"}),
+                "lora_name_input": ("STRING", {"default": "lora_name", "multiline": False, "tooltip": INPUT_NAME_TOOLTIP}),
+                "strength_model_input": ("STRING", {"default": "strength_model", "multiline": False, "tooltip": INPUT_NAME_TOOLTIP}),
+                "strength_clip_input": ("STRING", {"default": "strength_clip", "multiline": False, "tooltip": INPUT_NAME_TOOLTIP}),
+                "missing_slot_mode": (["disable_strength", "keep_existing", "set_none"], {"default": "disable_strength", "tooltip": "方案少于 Loader 数量时：强度归零、保留原值，或写 None 并归零。"}),
             }
         }
 
@@ -883,26 +888,26 @@ class StudioSuiteXYAxisLoraBlockWeight:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "target_node_id": ("STRING", {"default": "", "multiline": False}),
-                "axis_label": ("STRING", {"default": "LoRA Block Weight", "multiline": False}),
+                "target_node_id": ("STRING", {"default": "", "multiline": False, "tooltip": TARGET_NODE_ID_TOOLTIP}),
+                "axis_label": ("STRING", {"default": "LoRA Block Weight", "multiline": False, "tooltip": "图表上显示的 LoRA 分层轴名称。"}),
                 "block_weight_lines": (
                     "STRING",
                     {
                         "default": "all|1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1|1.0|1.0\nearly_off|0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1|1.0|1.0\nlate_off|1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0|1.0|1.0",
                         "multiline": True,
-                        "tooltip": "Line format: label|block_vector|model_strength|clip_strength|A|B|preset. Fields after block_vector are optional.",
+                        "tooltip": "每行格式：标签|block_vector|模型强度|CLIP强度|A|B|preset。block_vector 后字段均可省略。",
                     },
                 ),
-                "block_vector_input": ("STRING", {"default": "block_vector", "multiline": False}),
-                "strength_model_input": ("STRING", {"default": "strength_model", "multiline": False}),
-                "strength_clip_input": ("STRING", {"default": "strength_clip", "multiline": False}),
-                "a_input": ("STRING", {"default": "A", "multiline": False}),
-                "b_input": ("STRING", {"default": "B", "multiline": False}),
-                "preset_input": ("STRING", {"default": "preset", "multiline": False}),
-                "set_preset_to_custom": ("BOOLEAN", {"default": False}),
+                "block_vector_input": ("STRING", {"default": "block_vector", "multiline": False, "tooltip": INPUT_NAME_TOOLTIP}),
+                "strength_model_input": ("STRING", {"default": "strength_model", "multiline": False, "tooltip": INPUT_NAME_TOOLTIP}),
+                "strength_clip_input": ("STRING", {"default": "strength_clip", "multiline": False, "tooltip": INPUT_NAME_TOOLTIP}),
+                "a_input": ("STRING", {"default": "A", "multiline": False, "tooltip": INPUT_NAME_TOOLTIP}),
+                "b_input": ("STRING", {"default": "B", "multiline": False, "tooltip": INPUT_NAME_TOOLTIP}),
+                "preset_input": ("STRING", {"default": "preset", "multiline": False, "tooltip": INPUT_NAME_TOOLTIP}),
+                "set_preset_to_custom": ("BOOLEAN", {"default": False, "tooltip": "方案未填写 preset 时，自动把目标 preset 输入设为 Preset。"}),
             },
             "optional": {
-                "target_ref": ("STRING", {"default": "", "forceInput": True}),
+                "target_ref": ("STRING", {"default": "", "forceInput": True, "tooltip": TARGET_REF_TOOLTIP}),
             },
         }
 
@@ -963,9 +968,9 @@ class StudioSuiteXYMatrix:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "x_axis_json": ("STRING", {"default": "", "multiline": True}),
-                "y_axis_json": ("STRING", {"default": "", "multiline": True}),
-                "matrix_title": ("STRING", {"default": "XY Test", "multiline": False}),
+                "x_axis_json": ("STRING", {"default": "", "multiline": True, "tooltip": "连接第一个 XY Axis 节点的 x_or_y_axis_json 输出。"}),
+                "y_axis_json": ("STRING", {"default": "", "multiline": True, "tooltip": "连接第二个 XY Axis；只测一条轴时留空。"}),
+                "matrix_title": ("STRING", {"default": "XY Test", "multiline": False, "tooltip": "写入 manifest 和汇总信息的测试名称。"}),
             }
         }
 
@@ -1014,21 +1019,22 @@ class StudioSuiteXYQueue:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "enabled": ("BOOLEAN", {"default": True}),
-                "matrix_json": ("STRING", {"default": "", "multiline": True}),
-                "writer_node_id": ("STRING", {"default": "", "multiline": False}),
-                "output_path": ("STRING", {"default": DEFAULT_XY_OUTPUT_SUBDIR, "multiline": False}),
+                "enabled": ("BOOLEAN", {"default": True, "tooltip": "主开关。关闭后不提交 XY 子任务。"}),
+                "matrix_json": ("STRING", {"default": "", "multiline": True, "tooltip": "连接 Studio Suite XY Matrix 的 matrix_json 输出。"}),
+                "writer_node_id": ("STRING", {"default": "", "multiline": False, "tooltip": "填写 Independent Result Writer (Proxy) 节点右上角编号。该节点应接在主生图链末端。"}),
+                "output_path": ("STRING", {"default": DEFAULT_XY_OUTPUT_SUBDIR, "multiline": False, "tooltip": "相对路径写入 ComfyUI/output；也可填写绝对路径。"}),
                 "filename_prefix_template": (
                     "STRING",
                     {
                         "default": "xy_%run_id%_r%row%_c%col%_%x_label%_%y_label%",
                         "multiline": False,
+                        "tooltip": "每个格子的文件名前缀。可用 %run_id%、%row%、%col%、%x_label%、%y_label%。",
                     },
                 ),
-                "queue_front": ("BOOLEAN", {"default": False}),
-                "dry_run": ("BOOLEAN", {"default": False}),
-                "overwrite_existing": ("BOOLEAN", {"default": True}),
-                "cleanup_after_save": ("BOOLEAN", {"default": True}),
+                "queue_front": ("BOOLEAN", {"default": False, "tooltip": "把生成的子任务插到 ComfyUI 队列前方。常规使用建议关闭。"}),
+                "dry_run": ("BOOLEAN", {"default": False, "tooltip": "只解析矩阵和生成 manifest，不实际提交生图任务。"}),
+                "overwrite_existing": ("BOOLEAN", {"default": True, "tooltip": "同名格子图片存在时是否覆盖。"}),
+                "cleanup_after_save": ("BOOLEAN", {"default": True, "tooltip": "每格保存后卸载 Comfy 模型并清理缓存，提高长批量稳定性。"}),
             },
             "hidden": {
                 "prompt": "PROMPT",
@@ -1152,15 +1158,15 @@ class StudioSuiteXYGridBuilder:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "manifest_path": ("STRING", {"default": "", "multiline": False}),
-                "output_path": ("STRING", {"default": DEFAULT_XY_OUTPUT_SUBDIR, "multiline": False}),
-                "image_ext": (["png", "jpg", "jpeg", "webp", "bmp", "tiff"], {"default": "png"}),
-                "cell_width": ("INT", {"default": 320, "min": 64, "max": 2048}),
-                "cell_height": ("INT", {"default": 448, "min": 64, "max": 2048}),
-                "label_height": ("INT", {"default": 42, "min": 0, "max": 256}),
-                "gap": ("INT", {"default": 8, "min": 0, "max": 64}),
-                "grid_filename": ("STRING", {"default": "xy_grid.png", "multiline": False}),
-                "background": ("STRING", {"default": "#202024", "multiline": False}),
+                "manifest_path": ("STRING", {"default": "", "multiline": False, "tooltip": "XY Queue 输出的 manifest_path。留空时读取 output_path 下最新的 xy_manifest_*.json。"}),
+                "output_path": ("STRING", {"default": DEFAULT_XY_OUTPUT_SUBDIR, "multiline": False, "tooltip": "格子图片和 manifest 所在目录。"}),
+                "image_ext": (["png", "jpg", "jpeg", "webp", "bmp", "tiff"], {"default": "png", "tooltip": "查找每个格子图片时使用的扩展名。"}),
+                "cell_width": ("INT", {"default": 320, "min": 64, "max": 2048, "tooltip": "汇总图中每个格子的最大宽度。"}),
+                "cell_height": ("INT", {"default": 448, "min": 64, "max": 2048, "tooltip": "汇总图中每个格子的最大高度。"}),
+                "label_height": ("INT", {"default": 42, "min": 0, "max": 256, "tooltip": "每格下方标签区高度；0 表示不显示标签区。"}),
+                "gap": ("INT", {"default": 8, "min": 0, "max": 64, "tooltip": "格子之间的像素间距。"}),
+                "grid_filename": ("STRING", {"default": "xy_grid.png", "multiline": False, "tooltip": "最终汇总图文件名。"}),
+                "background": ("STRING", {"default": "#202024", "multiline": False, "tooltip": "汇总图背景色，使用 #RRGGBB。"}),
             }
         }
 

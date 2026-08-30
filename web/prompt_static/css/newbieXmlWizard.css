@@ -431,6 +431,12 @@ body.newbie-xml-mode-open .physton-gradio-container {
     font-weight: 700;
 }
 
+.newbie-xml-editor-help {
+    color: #b9b9c2;
+    font-size: 12px;
+    line-height: 1.55;
+}
+
 .newbie-xml-inline-grid {
     display: grid;
     gap: 10px;
@@ -476,6 +482,21 @@ body.newbie-xml-mode-open .physton-gradio-container {
 
 .newbie-xml-editor-input {
     min-height: 160px;
+}
+
+.newbie-xml-editor-input::placeholder {
+    color: #777780;
+}
+
+.newbie-xml-editor-preview-block {
+    display: grid;
+    gap: 6px;
+}
+
+.newbie-xml-editor-preview-label {
+    color: #aaaab3;
+    font-size: 11px;
+    font-weight: 600;
 }
 
 .newbie-xml-editor-preview {
@@ -642,18 +663,24 @@ body.newbie-xml-mode-open .weilin_prompt_ui_main_box {
     display: none;
 }
 
+body.newbie-xml-mode-open.newbie-xml-editor-open .weilin_prompt_ui_main_box {
+    display: block;
+    margin-top: 16px;
+    padding-bottom: 0;
+}
+
 body.newbie-xml-mode-open #notePromptBox,
 body.newbie-xml-mode-open #yourIsEditing {
     display: none !important;
 }
 
-body.newbie-xml-mode-open.newbie-xml-editor-open .weilin_prompt_ui_main_box {
-    display: block;
-    margin-top: 16px;
-}
-
 body.newbie-xml-mode-open #txt2img_token_counter,
-body.newbie-xml-mode-open #txt2img_prompt > label {
+body.newbie-xml-mode-open #txt2img_prompt > label,
+body.newbie-xml-mode-open.newbie-xml-editor-open #component-5178,
+body.newbie-xml-mode-open.newbie-xml-editor-open #txt2img_steps,
+body.newbie-xml-mode-open.newbie-xml-editor-open #tab_img2img,
+body.newbie-xml-mode-open.newbie-xml-editor-open .prompt-header-extend.prompt-append,
+body.newbie-xml-mode-open.newbie-xml-editor-open .weilin_prompt_ui_main_box > div[style*="height: 500px"] {
     display: none !important;
 }
 
