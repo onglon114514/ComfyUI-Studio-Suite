@@ -37,6 +37,8 @@ Qwen-based paths may work, but the Gemma 4 E4B route is currently the safest rec
 For first-time users, start with the minimal Chinese quick-start guide:
 
 - `docs/QUICK_START_zh-CN.md`
+- `docs/NODE_USER_GUIDE_zh-CN.md` - task-oriented node and wiring manual
+- `docs/LOCAL_TRANSLATION_PLAN_zh-CN.md` - Prompt Studio local dictionary and LLM translation design
 
 1. Put this folder under:
 
@@ -166,7 +168,10 @@ Detailed notes are in:
 The current development line includes a generic XY matrix system:
 
 - `Studio Suite XY Axis - LoRA File`
+- `Studio Suite XY Axis - LoRA Compare`
 - `Studio Suite XY Axis - LoRA Strength`
+- `Studio Suite XY Axis - Parameter Slot`
+- `Studio Suite XY Parameter Input`
 - `Studio Suite XY Axis - Sampler/Scheduler`
 - `Studio Suite XY Axis - FreeU`
 - `Studio Suite XY Axis - Generic`
@@ -174,7 +179,7 @@ The current development line includes a generic XY matrix system:
 - `Studio Suite XY Queue`
 - `Studio Suite XY Grid Builder`
 
-For LoRA checkpoint comparison, place a target bridge after the LoRA loader and connect `target_ref` to the LoRA axis nodes. The queue submits one independent child prompt per cell, then the grid builder can create a contact sheet after the child images finish.
+New workflows should separate scheduling from generation with named `XY Parameter Input` nodes. `LoRA Compare` can expand a LoRA list across a start/end strength range in one axis. The queue submits independent child prompts and can append a finalizer that builds the contact sheet automatically. Target bridges remain registered for legacy workflows.
 
 See:
 
@@ -299,7 +304,7 @@ The main remaining friction points are:
 - some Prompt Studio and extended workflows are still under active refinement
 - Task Agent has a tested low-VRAM text-only tagging baseline, but long unattended production batches still need more testing
 - managed KoboldCpp auto-launch is optional and not the default recommendation yet
-- LoRA stack testing and LoRA block/layer weight testing are not implemented yet
+- the newer XY parameter-slot flow still needs broader compatibility testing with third-party loaders
 
 See:
 
@@ -312,19 +317,3 @@ This repository integrates and rebuilds functionality from several development l
 
 - `docs/ATTRIBUTION.md`
 - `THIRD_PARTY_NOTICES.md`
-
-## Release Preparation
-
-Before packaging or publishing updates:
-
-```powershell
-python scripts/doctor_release.py
-python scripts/build_release_preview.py
-```
-
-This checks for:
-
-- missing required files
-- local-path leakage
-- large-resource packaging mistakes
-- release structure problems

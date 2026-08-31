@@ -44,9 +44,11 @@
         editorTarget: null,
         editorDraft: "",
         editorInitialValue: "",
+        editorComposing: false,
         bridgeInput: null,
         bridgeOriginalValue: "",
         bridgeSyncEnabled: true,
+        bridgeRestoring: false,
         dragState: null,
         archives: [],
         selectedArchiveId: "default",
@@ -379,8 +381,12 @@
             fieldEditorMetaHtml(target),
             '  <div class="newbie-xml-editor-panel">',
             '    <label class="newbie-xml-editor-label">' + escapeHtml(editorLabelLine()) + '</label>',
-            '    <textarea class="newbie-xml-textarea newbie-xml-editor-input" data-editor-input>' + escapeHtml(state.editorDraft) + '</textarea>',
-            '    <div class="newbie-xml-editor-preview" data-editor-live>' + escapeHtml(fieldPreviewFromText(state.editorDraft, target.type === "section-text", sectionRuleForTarget(target))) + '</div>',
+            '    <div class="newbie-xml-editor-help">' + escapeHtml(editorInputHelp()) + '</div>',
+            '    <textarea class="newbie-xml-textarea newbie-xml-editor-input" data-editor-input placeholder="' + escapeHtml(editorInputPlaceholder()) + '" spellcheck="true">' + escapeHtml(state.editorDraft) + '</textarea>',
+            '    <div class="newbie-xml-editor-preview-block">',
+            '      <div class="newbie-xml-editor-preview-label">格式化预览（只读）</div>',
+            '      <div class="newbie-xml-editor-preview" data-editor-live>' + escapeHtml(editorPreviewText()) + '</div>',
+            '    </div>',
             '  </div>',
             '</div>'
         ].join("\n");
@@ -470,7 +476,10 @@
                 return;
             }
             if (event.target.hasAttribute("data-editor-input")) {
-                setEditorDraft(event.target.value, true);
+                state.editorDraft = event.target.value;
+                if (!state.editorComposing && !event.isComposing) {
+                    syncEditorPreview();
+                }
                 return;
             }
             if (event.target.hasAttribute("data-section-label")) {
@@ -488,6 +497,29 @@
             if (event.target.hasAttribute("data-editor-field-tag")) {
                 updateFieldMeta(event.target.getAttribute("data-section-id"), event.target.getAttribute("data-field-id"), "tag", event.target.value);
             }
+        });
+
+        state.root.addEventListener("compositionstart", function (event) {
+            if (event.target.hasAttribute("data-editor-input")) {
+                state.editorComposing = true;
+            }
+        });
+
+        state.root.addEventListener("compositionend", function (event) {
+            if (!event.target.hasAttribute("data-editor-input")) {
+                return;
+            }
+            state.editorComposing = false;
+            setEditorDraft(event.target.value);
+        });
+
+        state.root.addEventListener("focusout", function (event) {
+            if (!event.target.hasAttribute("data-editor-input")) {
+                return;
+            }
+            state.editorComposing = false;
+            setEditorDraft(event.target.value);
+            syncDraftToBridge();
         });
 
         state.root.addEventListener("dragstart", handleDragStart);
@@ -520,7 +552,7 @@
     }
 
     function handleBridgeInput(event) {
-        if (!state.editorTarget) {
+        if (!state.editorTarget || state.bridgeRestoring || event.target !== state.bridgeInput) {
             return;
         }
         state.editorDraft = event.target.value;
@@ -681,6 +713,7 @@
         state.editorTarget = target;
         state.editorDraft = draftTextForTarget(target);
         state.editorInitialValue = state.editorDraft;
+        state.editorComposing = false;
         state.bridgeOriginalValue = state.bridgeInput ? state.bridgeInput.value : "";
         setBridgeSyncEnabled(false);
         pushBridgeValue(state.editorDraft);
@@ -703,6 +736,7 @@
         state.editorTarget = null;
         state.editorDraft = "";
         state.editorInitialValue = "";
+        state.editorComposing = false;
         state.motionDirection = settings.direction || state.motionDirection;
         if (settings.render) {
             render();
@@ -743,10 +777,12 @@
         if (!state.bridgeInput) {
             return;
         }
+        state.bridgeRestoring = true;
         setBridgeSyncEnabled(true);
         state.bridgeInput.value = state.bridgeOriginalValue;
         state.bridgeInput.dispatchEvent(new Event("input", { bubbles: true }));
         state.bridgeOriginalValue = "";
+        state.bridgeRestoring = false;
     }
 
     function setBridgeSyncEnabled(enabled) {
@@ -770,11 +806,15 @@
         state.bridgeInput.dispatchEvent(new Event("input", { bubbles: true }));
     }
 
-    function setEditorDraft(value, syncBridge) {
-        state.editorDraft = value;
-        if (syncBridge) {
-            pushBridgeValue(value);
+    function syncDraftToBridge() {
+        if (!state.editorTarget || !state.bridgeInput || state.bridgeInput.value === state.editorDraft) {
+            return;
         }
+        pushBridgeValue(state.editorDraft);
+    }
+
+    function setEditorDraft(value) {
+        state.editorDraft = value;
         syncEditorMirror();
     }
 
@@ -786,9 +826,16 @@
         if (editorInput && editorInput.value !== state.editorDraft) {
             editorInput.value = state.editorDraft;
         }
+        syncEditorPreview();
+    }
+
+    function syncEditorPreview() {
+        if (!state.root || !state.editorTarget) {
+            return;
+        }
         const editorPreview = state.root.querySelector("[data-editor-live]");
         if (editorPreview) {
-            editorPreview.textContent = fieldPreviewFromText(state.editorDraft, state.editorTarget.type === "section-text", sectionRuleForTarget(state.editorTarget));
+            editorPreview.textContent = editorPreviewText();
         }
     }
 
@@ -836,7 +883,7 @@
             return "先确定一级分区数量，再进入层级化 NewBie XML 导航页。";
         }
         if (state.step === 2 && state.editorTarget) {
-            return "当前处于字段编辑状态：上方输入框与下方 PromptUI 会实时同步。";
+            return "当前处于字段编辑状态：请在下方大文本框直接输入，返回字段页时自动保存。";
         }
         if (state.step === 2) {
             return "先拖动一级分区，再进入每个一级分区对二级字段做自由增减和排序。";
@@ -1017,6 +1064,42 @@
             return "";
         }
         return section.label + " / " + field.label + " <" + effectiveTag(field.tag, "field") + ">";
+    }
+
+    function editorInputHelp() {
+        if (!state.editorTarget) {
+            return "";
+        }
+        const isTextBlock = state.editorTarget.type === "section-text";
+        const rule = sectionRuleForTarget(state.editorTarget);
+        if (isTextBlock || rule === "natural") {
+            return "在下方大文本框直接输入完整描述。支持中文、英文和中英混合文本；返回字段页时自动保存。";
+        }
+        return "在下方大文本框输入 Tag，使用逗号或换行分隔；返回字段页时自动保存。";
+    }
+
+    function editorInputPlaceholder() {
+        if (!state.editorTarget) {
+            return "";
+        }
+        const isTextBlock = state.editorTarget.type === "section-text";
+        const rule = sectionRuleForTarget(state.editorTarget);
+        if (isTextBlock || rule === "natural") {
+            return "在此输入自然语言描述，例如：女孩穿着洛丽塔风格华丽服装，站在柔和的晨光中。";
+        }
+        return "在此输入 Tag，例如：1girl, solo, ornate dress, soft lighting";
+    }
+
+    function editorPreviewText() {
+        const raw = String(state.editorDraft || "").trim();
+        if (!raw || !state.editorTarget) {
+            return "输入后在此显示格式化预览";
+        }
+        return fieldPreviewFromText(
+            state.editorDraft,
+            state.editorTarget.type === "section-text",
+            sectionRuleForTarget(state.editorTarget)
+        );
     }
 
     function sectionSummary(section) {

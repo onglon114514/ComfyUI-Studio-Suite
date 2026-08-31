@@ -71,6 +71,7 @@ def check_required_files(report):
         "queue_nodes.py",
         "smart_fill_crop_resize_node.py",
         "prompt_studio/api.py",
+        "prompt_studio/local_dictionary.py",
         "prompt_studio/nodes.py",
         "prompt_studio/i18n.json",
         "web/js/prompt_studio_nodes.js",
@@ -82,10 +83,13 @@ def check_required_files(report):
         "config/model_downloads.json",
         "scripts/build_release_preview.py",
         "scripts/check_node_registry.py",
+        "scripts/install_min_llm_model.py",
+        "scripts/build_local_dictionary_index.py",
         "resources/task_templates/README.md",
         "resources/task_bundles/README.md",
         "docs/SINGLE_RUN_CONTEXT_GUIDE.md",
         "docs/INPROCESS_PERFORMANCE_GUIDE.md",
+        "docs/NODE_USER_GUIDE_zh-CN.md",
         "THIRD_PARTY_NOTICES.md",
     ]
     for item in required:
@@ -245,8 +249,13 @@ def check_resources(report):
 
 
 def find_comfy_root():
-    candidates = [Path.cwd(), *PROJECT_DIR.parents]
-    for candidate in candidates:
+    candidates = [*PROJECT_DIR.parents]
+    configured = str(os.environ.get("COMFYUI_ROOT", "") or "").strip()
+    if configured:
+        candidates.insert(0, Path(configured).expanduser())
+    current = Path.cwd().resolve()
+    candidates.extend([current, *current.parents])
+    for candidate in dict.fromkeys(candidates):
         if (candidate / "server.py").exists() and (candidate / "utils" / "install_util.py").exists():
             return candidate
     return None

@@ -337,7 +337,8 @@ function createMonitorDom() {
 
 function setText(panel, field, value) {
   const element = panel.querySelector(`[data-field="${field}"]`);
-  if (element) element.textContent = value || "-";
+  const nextValue = value || "-";
+  if (element && element.textContent !== nextValue) element.textContent = nextValue;
 }
 
 function renderPayload(dom, payload) {
@@ -345,7 +346,10 @@ function renderPayload(dom, payload) {
   dom.bubble.dataset.health = summary.health;
   const healthHtml = `<span class="ss-ta-health" data-health="${summary.health}"><span class="ss-ta-dot"></span>${summary.health}</span>`;
   const healthElement = dom.panel.querySelector('[data-field="health"]');
-  if (healthElement) healthElement.innerHTML = healthHtml;
+  if (healthElement && healthElement.dataset.health !== summary.health) {
+    healthElement.innerHTML = healthHtml;
+    healthElement.dataset.health = summary.health;
+  }
 
   const queue = payload?.queue || {};
   const gpu = extractGpu(payload?.memory);
@@ -376,8 +380,7 @@ function renderPayload(dom, payload) {
   setText(
     dom.panel,
     "live_output",
-    activeTask?.stream_text
-      || latestOutputEvent?.output_text
+    latestOutputEvent?.output_text
       || latestOutputEvent?.metadata?.raw_text_preview
       || lastOutput?.output_text
       || activeTask?.message
@@ -471,7 +474,7 @@ function installMonitor() {
 
   const schedule = () => {
     clearInterval(timer);
-    timer = setInterval(() => fetchMonitorStatus(dom), open ? 750 : 8000);
+    timer = setInterval(() => fetchMonitorStatus(dom), open ? 2000 : 8000);
   };
 
   dom.bubble.addEventListener("click", () => {

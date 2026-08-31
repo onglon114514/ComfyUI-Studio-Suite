@@ -50,6 +50,8 @@ def should_skip(path, include_large_resources):
         return True
     if rel.parts[:3] == ("prompt_studio", "storage", "notes"):
         return True
+    if rel.parts[:3] == ("prompt_studio", "storage", "cache"):
+        return True
     if rel.as_posix() == "prompt_studio/storage/autocomplete/custom_words.csv":
         return True
     if rel.parts and rel.parts[0] == "models":

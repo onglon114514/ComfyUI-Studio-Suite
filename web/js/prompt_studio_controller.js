@@ -8,6 +8,14 @@ const WINDOW_KEYS = {
     globalPast: "weilin_prompt_global_past_setting",
 };
 const PROMPT_STUDIO_UI_URL = "/studio-suite/prompt-studio/ui/index.html";
+const MINIMAP_SETTING_KEY = "Comfy.Minimap.Visible";
+const MINIMAP_RESTORE_KEY = "studio_suite_prompt_minimap_restore";
+const MAX_PROMPT_CHARS = 500000;
+
+function safePromptText(value) {
+    const text = typeof value === "string" ? value : "";
+    return text.length > MAX_PROMPT_CHARS ? text.slice(0, MAX_PROMPT_CHARS) : text;
+}
 
 function ensureLocalStorageDefaults() {
     const defaults = {
@@ -65,11 +73,13 @@ function legacyPromptNodeName(node) {
 class LegacyPromptStudioController {
     constructor() {
         ensureLocalStorageDefaults();
+        this.#recoverInterruptedMinimap();
         this.node = null;
         this.fields = null;
         this.randomId = null;
         this.iframeReady = false;
         this.loadedTheme = null;
+        this.canvasState = null;
         this.overlay = this.#createOverlay();
         document.body.appendChild(this.overlay);
         window.addEventListener("message", (event) => this.#handleMessage(event));
@@ -106,6 +116,7 @@ class LegacyPromptStudioController {
         this.overlay.style.display = "flex";
         this.overlay.style.pointerEvents = "auto";
         document.body.style.overflow = "hidden";
+        this.#pauseComfyCanvas();
     }
 
     close() {
@@ -113,24 +124,73 @@ class LegacyPromptStudioController {
         this.overlay.style.display = "none";
         this.overlay.style.pointerEvents = "none";
         document.body.style.overflow = "";
+        this.#resumeComfyCanvas();
         this.node = null;
         this.fields = null;
         this.randomId = null;
+        this.iframeReady = false;
+        this.loadedTheme = null;
+        this.iframe.src = "about:blank";
     }
 
     #sendCurrentPromptSnapshot(handel = "responeseWeiLinPrompt") {
         if (!this.iframe?.contentWindow || !this.randomId) return;
         this.iframe.contentWindow.postMessage({
             handel,
-            g_value: this.fields?.positive ? widgetValue(this.fields.positive.widget) : "",
-            n_value: this.fields?.negative ? widgetValue(this.fields.negative.widget) : "",
+            g_value: this.fields?.positive ? safePromptText(widgetValue(this.fields.positive.widget)) : "",
+            n_value: this.fields?.negative ? safePromptText(widgetValue(this.fields.negative.widget)) : "",
             randomid: this.randomId,
             type: "prompt",
             nodeName: legacyPromptNodeName(this.node),
-        }, "*");
+        }, window.location.origin);
+    }
+
+    #pauseComfyCanvas() {
+        if (this.canvasState) return;
+        const app = window.comfyAPI?.app?.app || window.app;
+        const canvas = app?.canvas || null;
+        const settings = app?.ui?.settings || null;
+        const minimapVisible = settings?.getSettingValue?.(MINIMAP_SETTING_KEY);
+        this.canvasState = {
+            canvas,
+            pauseRendering: canvas?.pause_rendering,
+            settings,
+            minimapVisible,
+        };
+        if (canvas) canvas.pause_rendering = true;
+        if (minimapVisible === true && typeof settings?.setSettingValue === "function") {
+            sessionStorage.setItem(MINIMAP_RESTORE_KEY, "true");
+            settings.setSettingValue(MINIMAP_SETTING_KEY, false);
+        }
+        document.body.classList.add("studio-suite-prompt-canvas-paused");
+    }
+
+    #resumeComfyCanvas() {
+        if (!this.canvasState) return;
+        const { canvas, pauseRendering, settings, minimapVisible } = this.canvasState;
+        if (canvas) canvas.pause_rendering = pauseRendering;
+        if (minimapVisible === true && typeof settings?.setSettingValue === "function") {
+            settings.setSettingValue(MINIMAP_SETTING_KEY, true);
+        }
+        sessionStorage.removeItem(MINIMAP_RESTORE_KEY);
+        document.body.classList.remove("studio-suite-prompt-canvas-paused");
+        this.canvasState = null;
+        canvas?.setDirty?.(true, true);
+    }
+
+    #recoverInterruptedMinimap() {
+        if (sessionStorage.getItem(MINIMAP_RESTORE_KEY) !== "true") return;
+        const app = window.comfyAPI?.app?.app || window.app;
+        const settings = app?.ui?.settings;
+        if (typeof settings?.setSettingValue !== "function") return;
+        settings.setSettingValue(MINIMAP_SETTING_KEY, true);
+        sessionStorage.removeItem(MINIMAP_RESTORE_KEY);
     }
 
     #handleMessage(event) {
+        if (event.source !== this.iframe?.contentWindow) return;
+        if (event.origin && event.origin !== window.location.origin) return;
+        if (!this.isOpen() || !this.randomId) return;
         const data = event?.data || {};
         if (!data || !data.handel) return;
         if (this.randomId && data.randomid && data.randomid !== this.randomId) return;
@@ -142,8 +202,8 @@ class LegacyPromptStudioController {
                 break;
             case "changeWeiLinPrompt":
                 if (this.node && this.fields) {
-                    if (this.fields.positive) syncWidgetValue(this.node, this.fields.positive.widget, data.g_value || "");
-                    if (this.fields.negative) syncWidgetValue(this.node, this.fields.negative.widget, data.n_value || "");
+                    if (this.fields.positive) syncWidgetValue(this.node, this.fields.positive.widget, safePromptText(data.g_value));
+                    if (this.fields.negative) syncWidgetValue(this.node, this.fields.negative.widget, safePromptText(data.n_value));
                 }
                 break;
             case "closeWeilinPromptBox":
@@ -160,7 +220,7 @@ class LegacyPromptStudioController {
                 this.modal.style.maxWidth = "100vw";
                 this.modal.style.maxHeight = "100vh";
                 localStorage.setItem(WINDOW_KEYS.boxStatus, "full");
-                event.source?.postMessage({ handel: "fullBoxWeilinPromptBoxResponse", randomid: this.randomId }, "*");
+                event.source?.postMessage({ handel: "fullBoxWeilinPromptBoxResponse", randomid: this.randomId }, window.location.origin);
                 break;
             case "nomBoxWeilinPromptBox":
                 this.modal.style.width = "92vw";
@@ -168,7 +228,7 @@ class LegacyPromptStudioController {
                 this.modal.style.maxWidth = "1600px";
                 this.modal.style.maxHeight = "960px";
                 localStorage.setItem(WINDOW_KEYS.boxStatus, "nom");
-                event.source?.postMessage({ handel: "nomBoxWeilinPromptBoxResponse", randomid: this.randomId }, "*");
+                event.source?.postMessage({ handel: "nomBoxWeilinPromptBoxResponse", randomid: this.randomId }, window.location.origin);
                 break;
             case "changeWeilinPromptWindowMode":
                 break;
@@ -183,6 +243,7 @@ class LegacyPromptStudioController {
             .studio-suite-prompt-overlay { position: fixed; inset: 0; z-index: 99999; background: rgba(0,0,0,0.62); display: none; align-items: center; justify-content: center; }
             .studio-suite-prompt-modal { width: 92vw; height: 92vh; max-width: 1600px; max-height: 960px; min-width: 980px; min-height: 680px; border-radius: 12px; overflow: hidden; box-shadow: 0 24px 70px rgba(0,0,0,0.45); background: #111; }
             .studio-suite-prompt-iframe { width: 100%; height: 100%; border: 0; display: block; background: #111; }
+            body.studio-suite-prompt-canvas-paused #graph-canvas-container { visibility: hidden !important; }
         `;
         document.head.appendChild(style);
 

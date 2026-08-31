@@ -1,5 +1,6 @@
 import copy
 import fnmatch
+import glob
 import json
 import re
 import sys
@@ -35,6 +36,14 @@ XY_VERSION = 1
 DEFAULT_XY_OUTPUT_SUBDIR = "studio_suite_xy"
 XY_QUEUE_NODE_CLASS = "StudioSuiteXYQueue"
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff")
+
+
+class AnyType(str):
+    def __ne__(self, value):
+        return False
+
+
+ANY_TYPE = AnyType("*")
 
 
 def _send_status(unique_id, text):
@@ -149,6 +158,29 @@ def _resolve_target_node_id(target_node_id, target_ref=""):
         except Exception:
             return ref_text
     return str(target_node_id or "").strip()
+
+
+def _find_parameter_node_id(prompt, slot_name):
+    slot = str(slot_name or "").strip()
+    if not slot:
+        raise ValueError("XY parameter slot_name is required")
+    matched = []
+    for node_id, node in (prompt or {}).items():
+        if node.get("class_type") != "StudioSuiteXYParameterInput":
+            continue
+        if str((node.get("inputs") or {}).get("slot_name", "")).strip() == slot:
+            matched.append(str(node_id))
+    if len(matched) != 1:
+        raise ValueError(f"Expected exactly one XY Parameter Input with slot '{slot}', found {len(matched)}")
+    return matched[0]
+
+
+def _parameter_assignment(prompt, slot_name, value):
+    return _assignment(
+        _find_parameter_node_id(prompt, slot_name),
+        "value_json",
+        json.dumps(value, ensure_ascii=False),
+    )
 
 
 def _source_node_id_from_link(prompt, unique_id, input_name):
@@ -275,11 +307,12 @@ def _find_cell_image(output_dir, expected_prefix, image_ext):
     for path in candidates:
         if path.is_file():
             return path
-    globbed = sorted(output_dir.glob(f"{expected_prefix}*.{ext}"))
+    escaped_prefix = glob.escape(str(expected_prefix or ""))
+    globbed = sorted(output_dir.glob(f"{escaped_prefix}*.{ext}"))
     if globbed:
         return globbed[0]
     for suffix in IMAGE_EXTENSIONS:
-        globbed = sorted(output_dir.glob(f"{expected_prefix}*{suffix}"))
+        globbed = sorted(output_dir.glob(f"{escaped_prefix}*{suffix}"))
         if globbed:
             return globbed[0]
     return None
@@ -288,6 +321,98 @@ def _find_cell_image(output_dir, expected_prefix, image_ext):
 def _pil_to_tensor(image):
     array = np.asarray(image.convert("RGB")).astype(np.float32) / 255.0
     return torch.from_numpy(array)[None,]
+
+
+class StudioSuiteXYParameterInput:
+    CATEGORY = "Studio Suite/XY"
+    RETURN_TYPES = (ANY_TYPE, "STRING", "FLOAT", "INT", "BOOLEAN")
+    RETURN_NAMES = ("value", "string", "float", "int", "boolean")
+    FUNCTION = "read_value"
+    DESCRIPTION = "Main-workflow parameter inlet. XY schedulers find it by slot_name and inject one child-job value into value_json."
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "slot_name": ("STRING", {"default": "xy_value", "multiline": False}),
+                "value_json": (
+                    "STRING",
+                    {
+                        "default": '""',
+                        "multiline": False,
+                        "tooltip": "Default JSON value. The XY queue replaces this field only in child prompts.",
+                    },
+                ),
+            }
+        }
+
+    def read_value(self, slot_name, value_json):
+        try:
+            value = json.loads(str(value_json))
+        except Exception:
+            value = str(value_json or "")
+        text = str(value) if value is not None else ""
+        try:
+            float_value = float(value)
+        except (TypeError, ValueError):
+            float_value = 0.0
+        try:
+            int_value = int(float(value))
+        except (TypeError, ValueError):
+            int_value = 0
+        if isinstance(value, str):
+            bool_value = value.strip().lower() in ("1", "true", "yes", "on")
+        else:
+            bool_value = bool(value)
+        return (value, text, float_value, int_value, bool_value)
+
+
+class StudioSuiteXYAxisParameter:
+    CATEGORY = "Studio Suite/XY"
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("x_or_y_axis_json",)
+    FUNCTION = "build_axis"
+    DESCRIPTION = "Build an axis for an XY Parameter Input selected by slot_name. No ComfyUI node id is required."
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "axis_label": ("STRING", {"default": "Parameter", "multiline": False}),
+                "slot_name": ("STRING", {"default": "xy_value", "multiline": False}),
+                "values_text": (
+                    "STRING",
+                    {
+                        "default": "20\n30\n40",
+                        "multiline": True,
+                        "tooltip": "One value per line. Formats: value or label|value.",
+                    },
+                ),
+            },
+            "hidden": {"prompt": "PROMPT"},
+        }
+
+    def build_axis(self, axis_label, slot_name, values_text, prompt=None):
+        items = []
+        for line in str(values_text or "").splitlines():
+            line = _strip_comment(line)
+            if not line:
+                continue
+            parts = [part.strip() for part in line.split("|", 1)]
+            if len(parts) == 2:
+                label, raw_value = parts
+            else:
+                label = raw_value = parts[0]
+            items.append(
+                {
+                    "label": label,
+                    "safe_label": _safe_label(label),
+                    "assignments": [_parameter_assignment(prompt, slot_name, _coerce_value(raw_value))],
+                }
+            )
+        if not items:
+            raise ValueError("No XY parameter values were parsed")
+        return (_axis_json(axis_label, items),)
 
 
 class StudioSuiteXYTargetModelClipBridge:
@@ -361,10 +486,6 @@ class StudioSuiteXYAxisGeneric:
                         "tooltip": "One value per line. For two inputs use: label|value1|value2",
                     },
                 ),
-            }
-            ,
-            "optional": {
-                "target_ref": ("STRING", {"default": "", "forceInput": True}),
             },
         }
 
@@ -418,10 +539,6 @@ class StudioSuiteXYAxisSamplerScheduler:
                         "multiline": True,
                     },
                 ),
-            }
-            ,
-            "optional": {
-                "target_ref": ("STRING", {"default": "", "forceInput": True}),
             },
         }
 
@@ -471,10 +588,6 @@ class StudioSuiteXYAxisFreeU:
                         "multiline": True,
                     },
                 ),
-            }
-            ,
-            "optional": {
-                "target_ref": ("STRING", {"default": "", "forceInput": True}),
             },
         }
 
@@ -531,10 +644,6 @@ class StudioSuiteXYAxisLoraStrength:
                 ),
                 "clip_strength_mode": (["same_as_model", "fixed", "zero"], {"default": "same_as_model"}),
                 "fixed_clip_strength": ("FLOAT", {"default": 1.0, "min": -10.0, "max": 10.0, "step": 0.05}),
-            }
-            ,
-            "optional": {
-                "target_ref": ("STRING", {"default": "", "forceInput": True}),
             },
         }
 
@@ -622,10 +731,6 @@ class StudioSuiteXYAxisLoraFile:
                 ),
                 "sort_mode": (["name_asc", "name_desc"], {"default": "name_asc"}),
                 "limit": ("INT", {"default": 0, "min": 0, "max": 1000}),
-            }
-            ,
-            "optional": {
-                "target_ref": ("STRING", {"default": "", "forceInput": True}),
             },
         }
 
@@ -796,6 +901,124 @@ class StudioSuiteXYAxisLoraFile:
         return (_axis_json(axis_label or "LoRA File", items), matched)
 
 
+class StudioSuiteXYAxisLoraCompare:
+    CATEGORY = "Studio Suite/XY"
+    RETURN_TYPES = ("STRING", "STRING")
+    RETURN_NAMES = ("x_or_y_axis_json", "matched_loras")
+    FUNCTION = "build_axis"
+    DESCRIPTION = "Compare LoRA files and an optional strength range through named XY Parameter Inputs. No target node ids are required."
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "lora_name_slot": ("STRING", {"default": "lora_name", "multiline": False}),
+                "model_strength_slot": ("STRING", {"default": "lora_model_strength", "multiline": False}),
+                "clip_strength_slot": ("STRING", {"default": "lora_clip_strength", "multiline": False}),
+                "axis_label": ("STRING", {"default": "LoRA Compare", "multiline": False}),
+                "lora_names_text": (
+                    "STRING",
+                    {
+                        "default": "",
+                        "multiline": True,
+                        "tooltip": "One LoRA per line. Formats: lora_name or label|lora_name. Leave empty to scan ComfyUI's LoRA folder.",
+                    },
+                ),
+                "strength_mode": (["fixed", "range"], {"default": "fixed"}),
+                "start_strength": ("FLOAT", {"default": 1.0, "min": -10.0, "max": 10.0, "step": 0.05}),
+                "end_strength": ("FLOAT", {"default": 1.0, "min": -10.0, "max": 10.0, "step": 0.05}),
+                "strength_steps": ("INT", {"default": 1, "min": 1, "max": 100}),
+                "clip_strength_mode": (["same_as_model", "fixed", "zero"], {"default": "same_as_model"}),
+                "fixed_clip_strength": ("FLOAT", {"default": 1.0, "min": -10.0, "max": 10.0, "step": 0.05}),
+                "include_filter": ("STRING", {"default": "*", "multiline": False}),
+                "exclude_filter": ("STRING", {"default": "", "multiline": False}),
+                "sort_mode": (["name_asc", "name_desc"], {"default": "name_asc"}),
+                "limit": ("INT", {"default": 0, "min": 0, "max": 1000}),
+            },
+            "hidden": {"prompt": "PROMPT"},
+        }
+
+    def _lora_entries(self, lora_names_text, include_filter, exclude_filter, sort_mode, limit):
+        entries = []
+        if str(lora_names_text or "").strip():
+            for line in str(lora_names_text).splitlines():
+                line = _strip_comment(line)
+                if not line:
+                    continue
+                parts = [part.strip() for part in line.split("|", 1)]
+                if len(parts) == 2:
+                    label, lora_name = parts
+                else:
+                    lora_name = parts[0]
+                    label = Path(lora_name).stem
+                entries.append((label, lora_name))
+        else:
+            names = [
+                name
+                for name in _available_lora_names()
+                if _match_filter(name, include_filter, default_match=True)
+                and not _match_filter(name, exclude_filter, default_match=False)
+            ]
+            names.sort(key=lambda item: item.lower(), reverse=(sort_mode == "name_desc"))
+            entries = [(Path(name).stem, name) for name in names]
+        if int(limit or 0) > 0:
+            entries = entries[: int(limit)]
+        return entries
+
+    @staticmethod
+    def _strengths(strength_mode, start_strength, end_strength, strength_steps):
+        if strength_mode != "range" or int(strength_steps) <= 1:
+            return [float(start_strength)]
+        return [float(value) for value in np.linspace(float(start_strength), float(end_strength), int(strength_steps))]
+
+    def build_axis(
+        self,
+        lora_name_slot,
+        model_strength_slot,
+        clip_strength_slot,
+        axis_label,
+        lora_names_text,
+        strength_mode,
+        start_strength,
+        end_strength,
+        strength_steps,
+        clip_strength_mode,
+        fixed_clip_strength,
+        include_filter,
+        exclude_filter,
+        sort_mode,
+        limit,
+        prompt=None,
+    ):
+        entries = self._lora_entries(lora_names_text, include_filter, exclude_filter, sort_mode, limit)
+        strengths = self._strengths(strength_mode, start_strength, end_strength, strength_steps)
+        items = []
+        for label, lora_name in entries:
+            for model_strength in strengths:
+                if clip_strength_mode == "fixed":
+                    clip_strength = float(fixed_clip_strength)
+                elif clip_strength_mode == "zero":
+                    clip_strength = 0.0
+                else:
+                    clip_strength = model_strength
+                item_label = label if len(strengths) == 1 else f"{label} [{model_strength:g}/{clip_strength:g}]"
+                items.append(
+                    {
+                        "label": item_label,
+                        "safe_label": _safe_label(item_label),
+                        "assignments": [
+                            _parameter_assignment(prompt, lora_name_slot, lora_name),
+                            _parameter_assignment(prompt, model_strength_slot, model_strength),
+                            _parameter_assignment(prompt, clip_strength_slot, clip_strength),
+                        ],
+                    }
+                )
+        if not items:
+            raise ValueError("No LoRA files matched. Check lora_names_text or include_filter.")
+        matched = "\n".join(name for _, name in entries)
+        return (_axis_json(axis_label or "LoRA Compare", items), matched)
+
+
 class StudioSuiteXYAxisLoraStacker:
     CATEGORY = "Studio Suite/XY"
     RETURN_TYPES = ("STRING", "STRING")
@@ -827,9 +1050,6 @@ class StudioSuiteXYAxisLoraStacker:
                 "model_strength_prefix": ("STRING", {"default": "model_str_", "multiline": False}),
                 "clip_strength_prefix": ("STRING", {"default": "clip_str_", "multiline": False}),
                 "clear_unused_slots": ("BOOLEAN", {"default": True}),
-            },
-            "optional": {
-                "target_ref": ("STRING", {"default": "", "forceInput": True}),
             },
         }
 
@@ -1019,9 +1239,6 @@ class StudioSuiteXYAxisLoraBlockWeight:
                 "preset_input": ("STRING", {"default": "preset", "multiline": False}),
                 "set_preset_to_custom": ("BOOLEAN", {"default": False}),
             },
-            "optional": {
-                "target_ref": ("STRING", {"default": "", "forceInput": True}),
-            },
         }
 
     def build_axis(
@@ -1126,7 +1343,7 @@ class StudioSuiteXYQueue:
     RETURN_NAMES = ("summary", "queued_jobs", "manifest_path")
     FUNCTION = "queue_matrix"
     OUTPUT_NODE = True
-    DESCRIPTION = "Submit one independent child prompt per XY cell. Point writer_node_id at an Independent Result Writer (Proxy)."
+    DESCRIPTION = "Submit one independent child prompt per XY cell, then automatically build the contact sheet after the final child finishes."
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -1148,6 +1365,16 @@ class StudioSuiteXYQueue:
                 "overwrite_existing": ("BOOLEAN", {"default": True}),
                 "cleanup_after_save": ("BOOLEAN", {"default": True}),
             },
+            "optional": {
+                "auto_build_grid": ("BOOLEAN", {"default": True}),
+                "grid_image_ext": (["png", "jpg", "jpeg", "webp", "bmp", "tiff"], {"default": "png"}),
+                "grid_cell_width": ("INT", {"default": 320, "min": 64, "max": 2048}),
+                "grid_cell_height": ("INT", {"default": 448, "min": 64, "max": 2048}),
+                "grid_label_height": ("INT", {"default": 42, "min": 0, "max": 256}),
+                "grid_gap": ("INT", {"default": 8, "min": 0, "max": 64}),
+                "grid_filename": ("STRING", {"default": "xy_grid_%run_id%.png", "multiline": False}),
+                "grid_background": ("STRING", {"default": "#202024", "multiline": False}),
+            },
             "hidden": {
                 "prompt": "PROMPT",
                 "extra_pnginfo": "EXTRA_PNGINFO",
@@ -1166,6 +1393,14 @@ class StudioSuiteXYQueue:
         dry_run,
         overwrite_existing,
         cleanup_after_save,
+        auto_build_grid=True,
+        grid_image_ext="png",
+        grid_cell_width=320,
+        grid_cell_height=448,
+        grid_label_height=42,
+        grid_gap=8,
+        grid_filename="xy_grid_%run_id%.png",
+        grid_background="#202024",
         prompt=None,
         extra_pnginfo=None,
         unique_id=None,
@@ -1174,15 +1409,23 @@ class StudioSuiteXYQueue:
             return ("XY queue disabled", 0, "")
         if not prompt:
             raise ValueError("Current prompt data is missing")
-        if not str(writer_node_id or "").strip():
-            raise ValueError("writer_node_id is required")
-
         matrix = json.loads(matrix_json)
         cells = matrix.get("cells") or []
         if not cells:
             raise ValueError("XY matrix has no cells")
 
-        writer_id = str(writer_node_id).strip()
+        writer_id = str(writer_node_id or "").strip()
+        if not writer_id:
+            matched_writers = [
+                node_id
+                for node_id, node in prompt.items()
+                if node.get("class_type") == "IndependentResultWriterProxy"
+            ]
+            if len(matched_writers) != 1:
+                raise ValueError(
+                    f"Leave writer_node_id empty only when exactly one Independent Result Writer (Proxy) exists; found {len(matched_writers)}"
+                )
+            writer_id = str(matched_writers[0])
         if writer_id not in prompt:
             raise ValueError(f"Writer node id not found in prompt: {writer_id}")
 
@@ -1200,10 +1443,11 @@ class StudioSuiteXYQueue:
             "cells": [],
         }
 
-        server = PromptServer.instance
+        server = None if dry_run else PromptServer.instance
         client_id = getattr(server, "client_id", None)
         scheduler_id = str(unique_id)
         queued = 0
+        jobs = []
         _send_status(unique_id, f"Preparing {len(cells)} XY child prompts")
 
         for cell in cells:
@@ -1212,10 +1456,6 @@ class StudioSuiteXYQueue:
             manifest_cell["filename_prefix"] = prefix
             manifest_cell["expected_image_prefix"] = prefix
             manifest["cells"].append(manifest_cell)
-
-            if dry_run:
-                queued += 1
-                continue
 
             child_prompt = copy.deepcopy(prompt)
             _apply_assignments(child_prompt, cell.get("assignments") or [])
@@ -1234,27 +1474,54 @@ class StudioSuiteXYQueue:
             if scheduler_id in child_prompt and "inputs" in child_prompt[scheduler_id]:
                 child_prompt[scheduler_id]["inputs"]["enabled"] = False
 
-            prompt_id = str(uuid.uuid4())
             extra_data = {"extra_pnginfo": extra_pnginfo or {}}
             if client_id is not None:
                 extra_data["client_id"] = client_id
             extra_data["create_time"] = int(time.time() * 1000)
 
-            number = server.number
-            if queue_front:
-                number = -number
-            server.number += 1
-
-            outputs_to_execute = _collect_output_targets(child_prompt, scheduler_id)
-            if not outputs_to_execute:
-                outputs_to_execute = [writer_id]
-            sensitive = {}
-            server.prompt_queue.put((number, prompt_id, child_prompt, extra_data, outputs_to_execute, sensitive))
+            # XY child prompts have one intentional sink. Running every output node
+            # would repeat unrelated preview, text, or analysis branches per cell.
+            outputs_to_execute = [writer_id]
+            jobs.append((child_prompt, extra_data, outputs_to_execute))
             queued += 1
 
         manifest_path = output_dir / f"xy_manifest_{run_id}.json"
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-        summary = f"Queued {queued} / {len(cells)} XY prompts. Manifest: {manifest_path}"
+
+        if bool(auto_build_grid) and not dry_run:
+            final_grid_name = str(grid_filename or "xy_grid_%run_id%.png").replace("%run_id%", run_id)
+            finalizer_prompt = {
+                "1": {
+                    "class_type": "StudioSuiteXYGridFinalizer",
+                    "inputs": {
+                        "manifest_path": str(manifest_path),
+                        "image_ext": grid_image_ext,
+                        "cell_width": int(grid_cell_width),
+                        "cell_height": int(grid_cell_height),
+                        "label_height": int(grid_label_height),
+                        "gap": int(grid_gap),
+                        "grid_filename": final_grid_name,
+                        "background": str(grid_background),
+                    },
+                }
+            }
+            finalizer_extra = {"extra_pnginfo": extra_pnginfo or {}, "create_time": int(time.time() * 1000)}
+            if client_id is not None:
+                finalizer_extra["client_id"] = client_id
+            jobs.append((finalizer_prompt, finalizer_extra, ["1"]))
+
+        if not dry_run:
+            ordered_jobs = list(reversed(jobs)) if queue_front else jobs
+            for child_prompt, extra_data, outputs_to_execute in ordered_jobs:
+                prompt_id = str(uuid.uuid4())
+                number = server.number
+                if queue_front:
+                    number = -number
+                server.number += 1
+                server.prompt_queue.put((number, prompt_id, child_prompt, extra_data, outputs_to_execute, {}))
+
+        grid_note = " Auto grid queued." if bool(auto_build_grid) and not dry_run else ""
+        summary = f"Queued {queued} / {len(cells)} XY prompts. Manifest: {manifest_path}.{grid_note}"
         _send_status(unique_id, summary)
         return (summary, queued, str(manifest_path))
 
@@ -1342,7 +1609,58 @@ class StudioSuiteXYGridBuilder:
         return (_pil_to_tensor(grid), status)
 
 
+class StudioSuiteXYGridFinalizer:
+    CATEGORY = "Studio Suite/XY/Internal"
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("status",)
+    FUNCTION = "finalize"
+    OUTPUT_NODE = True
+    DESCRIPTION = "Internal queue finalizer. Studio Suite XY Queue appends it after all cell jobs."
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "manifest_path": ("STRING", {"default": "", "multiline": False}),
+                "image_ext": (["png", "jpg", "jpeg", "webp", "bmp", "tiff"], {"default": "png"}),
+                "cell_width": ("INT", {"default": 320, "min": 64, "max": 2048}),
+                "cell_height": ("INT", {"default": 448, "min": 64, "max": 2048}),
+                "label_height": ("INT", {"default": 42, "min": 0, "max": 256}),
+                "gap": ("INT", {"default": 8, "min": 0, "max": 64}),
+                "grid_filename": ("STRING", {"default": "xy_grid.png", "multiline": False}),
+                "background": ("STRING", {"default": "#202024", "multiline": False}),
+            }
+        }
+
+    def finalize(
+        self,
+        manifest_path,
+        image_ext,
+        cell_width,
+        cell_height,
+        label_height,
+        gap,
+        grid_filename,
+        background,
+    ):
+        _, status = StudioSuiteXYGridBuilder().build_grid(
+            manifest_path,
+            "",
+            image_ext,
+            cell_width,
+            cell_height,
+            label_height,
+            gap,
+            grid_filename,
+            background,
+        )
+        print(f"[StudioSuiteXYGridFinalizer] {status}", flush=True)
+        return (status,)
+
+
 NODE_CLASS_MAPPINGS = {
+    "StudioSuiteXYParameterInput": StudioSuiteXYParameterInput,
+    "StudioSuiteXYAxisParameter": StudioSuiteXYAxisParameter,
     "StudioSuiteXYTargetModelClipBridge": StudioSuiteXYTargetModelClipBridge,
     "StudioSuiteXYTargetModelBridge": StudioSuiteXYTargetModelBridge,
     "StudioSuiteXYAxisGeneric": StudioSuiteXYAxisGeneric,
@@ -1350,16 +1668,20 @@ NODE_CLASS_MAPPINGS = {
     "StudioSuiteXYAxisFreeU": StudioSuiteXYAxisFreeU,
     "StudioSuiteXYAxisLoraStrength": StudioSuiteXYAxisLoraStrength,
     "StudioSuiteXYAxisLoraFile": StudioSuiteXYAxisLoraFile,
+    "StudioSuiteXYAxisLoraCompare": StudioSuiteXYAxisLoraCompare,
     "StudioSuiteXYAxisLoraStacker": StudioSuiteXYAxisLoraStacker,
     "StudioSuiteXYAxisLoraLoaderChain": StudioSuiteXYAxisLoraLoaderChain,
     "StudioSuiteXYAxisLoraBlockWeight": StudioSuiteXYAxisLoraBlockWeight,
     "StudioSuiteXYMatrix": StudioSuiteXYMatrix,
     "StudioSuiteXYQueue": StudioSuiteXYQueue,
     "StudioSuiteXYGridBuilder": StudioSuiteXYGridBuilder,
+    "StudioSuiteXYGridFinalizer": StudioSuiteXYGridFinalizer,
 }
 
 
 NODE_DISPLAY_NAME_MAPPINGS = {
+    "StudioSuiteXYParameterInput": "Studio Suite XY Parameter Input",
+    "StudioSuiteXYAxisParameter": "Studio Suite XY Axis - Parameter Slot",
     "StudioSuiteXYTargetModelClipBridge": "Studio Suite XY Target Bridge - Model/Clip",
     "StudioSuiteXYTargetModelBridge": "Studio Suite XY Target Bridge - Model",
     "StudioSuiteXYAxisGeneric": "Studio Suite XY Axis - Generic",
@@ -1367,10 +1689,12 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "StudioSuiteXYAxisFreeU": "Studio Suite XY Axis - FreeU",
     "StudioSuiteXYAxisLoraStrength": "Studio Suite XY Axis - LoRA Strength",
     "StudioSuiteXYAxisLoraFile": "Studio Suite XY Axis - LoRA File",
+    "StudioSuiteXYAxisLoraCompare": "Studio Suite XY Axis - LoRA Compare",
     "StudioSuiteXYAxisLoraStacker": "Studio Suite XY Axis - LoRA Stacker",
     "StudioSuiteXYAxisLoraLoaderChain": "Studio Suite XY Axis - LoRA Loader Chain",
     "StudioSuiteXYAxisLoraBlockWeight": "Studio Suite XY Axis - LoRA Block Weight",
     "StudioSuiteXYMatrix": "Studio Suite XY Matrix",
     "StudioSuiteXYQueue": "Studio Suite XY Queue",
     "StudioSuiteXYGridBuilder": "Studio Suite XY Grid Builder",
+    "StudioSuiteXYGridFinalizer": "Studio Suite XY Grid Finalizer (Internal)",
 }

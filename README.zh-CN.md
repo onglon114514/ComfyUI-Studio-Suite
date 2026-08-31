@@ -37,6 +37,8 @@ Qwen 路线现在也可以接，但整体完善度还不如 Gemma 4 E4B。
 如果是第一次使用，建议先按最小可用配置跑通：
 
 - `docs/QUICK_START_zh-CN.md`
+- `docs/NODE_USER_GUIDE_zh-CN.md`：按任务查节点、连线和字段填写方法
+- `docs/LOCAL_TRANSLATION_PLAN_zh-CN.md`：Prompt Studio 本地词典与 LLM 翻译设计
 
 1. 把本仓库放到：
 
@@ -166,7 +168,10 @@ Natural-language caption generated from the WD14 tags.
 当前开发线已经加入通用 XY 矩阵系统：
 
 - `Studio Suite XY Axis - LoRA File`
+- `Studio Suite XY Axis - LoRA Compare`
 - `Studio Suite XY Axis - LoRA Strength`
+- `Studio Suite XY Axis - Parameter Slot`
+- `Studio Suite XY Parameter Input`
 - `Studio Suite XY Axis - Sampler/Scheduler`
 - `Studio Suite XY Axis - FreeU`
 - `Studio Suite XY Axis - Generic`
@@ -174,7 +179,7 @@ Natural-language caption generated from the WD14 tags.
 - `Studio Suite XY Queue`
 - `Studio Suite XY Grid Builder`
 
-测试 LoRA 训练保存点时，把 target bridge 放在 LoRA Loader 后面，再把 `target_ref` 接到 LoRA 文件轴 / 强度轴。队列会给每个格子提交独立子任务，等图片全部生成后再用 Grid Builder 生成汇总图。
+新工作流推荐用 `XY Parameter Input` 把主生成链和调度链分离，再用 `LoRA Compare` 一次设置 LoRA 列表、起止强度和分段数。队列会提交独立子任务，并可在最后追加自动汇总节点；旧 target bridge 仅作为兼容入口保留。
 
 详见：
 
@@ -299,7 +304,7 @@ ComfyUI/custom_nodes/comfyui_studio_suite/resources
 - Prompt Studio 和一些扩展工作流仍在继续打磨
 - Task Agent 已有低显存纯文本打标基线，但无人值守长批量生产仍需继续稳定性测试
 - 管理式自动拉起 KoboldCpp 目前是可选路径，不作为默认推荐
-- LoRA 堆测试和 LoRA 分层 / 分块权重测试还没有落地
+- 新版 XY 参数槽路线仍需继续验证不同第三方加载器的兼容性
 
 详见：
 

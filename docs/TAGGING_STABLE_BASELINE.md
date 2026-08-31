@@ -40,7 +40,7 @@ The CPU-only setting is slower, but it avoids GPU memory competition with ComfyU
 Environment:
 
 - Windows
-- ComfyUI embedded Python from `D:\ComfyUI-aki-v2\python\python.exe`
+- the Python environment bundled with or used to launch the current ComfyUI installation
 - 8GB VRAM GPU class
 - Gemma 4 E4B Q4 GGUF
 

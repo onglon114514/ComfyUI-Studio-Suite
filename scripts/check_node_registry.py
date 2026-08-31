@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -10,12 +11,15 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 
 
 def _find_comfy_root() -> Path | None:
-    for parent in PROJECT_DIR.parents:
-        if (parent / "server.py").exists() and (parent / "folder_paths.py").exists():
-            return parent
-    fallback = Path("D:/ComfyUI-aki-v2/ComfyUI")
-    if (fallback / "server.py").exists() and (fallback / "folder_paths.py").exists():
-        return fallback
+    candidates: list[Path] = [*PROJECT_DIR.parents]
+    configured = str(os.environ.get("COMFYUI_ROOT", "") or "").strip()
+    if configured:
+        candidates.insert(0, Path(configured).expanduser())
+    current = Path.cwd().resolve()
+    candidates.extend([current, *current.parents])
+    for candidate in dict.fromkeys(candidates):
+        if (candidate / "server.py").exists() and (candidate / "folder_paths.py").exists():
+            return candidate
     return None
 
 

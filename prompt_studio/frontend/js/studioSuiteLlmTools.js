@@ -10,6 +10,10 @@
     let workerWarm = false;
     let queueMonitorStarted = false;
     let preloadTimer = null;
+    let statusPollTimer = null;
+    let dictionaryState = { ready: false, mode: "builtin_only", manual_aliases: 0, indexed_aliases: 0 };
+    const DIRECTION_KEY = "studio_suite_translate_direction";
+    const CONTENT_TYPE_KEY = "studio_suite_translate_content_type";
 
     function byId(id) {
         return document.getElementById(id);
@@ -41,6 +45,35 @@
         text.textContent = `${label || "LLM 推理中"} ${elapsed}s`;
     }
 
+    function setStatusChip(name, label, state) {
+        const chip = document.querySelector(`[data-studio-suite-status="${name}"]`);
+        if (!chip) return;
+        chip.textContent = label;
+        chip.dataset.state = state || "idle";
+    }
+
+    function updateRuntimeStatus() {
+        const dictionaryReady = Boolean(dictionaryState && dictionaryState.ready);
+        const aliasCount = dictionaryReady
+            ? Number(dictionaryState.indexed_aliases || 0).toLocaleString()
+            : Number(dictionaryState.manual_aliases || 0).toLocaleString();
+        setStatusChip(
+            "dictionary",
+            dictionaryReady ? `词典 ${aliasCount}` : `基础词典 ${aliasCount}`,
+            dictionaryReady ? "ready" : "limited"
+        );
+        setStatusChip(
+            "model",
+            preloadBusy ? "模型加载中" : workerWarm ? "模型已预热" : "模型未加载",
+            preloadBusy ? "busy" : workerWarm ? "ready" : "idle"
+        );
+        setStatusChip(
+            "queue",
+            queueBusy ? "队列占用" : "队列空闲",
+            queueBusy ? "blocked" : "ready"
+        );
+    }
+
     function updateLlmControls() {
         const disabled = queueBusy || translationBusy || preloadBusy;
         document.querySelectorAll("[data-studio-suite-llm-translate]").forEach((button) => {
@@ -48,8 +81,10 @@
             button.classList.toggle("is-queue-blocked", queueBusy);
             button.title = queueBusy ? "ComfyUI 有运行中或等待中的任务，翻译已暂停" : "";
         });
-        const select = byId("studio-suite-llm-direction");
-        if (select) select.disabled = translationBusy || preloadBusy;
+        const directionSelect = byId("studio-suite-llm-direction");
+        const contentTypeSelect = byId("studio-suite-llm-content-type");
+        if (directionSelect) directionSelect.disabled = translationBusy || preloadBusy;
+        if (contentTypeSelect) contentTypeSelect.disabled = translationBusy || preloadBusy;
         if (queueBusy) {
             const wrap = byId("studio-suite-llm-progress");
             const text = byId("studio-suite-llm-progress-text");
@@ -62,6 +97,7 @@
             if (wrap) wrap.classList.remove("is-queue-blocked");
             if (!translationBusy && !preloadBusy) setProgress(false, Date.now());
         }
+        updateRuntimeStatus();
     }
 
     async function preloadLlm() {
@@ -118,6 +154,7 @@
                 const wasBusy = queueBusy;
                 queueBusy = Boolean(payload.queue && payload.queue.busy);
                 workerWarm = Boolean(payload.worker && payload.worker.alive);
+                dictionaryState = payload.dictionary || dictionaryState;
                 if (queueBusy) {
                     workerWarm = false;
                     if (!wasBusy) {
@@ -133,10 +170,12 @@
                 updateLlmControls();
             } catch (error) {
                 console.debug("[Prompt Studio] queue status unavailable:", error);
+            } finally {
+                const nextDelay = queueBusy || translationBusy || preloadBusy ? 900 : 2500;
+                statusPollTimer = window.setTimeout(poll, nextDelay);
             }
         };
         poll();
-        window.setInterval(poll, 750);
         schedulePreload(1200);
     }
 
@@ -150,8 +189,11 @@
     }
 
     function currentDirection() {
-        const select = byId("studio-suite-llm-direction");
-        return select && select.value ? select.value : "zh_to_en_text";
+        const direction = byId("studio-suite-llm-direction");
+        const contentType = byId("studio-suite-llm-content-type");
+        const directionValue = direction && direction.value ? direction.value : "zh_to_en";
+        const typeValue = contentType && contentType.value ? contentType.value : "text";
+        return `${directionValue}_${typeValue}`;
     }
 
     function splitPromptParts(text) {
@@ -344,7 +386,8 @@
                 translatedText,
                 payload.translation_pairs || (payload.json_result && payload.json_result.translation_pairs) || []
             );
-            toast("LLM 翻译完成", "success");
+            const dictionaryCount = Array.isArray(payload.dictionary_matches) ? payload.dictionary_matches.length : 0;
+            toast(dictionaryCount ? `翻译完成，词典保护 ${dictionaryCount} 项` : "翻译完成", "success");
         } catch (error) {
             toast(`LLM 翻译失败：${error.message || error}`, "error");
         } finally {
@@ -401,18 +444,33 @@
         const toolbar = document.createElement("div");
         toolbar.id = "studio-suite-llm-tools";
         toolbar.className = "studio-suite-llm-tools";
+        const modeGroup = document.createElement("div");
+        modeGroup.className = "studio-suite-translate-mode";
         const directionSelect = document.createElement("select");
         directionSelect.id = "studio-suite-llm-direction";
         directionSelect.className = "studio-suite-llm-select";
         directionSelect.innerHTML = [
-            '<option value="zh_to_en_text">原文/中文 → 英文提示词</option>',
-            '<option value="en_to_zh_text">英文 → 中文提示词</option>',
-            '<option value="zh_to_en_tags">中文 → 英文Tag规范</option>',
-            '<option value="en_to_zh_tags">英文Tag → 中文释义</option>',
+            '<option value="zh_to_en">中文 → 英文</option>',
+            '<option value="en_to_zh">英文 → 中文</option>',
         ].join("");
-        toolbar.appendChild(directionSelect);
-        toolbar.appendChild(makeButton("positive", "LLM翻译正向"));
-        toolbar.appendChild(makeButton("negative", "LLM翻译反向"));
+        const contentTypeSelect = document.createElement("select");
+        contentTypeSelect.id = "studio-suite-llm-content-type";
+        contentTypeSelect.className = "studio-suite-llm-select";
+        contentTypeSelect.innerHTML = [
+            '<option value="text">自然语言整句</option>',
+            '<option value="tags">Danbooru Tag / 角色名</option>',
+        ].join("");
+        const savedDirection = localStorage.getItem(DIRECTION_KEY);
+        const savedContentType = localStorage.getItem(CONTENT_TYPE_KEY);
+        directionSelect.value = ["zh_to_en", "en_to_zh"].includes(savedDirection) ? savedDirection : "zh_to_en";
+        contentTypeSelect.value = ["text", "tags"].includes(savedContentType) ? savedContentType : "text";
+        directionSelect.addEventListener("change", () => localStorage.setItem(DIRECTION_KEY, directionSelect.value));
+        contentTypeSelect.addEventListener("change", () => localStorage.setItem(CONTENT_TYPE_KEY, contentTypeSelect.value));
+        modeGroup.appendChild(directionSelect);
+        modeGroup.appendChild(contentTypeSelect);
+        toolbar.appendChild(modeGroup);
+        toolbar.appendChild(makeButton("positive", "翻译正向"));
+        toolbar.appendChild(makeButton("negative", "翻译反向"));
         const unloadButton = document.createElement("button");
         unloadButton.type = "button";
         unloadButton.className = "studio-suite-llm-btn studio-suite-llm-btn-muted";
@@ -420,6 +478,14 @@
         unloadButton.textContent = "释放LLM";
         unloadButton.addEventListener("click", unloadLlm);
         toolbar.appendChild(unloadButton);
+        const status = document.createElement("div");
+        status.className = "studio-suite-runtime-status";
+        status.innerHTML = [
+            '<span class="studio-suite-status-chip" data-studio-suite-status="dictionary">基础词典</span>',
+            '<span class="studio-suite-status-chip" data-studio-suite-status="model">模型未加载</span>',
+            '<span class="studio-suite-status-chip" data-studio-suite-status="queue">队列空闲</span>',
+        ].join("");
+        toolbar.appendChild(status);
         const progress = document.createElement("div");
         progress.id = "studio-suite-llm-progress";
         progress.className = "studio-suite-llm-progress";
@@ -478,6 +544,15 @@
                 gap: 8px;
                 flex-wrap: wrap;
             }
+            .studio-suite-translate-mode {
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+                padding: 3px;
+                border: 1px solid #44444d;
+                border-radius: 18px;
+                background: #202027;
+            }
             .studio-suite-llm-btn {
                 background: #2f3a32;
                 color: #a7f3c3;
@@ -509,10 +584,10 @@
             }
             .studio-suite-llm-select {
                 height: 30px;
-                max-width: 210px;
+                max-width: 180px;
                 border-radius: 16px;
-                border: 1px solid #555561;
-                background: #26262d;
+                border: 0;
+                background: #2b2b33;
                 color: #e8e8ef;
                 padding: 0 10px;
                 font-size: 12px;
@@ -530,6 +605,44 @@
             .studio-suite-llm-btn-muted:hover {
                 background: #404049;
                 border-color: #777785;
+            }
+            .studio-suite-runtime-status {
+                display: inline-flex;
+                align-items: center;
+                gap: 5px;
+                padding-left: 2px;
+            }
+            .studio-suite-status-chip {
+                display: inline-flex;
+                align-items: center;
+                min-height: 22px;
+                padding: 0 8px;
+                border: 1px solid #4b4b54;
+                border-radius: 999px;
+                background: #292930;
+                color: #bdbdc8;
+                font-size: 10px;
+                white-space: nowrap;
+            }
+            .studio-suite-status-chip[data-state="ready"] {
+                color: #9ce7b7;
+                border-color: #436b50;
+                background: #26362b;
+            }
+            .studio-suite-status-chip[data-state="limited"] {
+                color: #e6bd72;
+                border-color: #735d37;
+                background: #393225;
+            }
+            .studio-suite-status-chip[data-state="busy"] {
+                color: #8fd7ee;
+                border-color: #3c6572;
+                background: #24343a;
+            }
+            .studio-suite-status-chip[data-state="blocked"] {
+                color: #c0c0c8;
+                border-color: #56565e;
+                background: #303036;
             }
             .studio-suite-llm-progress {
                 display: none;

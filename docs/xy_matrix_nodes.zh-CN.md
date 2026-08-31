@@ -1,21 +1,41 @@
 # Studio Suite XY 测试节点
 
-这组节点用于做参数矩阵测试，不绑定旧的效率加载器，也不接管模型加载链。它的逻辑是：先指定“要修改哪个节点 ID 的哪个输入”，再由 XY 队列复制当前工作流，为每个格子提交一个独立子任务。
+这组节点用于做参数矩阵测试，不绑定旧的效率加载器，也不接管模型加载链。推荐结构是把主生成链和调度链分开：主生成链用 `Studio Suite XY Parameter Input` 接收变化参数，调度轴按 `slot_name` 注入每个格子的值。节点编号方式只用于兼容旧工作流。
 
 ## 基本串接
 
 1. 在原工作流里保留正常生图链路。
 2. 最后把图片接到 `Independent Result Writer (Proxy)`。
-3. 新建一个或两个 `Studio Suite XY Axis ...` 节点。
-4. 把轴节点接到 `Studio Suite XY Matrix`。
-5. 把 `matrix_json` 接到 `Studio Suite XY Queue`。
-6. 在 `Studio Suite XY Queue` 的 `writer_node_id` 填 `Independent Result Writer (Proxy)` 的节点编号。
-7. 运行 `Studio Suite XY Queue`，它会提交每个格子的独立子任务。
-8. 子任务完成后，用 `Studio Suite XY Grid Builder` 读取 manifest 生成汇总图。
+3. 在需要变化的参数前放置 `Studio Suite XY Parameter Input`，填写唯一的 `slot_name`，再把对应类型输出连到主生成节点。
+4. 新建一个或两个新版 XY 轴，轴里的 slot 名与参数入口保持一致。
+5. 把轴节点接到 `Studio Suite XY Matrix`。
+6. 把 `matrix_json` 接到 `Studio Suite XY Queue`。
+7. 工作流里只有一个 Writer Proxy 时，`writer_node_id` 留空即可自动识别。
+8. 运行 `Studio Suite XY Queue`。默认会在所有子任务结束后自动生成汇总图，不需要再手动运行 Grid Builder。
 
-## 用连线指定目标节点
+XY 子任务只执行 `Independent Result Writer (Proxy)` 所在的生成链。工作流中的其它预览、文本展示或分析输出不会被每个格子重复触发。
 
-多数轴节点都保留了 `target_node_id` 手填方式，但也支持用 `target_ref` 连线指定目标。连接后 `target_ref` 优先于手填编号。
+## 推荐：参数入口分离主工作流
+
+节点：`Studio Suite XY Parameter Input`
+
+它的作用与 `Independent Load Image Path` 类似：留在实际生成链里，调度器只在复制出来的子任务中改写 `value_json`。例如 LoRA Loader 前放三个入口：
+
+```text
+slot_name=lora_name           string  -> LoRA Loader lora_name
+slot_name=lora_model_strength float   -> LoRA Loader strength_model
+slot_name=lora_clip_strength  float   -> LoRA Loader strength_clip
+```
+
+内置节点的下拉框/数值框默认是 widget 时，先右键该字段并选择“转换为输入（Convert widget to input）”，再连接参数入口。文件名等枚举字段使用通用 `value` 输出，强度、步数等数值优先使用 `float` 或 `int` 输出。
+
+`value_json` 是不运行 XY 时的默认值。文件名要写成 JSON 字符串，例如 `"my_lora.safetensors"`；数字可直接写 `1.0`。
+
+通用参数使用 `Studio Suite XY Axis - Parameter Slot`，只要轴和参数入口的 `slot_name` 相同即可，不需要填写节点编号。
+
+## 旧工作流：节点编号与 Target Bridge
+
+旧轴节点仍保留 `target_node_id`，旧版 Target Bridge 也继续注册，以保证已有工作流可以加载。新工作流不建议继续依赖节点编号和 `target_ref`。
 
 普通 LoRA Loader 推荐接法：
 
@@ -157,6 +177,21 @@ Y轴：Studio Suite XY Axis - LoRA Strength
 
 这样可以同时看“哪个 LoRA 保存时间段更好”和“哪个加载权重更合适”。
 
+## 推荐：LoRA 对比轴
+
+节点：`Studio Suite XY Axis - LoRA Compare`
+
+这个节点把 LoRA 文件与强度区间合并成一个轴，适合直接测试“多个保存点 × 多个强度”：
+
+```text
+strength_mode: range
+start_strength: 0.6
+end_strength: 1.0
+strength_steps: 5
+```
+
+以上会生成 `0.6、0.7、0.8、0.9、1.0` 五档。每个 LoRA 都会展开这五档。若只比较不同 LoRA，设置 `strength_mode=fixed` 即可。原 `Studio Suite XY Axis - LoRA Strength` 保留，适合把强度单独放在 X 或 Y 轴。
+
 ## 输出文件
 
 `Studio Suite XY Queue` 会在输出目录写入：
@@ -165,11 +200,11 @@ Y轴：Studio Suite XY Axis - LoRA Strength
 xy_manifest_YYYYMMDD_HHMMSS.json
 ```
 
-`Studio Suite XY Grid Builder` 可以读取这个 manifest，把已完成的格子拼成汇总图。建议子任务全部完成后再运行 Grid Builder。
+默认 `auto_build_grid=true` 时，队列会把内部 Finalizer 放在全部格子之后，最后一个格子完成后自动保存 `xy_grid_<run_id>.png`。`Studio Suite XY Grid Builder` 仍保留，用于重新排版旧 manifest 或手动补做图表。
 
 ## 注意
 
-- `target_node_id` 必须填 ComfyUI 节点右上角显示的编号。
+- 推荐使用 `slot_name` 参数入口；只有旧轴才需要填写 `target_node_id`。
 - `input_names` 必须填该节点真实输入字段名，不是 UI 翻译名。
 - 如果采样器/调度器名称不在当前 ComfyUI 可用列表里，子任务会在 prompt 校验阶段失败。
 - XY 队列每个格子都会独立提交 prompt，适合配合 `cleanup_after_save` 做长批量稳定测试。

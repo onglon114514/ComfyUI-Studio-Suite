@@ -32,6 +32,7 @@ except Exception:
     YAML = None
 
 from .model_info import build_model_payload, save_model_notes
+from .local_dictionary import LocalDanbooruDictionary
 
 
 NODE_DIR = Path(__file__).resolve().parent
@@ -63,6 +64,7 @@ _FOLDER_LIST_CACHE_TTL = 20.0
 _PREVIEW_EXTS = (".jpg", ".png", ".jpeg", ".gif", ".preview.jpg", ".preview.png", ".preview.jpeg", ".preview.gif")
 _PREVIEW_THUMB_CACHE: dict[str, tuple[tuple[int, int], bytes, str]] = {}
 _PREVIEW_THUMB_MAX_SIZE = 320
+_LOCAL_DICTIONARY = LocalDanbooruDictionary(PACKAGE_DIR, STORAGE_DIR)
 
 
 def _ensure_dirs() -> None:
@@ -1488,6 +1490,7 @@ def register_prompt_studio_routes():
             return web.json_response({"success": False, "error": "empty_text"}, status=400)
 
         direction = str(data.get("direction", "") or "zh_to_en_tags").strip()
+        protected_text, dictionary_matches = _LOCAL_DICTIONARY.protect_text(text, direction)
         backend_profile = str(data.get("backend_profile", "") or "").strip() or _default_prompt_studio_translate_profile()
         dynamic_runtime = bool(data.get("dynamic_runtime", True))
         context_size = (
@@ -1511,11 +1514,12 @@ def register_prompt_studio_routes():
 
         try:
             task_inputs = {
-                "raw_text": text,
+                "raw_text": protected_text,
                 "direction": direction,
                 "target_profile": str(data.get("target_profile", "") or "generic_tag_model"),
                 "translation_mode": str(data.get("translation_mode", "") or "sentence").strip(),
                 "purpose": "Prompt Studio inline translation for anime / Danbooru prompt editing.",
+                "dictionary_matches": dictionary_matches,
             }
             runtime_options = {
                 "llama_cpp_python_n_gpu_layers": int(data.get("n_gpu_layers", 999) if dynamic_runtime else data.get("n_gpu_layers", 0) or 0),
@@ -1572,11 +1576,13 @@ def register_prompt_studio_routes():
                     },
                     status=502,
                 )
+            llm_pairs = response.get("json_result", {}).get("translation_pairs", []) if isinstance(response, dict) else []
             return web.json_response({
                 "success": True,
                 "translated_text": translated,
-                "source_text": response.get("json_result", {}).get("source_text", text) if isinstance(response, dict) else text,
-                "translation_pairs": response.get("json_result", {}).get("translation_pairs", []) if isinstance(response, dict) else [],
+                "source_text": text,
+                "translation_pairs": [*dictionary_matches, *(llm_pairs if isinstance(llm_pairs, list) else [])],
+                "dictionary_matches": dictionary_matches,
                 "raw_text": response.get("raw_text", "") if isinstance(response, dict) else "",
                 "json_result": response.get("json_result", {}) if isinstance(response, dict) else {},
                 "backend_mode": "private_llama_cpp_worker" if use_private_worker else "managed_backend",
@@ -1607,6 +1613,21 @@ def register_prompt_studio_routes():
             "success": True,
             "queue": _prompt_studio_queue_state(),
             "worker": _prompt_studio_worker_state(),
+            "dictionary": _LOCAL_DICTIONARY.status(),
+        })
+
+    @routes.post("/studio-suite/prompt-studio/dictionary_lookup")
+    async def prompt_studio_dictionary_lookup(request):
+        data = await _request_json_dict(request)
+        text = str(data.get("text", "") or "").strip()
+        direction = str(data.get("direction", "") or "zh_to_en_tags").strip()
+        protected_text, matches = _LOCAL_DICTIONARY.protect_text(text, direction)
+        return web.json_response({
+            "success": True,
+            "source_text": text,
+            "protected_text": protected_text,
+            "matches": matches,
+            "dictionary": _LOCAL_DICTIONARY.status(),
         })
 
     @routes.post("/studio-suite/prompt-studio/llm_preload")
