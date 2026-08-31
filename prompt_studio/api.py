@@ -33,6 +33,7 @@ except Exception:
 
 from .model_info import build_model_payload, save_model_notes
 from .local_dictionary import LocalDanbooruDictionary
+from .hy_mt_runtime import HyMtRuntime
 
 
 NODE_DIR = Path(__file__).resolve().parent
@@ -65,6 +66,7 @@ _PREVIEW_EXTS = (".jpg", ".png", ".jpeg", ".gif", ".preview.jpg", ".preview.png"
 _PREVIEW_THUMB_CACHE: dict[str, tuple[tuple[int, int], bytes, str]] = {}
 _PREVIEW_THUMB_MAX_SIZE = 320
 _LOCAL_DICTIONARY = LocalDanbooruDictionary(PACKAGE_DIR, STORAGE_DIR)
+_HY_MT_RUNTIME = HyMtRuntime(PACKAGE_DIR)
 
 
 def _ensure_dirs() -> None:
@@ -714,6 +716,18 @@ def _prompt_studio_worker_state() -> dict:
     return {"alive": alive, "pid": process.pid if alive else None}
 
 
+def _select_prompt_studio_translation_engine(requested: str) -> tuple[str, dict]:
+    value = str(requested or "auto").strip().lower()
+    if value not in {"auto", "hy_mt", "general_llm"}:
+        value = "auto"
+    hy_mt_state = _HY_MT_RUNTIME.status()
+    if value == "hy_mt":
+        return ("hy_mt" if hy_mt_state["available"] else "hy_mt_unavailable"), hy_mt_state
+    if value == "auto" and hy_mt_state["available"]:
+        return "hy_mt", hy_mt_state
+    return "general_llm", hy_mt_state
+
+
 def _prompt_studio_queue_guard_error() -> web.Response | None:
     queue_state = _prompt_studio_queue_state()
     if not queue_state["busy"]:
@@ -1301,6 +1315,8 @@ def register_prompt_studio_routes():
             # races a resident Prompt Studio model for GPU/RAM.
             if _prompt_studio_worker_state()["alive"]:
                 _stop_prompt_studio_private_worker()
+            if _HY_MT_RUNTIME.status()["alive"]:
+                _HY_MT_RUNTIME.stop()
             return json_data
 
         prompt_server.add_on_prompt_handler(release_prompt_studio_llm_before_queue)
@@ -1507,6 +1523,76 @@ def register_prompt_studio_routes():
         keep_warm = bool(data.get("keep_warm", True))
         unload_after_run = False if keep_warm else bool(data.get("unload_after_run", False))
         keep_warm_seconds = int(data.get("keep_warm_seconds", 600) or 600)
+        requested_engine = str(data.get("engine", "auto") or "auto").strip().lower()
+        selected_engine, hy_mt_state = _select_prompt_studio_translation_engine(requested_engine)
+        if selected_engine == "hy_mt_unavailable":
+            return web.json_response(
+                {
+                    "success": False,
+                    "error": "hy_mt_runtime_unavailable",
+                    "hy_mt": hy_mt_state,
+                },
+                status=503,
+            )
+        if selected_engine == "hy_mt":
+            try:
+                if _prompt_studio_worker_state()["alive"]:
+                    _stop_prompt_studio_private_worker()
+                _unload_llm_translate_backend()
+                _HY_MT_RUNTIME.allow_start()
+                queue_error = _prompt_studio_queue_guard_error()
+                if queue_error is not None:
+                    _HY_MT_RUNTIME.stop()
+                    return queue_error
+                result = await asyncio.to_thread(
+                    _HY_MT_RUNTIME.translate,
+                    protected_text,
+                    direction,
+                    max_tokens,
+                    min(0.15, temperature),
+                )
+                if keep_warm:
+                    _HY_MT_RUNTIME.schedule_idle_shutdown(keep_warm_seconds)
+                else:
+                    _HY_MT_RUNTIME.stop()
+                return web.json_response({
+                    "success": True,
+                    "translated_text": result["translated_text"],
+                    "source_text": text,
+                    "translation_pairs": dictionary_matches,
+                    "dictionary_matches": dictionary_matches,
+                    "raw_text": result["translated_text"],
+                    "json_result": {},
+                    "backend_mode": "hy_mt_cpu_server",
+                    "backend_profile": "hy_mt_1_8b_stq1_0",
+                    "engine": "hy_mt",
+                    "runtime": {
+                        "dynamic_runtime": dynamic_runtime,
+                        "keep_warm": keep_warm,
+                        "keep_warm_seconds": keep_warm_seconds if keep_warm else 0,
+                        "context_size": context_size,
+                        "max_tokens": max_tokens,
+                        "temperature": min(0.15, temperature),
+                        "elapsed_seconds": result["elapsed_seconds"],
+                        "hy_mt": result["runtime"],
+                    },
+                })
+            except Exception as error:
+                _HY_MT_RUNTIME.stop()
+                if _prompt_studio_queue_state()["busy"]:
+                    return web.json_response(
+                        {"success": False, "error": "comfy_queue_busy", "queue": _prompt_studio_queue_state()},
+                        status=409,
+                    )
+                if requested_engine == "hy_mt":
+                    return web.json_response(
+                        {"success": False, "error": str(error), "engine": "hy_mt", "hy_mt": _HY_MT_RUNTIME.status()},
+                        status=500,
+                    )
+                print(f"[Prompt Studio] HY-MT unavailable at runtime; falling back to general LLM: {error}")
+                selected_engine = "general_llm"
+        if _HY_MT_RUNTIME.status()["alive"]:
+            _HY_MT_RUNTIME.stop()
         custom_model_path = str(data.get("custom_model_path", "") or "").strip() or None
         use_private_worker = _prompt_studio_should_use_private_worker(data)
         if custom_model_path is None and (use_private_worker or _prompt_studio_config_uses_inprocess()):
@@ -1587,6 +1673,7 @@ def register_prompt_studio_routes():
                 "json_result": response.get("json_result", {}) if isinstance(response, dict) else {},
                 "backend_mode": "private_llama_cpp_worker" if use_private_worker else "managed_backend",
                 "backend_profile": backend_profile,
+                "engine": "general_llm",
                 "runtime": {
                     "dynamic_runtime": dynamic_runtime,
                     "keep_warm": keep_warm,
@@ -1613,6 +1700,7 @@ def register_prompt_studio_routes():
             "success": True,
             "queue": _prompt_studio_queue_state(),
             "worker": _prompt_studio_worker_state(),
+            "hy_mt": _HY_MT_RUNTIME.status(),
             "dictionary": _LOCAL_DICTIONARY.status(),
         })
 
@@ -1636,6 +1724,44 @@ def register_prompt_studio_routes():
         if queue_error is not None:
             return queue_error
         data = await _request_json_dict(request)
+        requested_engine = str(data.get("engine", "auto") or "auto").strip().lower()
+        selected_engine, hy_mt_state = _select_prompt_studio_translation_engine(requested_engine)
+        if selected_engine == "hy_mt_unavailable":
+            return web.json_response(
+                {"success": False, "error": "hy_mt_runtime_unavailable", "hy_mt": hy_mt_state},
+                status=503,
+            )
+        if selected_engine == "hy_mt":
+            started_at = time.monotonic()
+            try:
+                if _prompt_studio_worker_state()["alive"]:
+                    _stop_prompt_studio_private_worker()
+                _unload_llm_translate_backend()
+                _HY_MT_RUNTIME.allow_start()
+                queue_error = _prompt_studio_queue_guard_error()
+                if queue_error is not None:
+                    _HY_MT_RUNTIME.stop()
+                    return queue_error
+                result = await asyncio.to_thread(_HY_MT_RUNTIME.ensure_started)
+                _HY_MT_RUNTIME.schedule_idle_shutdown(int(data.get("keep_warm_seconds", 600) or 600))
+                return web.json_response({
+                    "success": True,
+                    "engine": "hy_mt",
+                    "result": result,
+                    "hy_mt": _HY_MT_RUNTIME.status(),
+                    "elapsed_seconds": round(time.monotonic() - started_at, 3),
+                })
+            except Exception as error:
+                _HY_MT_RUNTIME.stop()
+                if requested_engine == "hy_mt":
+                    return web.json_response(
+                        {"success": False, "error": str(error), "engine": "hy_mt", "hy_mt": _HY_MT_RUNTIME.status()},
+                        status=500,
+                    )
+                print(f"[Prompt Studio] HY-MT preload failed; falling back to general LLM: {error}")
+                selected_engine = "general_llm"
+        if _HY_MT_RUNTIME.status()["alive"]:
+            _HY_MT_RUNTIME.stop()
         if not _private_llama_runtime_available():
             return web.json_response({"success": False, "error": "private_llama_runtime_missing"}, status=503)
         backend_profile = str(data.get("backend_profile", "") or "").strip() or _default_prompt_studio_translate_profile()
@@ -1680,10 +1806,12 @@ def register_prompt_studio_routes():
 
     @routes.post("/studio-suite/prompt-studio/llm_unload")
     async def prompt_studio_llm_unload(request):
+        hy_mt_result = _HY_MT_RUNTIME.stop()
         private_result = _stop_prompt_studio_private_worker()
         result = _unload_llm_translate_backend()
         if isinstance(result, dict):
             result["private_worker"] = private_result
+            result["hy_mt"] = hy_mt_result
         status = str(result.get("status", "") if isinstance(result, dict) else "").lower()
         ok = status not in {"failed", "error"}
         return web.json_response({"success": ok, "result": result}, status=200 if ok else 500)

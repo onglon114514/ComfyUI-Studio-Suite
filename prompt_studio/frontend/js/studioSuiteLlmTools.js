@@ -12,8 +12,10 @@
     let preloadTimer = null;
     let statusPollTimer = null;
     let dictionaryState = { ready: false, mode: "builtin_only", manual_aliases: 0, indexed_aliases: 0 };
+    let hyMtState = { available: false, alive: false, reason: "not_checked" };
     const DIRECTION_KEY = "studio_suite_translate_direction";
     const CONTENT_TYPE_KEY = "studio_suite_translate_content_type";
+    const ENGINE_KEY = "studio_suite_translate_engine";
 
     function byId(id) {
         return document.getElementById(id);
@@ -53,6 +55,18 @@
     }
 
     function updateRuntimeStatus() {
+        const engineSelect = byId("studio-suite-llm-engine");
+        const hyMtOption = engineSelect && engineSelect.querySelector('option[value="hy_mt"]');
+        if (hyMtOption && hyMtState.reason !== "not_checked") {
+            hyMtOption.disabled = !hyMtState.available;
+            hyMtOption.textContent = hyMtState.available
+                ? "HY-MT CPU（实验）"
+                : "HY-MT CPU（未安装）";
+            if (!hyMtState.available && engineSelect.value === "hy_mt") {
+                engineSelect.value = "auto";
+                localStorage.setItem(ENGINE_KEY, "auto");
+            }
+        }
         const dictionaryReady = Boolean(dictionaryState && dictionaryState.ready);
         const aliasCount = dictionaryReady
             ? Number(dictionaryState.indexed_aliases || 0).toLocaleString()
@@ -64,7 +78,15 @@
         );
         setStatusChip(
             "model",
-            preloadBusy ? "模型加载中" : workerWarm ? "模型已预热" : "模型未加载",
+            preloadBusy
+                ? "模型加载中"
+                : hyMtState.alive
+                    ? "HY-MT 已预热"
+                    : workerWarm
+                        ? "模型已预热"
+                        : hyMtState.available
+                            ? "HY-MT 可用"
+                            : "通用 LLM",
             preloadBusy ? "busy" : workerWarm ? "ready" : "idle"
         );
         setStatusChip(
@@ -83,8 +105,12 @@
         });
         const directionSelect = byId("studio-suite-llm-direction");
         const contentTypeSelect = byId("studio-suite-llm-content-type");
+        const engineSelect = byId("studio-suite-llm-engine");
+        const unloadButton = document.querySelector("[data-studio-suite-llm-unload]");
         if (directionSelect) directionSelect.disabled = translationBusy || preloadBusy;
         if (contentTypeSelect) contentTypeSelect.disabled = translationBusy || preloadBusy;
+        if (engineSelect) engineSelect.disabled = translationBusy || preloadBusy;
+        if (unloadButton) unloadButton.disabled = translationBusy || preloadBusy;
         if (queueBusy) {
             const wrap = byId("studio-suite-llm-progress");
             const text = byId("studio-suite-llm-progress-text");
@@ -112,6 +138,7 @@
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
+                    engine: currentEngine(),
                     context_size: 512,
                     keep_warm_seconds: 600,
                     n_gpu_layers: 999,
@@ -153,7 +180,11 @@
                 const payload = await response.json();
                 const wasBusy = queueBusy;
                 queueBusy = Boolean(payload.queue && payload.queue.busy);
-                workerWarm = Boolean(payload.worker && payload.worker.alive);
+                hyMtState = payload.hy_mt || hyMtState;
+                workerWarm = Boolean(
+                    (payload.worker && payload.worker.alive) ||
+                    (payload.hy_mt && payload.hy_mt.alive)
+                );
                 dictionaryState = payload.dictionary || dictionaryState;
                 if (queueBusy) {
                     workerWarm = false;
@@ -194,6 +225,11 @@
         const directionValue = direction && direction.value ? direction.value : "zh_to_en";
         const typeValue = contentType && contentType.value ? contentType.value : "text";
         return `${directionValue}_${typeValue}`;
+    }
+
+    function currentEngine() {
+        const engine = byId("studio-suite-llm-engine");
+        return engine && engine.value ? engine.value : "auto";
     }
 
     function splitPromptParts(text) {
@@ -355,6 +391,7 @@
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     text,
+                    engine: currentEngine(),
                     direction: currentDirection(),
                     translation_mode: currentDirection().endsWith("_text") ? "sentence" : "tags",
                     target_profile: "prompt_studio_bilingual",
@@ -446,6 +483,14 @@
         toolbar.className = "studio-suite-llm-tools";
         const modeGroup = document.createElement("div");
         modeGroup.className = "studio-suite-translate-mode";
+        const engineSelect = document.createElement("select");
+        engineSelect.id = "studio-suite-llm-engine";
+        engineSelect.className = "studio-suite-llm-select";
+        engineSelect.innerHTML = [
+            '<option value="auto">自动（优先 HY-MT）</option>',
+            '<option value="hy_mt">HY-MT CPU（实验）</option>',
+            '<option value="general_llm">通用 LLM</option>',
+        ].join("");
         const directionSelect = document.createElement("select");
         directionSelect.id = "studio-suite-llm-direction";
         directionSelect.className = "studio-suite-llm-select";
@@ -462,10 +507,26 @@
         ].join("");
         const savedDirection = localStorage.getItem(DIRECTION_KEY);
         const savedContentType = localStorage.getItem(CONTENT_TYPE_KEY);
+        const savedEngine = localStorage.getItem(ENGINE_KEY);
+        engineSelect.value = ["auto", "hy_mt", "general_llm"].includes(savedEngine) ? savedEngine : "auto";
         directionSelect.value = ["zh_to_en", "en_to_zh"].includes(savedDirection) ? savedDirection : "zh_to_en";
         contentTypeSelect.value = ["text", "tags"].includes(savedContentType) ? savedContentType : "text";
+        engineSelect.addEventListener("change", async () => {
+            localStorage.setItem(ENGINE_KEY, engineSelect.value);
+            workerWarm = false;
+            try {
+                await fetch("/studio-suite/prompt-studio/llm_unload", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: "{}",
+                });
+            } finally {
+                schedulePreload(50);
+            }
+        });
         directionSelect.addEventListener("change", () => localStorage.setItem(DIRECTION_KEY, directionSelect.value));
         contentTypeSelect.addEventListener("change", () => localStorage.setItem(CONTENT_TYPE_KEY, contentTypeSelect.value));
+        modeGroup.appendChild(engineSelect);
         modeGroup.appendChild(directionSelect);
         modeGroup.appendChild(contentTypeSelect);
         toolbar.appendChild(modeGroup);

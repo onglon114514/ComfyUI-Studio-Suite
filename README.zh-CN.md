@@ -23,6 +23,8 @@ ComfyUI Studio Suite 是一个面向 ComfyUI 的预览版自定义节点包，�
 
 ## 当前推荐路线
 
+HY-MT 轻量 CPU 翻译正在实验适配，部署方式、文件位置和当前限制见 [HY-MT 轻量离线翻译实验说明](docs/HY_MT_EXPERIMENT_zh-CN.md)。
+
 目前测试最充分的路线是：
 
 - 纯文本任务：`Gemma 4 E4B GGUF Q4`

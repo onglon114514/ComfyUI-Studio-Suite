@@ -42,6 +42,8 @@ def should_skip(path, include_large_resources):
     parts = set(rel.parts)
     if parts & EXCLUDE_DIRS:
         return True
+    if path.name.endswith((".local.json", ".local.txt")):
+        return True
     if path.name in EXCLUDE_FILES:
         return True
     if rel.parts[:3] == ("prompt_studio", "storage", "prompt_data") and (
@@ -60,6 +62,7 @@ def should_skip(path, include_large_resources):
         ("runtime", "images"),
         ("runtime", "koboldcpp"),
         ("runtime", "llama.cpp"),
+        ("runtime", "hy_mt"),
         ("runtime", "python_libs"),
     }:
         return True
