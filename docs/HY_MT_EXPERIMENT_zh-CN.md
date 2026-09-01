@@ -22,11 +22,21 @@
 ```text
 ComfyUI-Studio-Suite/
   runtime/hy_mt/llama-server.exe
-  models/hy_mt/Hy-MT1.5-1.8B-1.25bit.gguf
+  models/hy_mt/Hy-MT1.5-1.8B-1.25bit-type43.gguf
   config/hy_mt_runtime.local.json
 ```
 
 发布包不会包含模型、运行时二进制或 `*.local.json`。这些文件需要用户自行放置，或由后续的一键安装器下载。
+
+## 修正官方 GGUF 类型 ID
+
+当前官方 1.25bit GGUF 把 STQ 张量标记为旧类型 ID `42`，公开 PR 的当前 loader 使用 `43`，直接加载会出现张量偏移错误。保留原文件并生成兼容副本：
+
+```powershell
+python scripts/patch_hy_mt_stq_type_id.py "D:\models\Hy-MT1.5-1.8B-1.25bit.gguf"
+```
+
+脚本仅接受已知官方坏文件哈希，要求恰好找到 224 个旧 STQ 张量，并输出 `Hy-MT1.5-1.8B-1.25bit-type43.gguf`；不会原地修改下载文件。
 
 可从示例复制本地配置：
 
@@ -44,3 +54,15 @@ Copy-Item config/hy_mt_runtime.example.json config/hy_mt_runtime.local.json
 HY-MT 1.25bit GGUF 使用 STQ1_0。当前所需支持尚未进入 llama.cpp 稳定主线，Windows x86 AVX2 优化也仍处于实验阶段。因此正式发布前必须完成长时间翻译、队列抢占、进程退出、内存释放和不同 CPU 的兼容性测试。
 
 如果 HY-MT 文件不可用，`自动`模式会回退到现有通用 LLM；显式选择 `HY-MT CPU（实验）`时则会返回明确的缺失错误，不会静默改用其他模型。
+
+## 本机参考性能
+
+测试环境：Intel Core i9-13900HX、Windows、AVX2 实验分支、12 CPU 线程、`ctx=1024`。
+
+- 冷启动并完成首句：约 2.65 秒
+- 模型预热后的短句：约 0.55–0.68 秒
+- Prompt：约 88–108 tokens/s
+- Generation：约 55–60 tokens/s
+- 常驻 RSS：约 575 MB
+
+这些数字仅用于确认实现路线和数量级。其他 CPU、线程数、句子长度和系统负载会改变结果。

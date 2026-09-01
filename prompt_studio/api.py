@@ -1574,6 +1574,7 @@ def register_prompt_studio_routes():
                         "max_tokens": max_tokens,
                         "temperature": min(0.15, temperature),
                         "elapsed_seconds": result["elapsed_seconds"],
+                        "backend_timings": result.get("backend_timings", {}),
                         "hy_mt": result["runtime"],
                     },
                 })

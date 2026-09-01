@@ -63,6 +63,7 @@ def should_skip(path, include_large_resources):
         ("runtime", "koboldcpp"),
         ("runtime", "llama.cpp"),
         ("runtime", "hy_mt"),
+        ("runtime", "logs"),
         ("runtime", "python_libs"),
     }:
         return True

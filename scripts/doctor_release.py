@@ -87,6 +87,7 @@ def check_required_files(report):
         "scripts/build_release_preview.py",
         "scripts/check_node_registry.py",
         "scripts/install_min_llm_model.py",
+        "scripts/patch_hy_mt_stq_type_id.py",
         "scripts/build_local_dictionary_index.py",
         "resources/task_templates/README.md",
         "resources/task_bundles/README.md",

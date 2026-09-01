@@ -15,7 +15,7 @@ if os.name == "nt":
     from ctypes import wintypes
 
 
-DEFAULT_MODEL_NAME = "Hy-MT1.5-1.8B-1.25bit.gguf"
+DEFAULT_MODEL_NAME = "Hy-MT1.5-1.8B-1.25bit-type43.gguf"
 _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
 _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
 
@@ -304,22 +304,22 @@ class HyMtRuntime:
             self.stop()
             raise RuntimeError("HY-MT llama-server startup timed out")
 
-    def _request_completion(self, prompt: str, max_tokens: int, temperature: float) -> str:
+    def _request_completion(self, prompt: str, max_tokens: int, temperature: float) -> tuple[str, dict]:
         config = self._config()
         port = int(config.get("port", 8768) or 8768)
         payload = json.dumps(
             {
-                "prompt": prompt,
-                "n_predict": max(8, min(2048, int(max_tokens))),
+                "model": "hy-mt",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": max(8, min(2048, int(max_tokens))),
                 "temperature": max(0.0, min(1.0, float(temperature))),
                 "top_p": 0.9,
-                "stop": ["</s>", "<|eot_id|>", "<|im_end|>"],
-                "cache_prompt": True,
+                "stream": False,
             },
             ensure_ascii=False,
         ).encode("utf-8")
         request = urllib.request.Request(
-            f"http://127.0.0.1:{port}/completion",
+            f"http://127.0.0.1:{port}/v1/chat/completions",
             data=payload,
             headers={"Content-Type": "application/json"},
             method="POST",
@@ -331,15 +331,18 @@ class HyMtRuntime:
         except urllib.error.HTTPError as error:
             details = error.read().decode("utf-8", errors="replace")[-2000:]
             raise RuntimeError(f"HY-MT HTTP {error.code}: {details}") from error
-        translated = clean_translation_output(result.get("content", "") if isinstance(result, dict) else "")
+        choices = result.get("choices", []) if isinstance(result, dict) else []
+        message = choices[0].get("message", {}) if choices and isinstance(choices[0], dict) else {}
+        translated = clean_translation_output(message.get("content", "") if isinstance(message, dict) else "")
         if not translated:
             raise RuntimeError("HY-MT returned an empty translation")
-        return translated
+        timings = result.get("timings", {}) if isinstance(result, dict) else {}
+        return translated, timings if isinstance(timings, dict) else {}
 
     def translate(self, text: str, direction: str, max_tokens: int = 256, temperature: float = 0.05) -> dict:
         started = time.monotonic()
         self.ensure_started()
-        translated = self._request_completion(
+        translated, backend_timings = self._request_completion(
             build_translation_prompt(text, direction),
             max_tokens=max_tokens,
             temperature=temperature,
@@ -347,6 +350,7 @@ class HyMtRuntime:
         return {
             "translated_text": translated,
             "elapsed_seconds": round(time.monotonic() - started, 3),
+            "backend_timings": backend_timings,
             "runtime": self.status(),
         }
 
