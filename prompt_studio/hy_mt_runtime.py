@@ -4,11 +4,13 @@ import atexit
 import ctypes
 import json
 import os
+import re
 import subprocess
 import threading
 import time
 import urllib.error
 import urllib.request
+from collections import OrderedDict
 from pathlib import Path
 
 if os.name == "nt":
@@ -16,6 +18,7 @@ if os.name == "nt":
 
 
 DEFAULT_MODEL_NAME = "Hy-MT1.5-1.8B-1.25bit-type43.gguf"
+TRANSLATION_CACHE_LIMIT = 512
 _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
 _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
 
@@ -82,7 +85,10 @@ def build_translation_prompt(text: str, direction: str) -> str:
     target = "英语" if str(direction).startswith("zh_to_en") else "中文"
     format_note = ""
     if str(direction).endswith("_tags"):
-        format_note = "保持原有逗号分隔、括号、反斜杠和标签顺序，不要把标签改写成解释性段落。"
+        format_note = (
+            "逐项翻译逗号分隔的标签，保持标签数量、顺序、括号和反斜杠不变；"
+            "已经是目标语言的标签原样复制；只用英文逗号加空格分隔，不要改写成解释性段落。"
+        )
     return (
         f"将以下文本翻译为{target}，注意只需要输出翻译后的结果，不要额外解释。"
         f"{format_note}\n\n{str(text or '').strip()}"
@@ -99,6 +105,56 @@ def clean_translation_output(value: str) -> str:
     return text
 
 
+def translation_needed(text: str, direction: str) -> bool:
+    source = str(text or "").strip()
+    if not source:
+        return False
+    if str(direction).startswith("zh_to_en"):
+        return bool(re.search(r"[\u3400-\u9fff]", source))
+    return bool(re.search(r"[A-Za-z]", source))
+
+
+def split_tag_parts(text: str) -> list[str]:
+    """Split only top-level tag separators, preserving weighted expressions."""
+    source = str(text or "").strip()
+    if not source:
+        return []
+    parts: list[str] = []
+    current: list[str] = []
+    depth = 0
+    escaped = False
+    opening = {"(", "[", "{"}
+    closing = {")", "]", "}"}
+    for char in source:
+        if escaped:
+            current.append(char)
+            escaped = False
+            continue
+        if char == "\\":
+            current.append(char)
+            escaped = True
+            continue
+        if char in opening:
+            depth += 1
+        elif char in closing and depth > 0:
+            depth -= 1
+        if depth == 0 and char in {",", "，", ";", "；", "\n", "\r"}:
+            item = "".join(current).strip()
+            if item:
+                parts.append(item)
+            current = []
+            continue
+        current.append(char)
+    tail = "".join(current).strip()
+    if tail:
+        parts.append(tail)
+    return parts or [source]
+
+
+def normalize_tag_separators(text: str) -> str:
+    return ", ".join(split_tag_parts(text))
+
+
 class HyMtRuntime:
     """Managed CPU-only llama-server for the experimental HY-MT STQ model."""
 
@@ -112,7 +168,27 @@ class HyMtRuntime:
         self.started_at = 0.0
         self.job_handle = None
         self.job_error = ""
+        self.translation_cache: OrderedDict[tuple[str, str, str], str] = OrderedDict()
+        self.cache_lock = threading.Lock()
         atexit.register(self.stop)
+
+    def _cache_key(self, text: str, direction: str) -> tuple[str, str, str]:
+        model_path = str(self.status().get("model_path", "") or "")
+        return model_path, str(direction or "").strip().lower(), str(text or "").strip()
+
+    def _cached_translation(self, key: tuple[str, str, str]) -> str | None:
+        with self.cache_lock:
+            value = self.translation_cache.get(key)
+            if value is not None:
+                self.translation_cache.move_to_end(key)
+            return value
+
+    def _remember_translation(self, key: tuple[str, str, str], value: str) -> None:
+        with self.cache_lock:
+            self.translation_cache[key] = value
+            self.translation_cache.move_to_end(key)
+            while len(self.translation_cache) > TRANSLATION_CACHE_LIMIT:
+                self.translation_cache.popitem(last=False)
 
     def _attach_windows_lifetime_job(self, process: subprocess.Popen) -> None:
         if os.name != "nt":
@@ -341,16 +417,75 @@ class HyMtRuntime:
 
     def translate(self, text: str, direction: str, max_tokens: int = 256, temperature: float = 0.05) -> dict:
         started = time.monotonic()
+        source = str(text or "").strip()
+        is_tags = str(direction).endswith("_tags")
+        if not translation_needed(source, direction):
+            translated = normalize_tag_separators(source) if is_tags else source
+            return {
+                "translated_text": translated,
+                "elapsed_seconds": round(time.monotonic() - started, 3),
+                "backend_timings": {},
+                "cache_hit": False,
+                "skipped_already_target_language": True,
+                "runtime": self.status(),
+            }
+        cache_key = self._cache_key(source, direction)
+        cached = self._cached_translation(cache_key)
+        if cached is not None:
+            return {
+                "translated_text": cached,
+                "elapsed_seconds": round(time.monotonic() - started, 3),
+                "backend_timings": {},
+                "cache_hit": True,
+                "skipped_already_target_language": False,
+                "runtime": self.status(),
+            }
+
+        tag_parts = split_tag_parts(source) if is_tags else []
+        pending_indices = [
+            index for index, part in enumerate(tag_parts)
+            if translation_needed(part, direction)
+        ]
+        request_text = (
+            ", ".join(tag_parts[index] for index in pending_indices)
+            if is_tags
+            else source
+        )
+
         self.ensure_started()
         translated, backend_timings = self._request_completion(
-            build_translation_prompt(text, direction),
+            build_translation_prompt(request_text, direction),
             max_tokens=max_tokens,
             temperature=temperature,
         )
+        if is_tags:
+            translated_parts = split_tag_parts(translated)
+            fallback_requests = 0
+            if len(translated_parts) != len(pending_indices):
+                translated_parts = []
+                for index in pending_indices:
+                    item, _ = self._request_completion(
+                        build_translation_prompt(tag_parts[index], direction),
+                        max_tokens=max(16, min(max_tokens, 64)),
+                        temperature=temperature,
+                    )
+                    translated_parts.append(normalize_tag_separators(item))
+                    fallback_requests += 1
+            combined = list(tag_parts)
+            for index, translated_part in zip(pending_indices, translated_parts):
+                combined[index] = translated_part
+            translated = ", ".join(combined)
+            backend_timings = dict(backend_timings or {})
+            backend_timings["tag_items"] = len(tag_parts)
+            backend_timings["translated_tag_items"] = len(pending_indices)
+            backend_timings["fallback_requests"] = fallback_requests
+        self._remember_translation(cache_key, translated)
         return {
             "translated_text": translated,
             "elapsed_seconds": round(time.monotonic() - started, 3),
             "backend_timings": backend_timings,
+            "cache_hit": False,
+            "skipped_already_target_language": False,
             "runtime": self.status(),
         }
 

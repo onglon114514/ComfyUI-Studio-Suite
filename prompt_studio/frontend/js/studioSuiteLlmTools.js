@@ -413,7 +413,11 @@
                 }
                 throw new Error(payload.error || `HTTP ${response.status}`);
             }
-            workerWarm = true;
+            const runtime = payload.runtime || {};
+            workerWarm = Boolean(
+                payload.engine === "general_llm" ||
+                (runtime.hy_mt && runtime.hy_mt.alive)
+            );
             const translatedText = payload.translated_text || "";
             textarea.value = translatedText;
             dispatchTextChange(textarea);
@@ -424,7 +428,18 @@
                 payload.translation_pairs || (payload.json_result && payload.json_result.translation_pairs) || []
             );
             const dictionaryCount = Array.isArray(payload.dictionary_matches) ? payload.dictionary_matches.length : 0;
-            toast(dictionaryCount ? `翻译完成，词典保护 ${dictionaryCount} 项` : "翻译完成", "success");
+            const skipped = Boolean(
+                payload.skipped_already_target_language ||
+                runtime.skipped_already_target_language
+            );
+            const cacheHit = Boolean(payload.cache_hit || runtime.cache_hit);
+            if (skipped) {
+                toast("内容已是目标语言，未重复翻译", "success");
+            } else if (cacheHit) {
+                toast("已使用翻译缓存", "success");
+            } else {
+                toast(dictionaryCount ? "翻译完成，词典保护 " + dictionaryCount + " 项" : "翻译完成", "success");
+            }
         } catch (error) {
             toast(`LLM 翻译失败：${error.message || error}`, "error");
         } finally {

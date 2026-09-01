@@ -33,7 +33,7 @@ except Exception:
 
 from .model_info import build_model_payload, save_model_notes
 from .local_dictionary import LocalDanbooruDictionary
-from .hy_mt_runtime import HyMtRuntime
+from .hy_mt_runtime import HyMtRuntime, normalize_tag_separators, translation_needed
 
 
 NODE_DIR = Path(__file__).resolve().parent
@@ -1507,6 +1507,31 @@ def register_prompt_studio_routes():
 
         direction = str(data.get("direction", "") or "zh_to_en_tags").strip()
         protected_text, dictionary_matches = _LOCAL_DICTIONARY.protect_text(text, direction)
+        if not translation_needed(protected_text, direction):
+            translated = (
+                normalize_tag_separators(protected_text)
+                if direction.endswith("_tags")
+                else protected_text
+            )
+            return web.json_response({
+                "success": True,
+                "translated_text": translated,
+                "source_text": text,
+                "translation_pairs": dictionary_matches,
+                "dictionary_matches": dictionary_matches,
+                "raw_text": translated,
+                "json_result": {},
+                "backend_mode": "language_passthrough",
+                "backend_profile": "",
+                "engine": "passthrough",
+                "cache_hit": False,
+                "skipped_already_target_language": True,
+                "runtime": {
+                    "cache_hit": False,
+                    "skipped_already_target_language": True,
+                    "elapsed_seconds": 0.0,
+                },
+            })
         backend_profile = str(data.get("backend_profile", "") or "").strip() or _default_prompt_studio_translate_profile()
         dynamic_runtime = bool(data.get("dynamic_runtime", True))
         context_size = (
@@ -1566,6 +1591,10 @@ def register_prompt_studio_routes():
                     "backend_mode": "hy_mt_cpu_server",
                     "backend_profile": "hy_mt_1_8b_stq1_0",
                     "engine": "hy_mt",
+                    "cache_hit": bool(result.get("cache_hit", False)),
+                    "skipped_already_target_language": bool(
+                        result.get("skipped_already_target_language", False)
+                    ),
                     "runtime": {
                         "dynamic_runtime": dynamic_runtime,
                         "keep_warm": keep_warm,
@@ -1575,6 +1604,10 @@ def register_prompt_studio_routes():
                         "temperature": min(0.15, temperature),
                         "elapsed_seconds": result["elapsed_seconds"],
                         "backend_timings": result.get("backend_timings", {}),
+                        "cache_hit": bool(result.get("cache_hit", False)),
+                        "skipped_already_target_language": bool(
+                            result.get("skipped_already_target_language", False)
+                        ),
                         "hy_mt": result["runtime"],
                     },
                 })
