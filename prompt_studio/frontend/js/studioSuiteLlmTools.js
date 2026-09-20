@@ -1,3 +1,5 @@
+import { annotationKey, sanitizeBilingualState, BILINGUAL_LIMIT } from "./bilingualState.js";
+
 (function () {
     "use strict";
 
@@ -16,9 +18,53 @@
     const DIRECTION_KEY = "studio_suite_translate_direction";
     const CONTENT_TYPE_KEY = "studio_suite_translate_content_type";
     const ENGINE_KEY = "studio_suite_translate_engine";
+    const REFERENCE_LANGUAGE_KEY = "studio_suite_reference_language";
+    let annotations = { positive: new Map(), negative: new Map() };
+    let hostSession = null;
+    let annotationFrame = null;
+    let comparisonController = null;
+    let annotationPublishScheduled = false;
+
+    function publishAnnotations() {
+        if (annotationPublishScheduled || !hostSession) return;
+        annotationPublishScheduled = true;
+        queueMicrotask(() => {
+            annotationPublishScheduled = false;
+            const state = sanitizeBilingualState({
+                positive: [...annotations.positive.values()], negative: [...annotations.negative.values()],
+            });
+            window.parent.postMessage({ handel: "studioSuiteBilingualUpdate", randomid: hostSession, state }, window.location.origin);
+        });
+    }
+
+    function rememberAnnotation(kind, text, local, lang) {
+        const key = annotationKey(text);
+        if (!key || !local || key === annotationKey(local)) return;
+        const map = annotations[kind];
+        map.delete(key);
+        map.set(key, { text, local, lang });
+        while (map.size > BILINGUAL_LIMIT) map.delete(map.keys().next().value);
+    }
+
+    window.addEventListener("message", (event) => {
+        if (event.source !== window.parent || event.origin !== window.location.origin) return;
+        const data = event.data;
+        if (!["openWeiLinPrompt", "responeseWeiLinPrompt"].includes(data?.handel) || !data.randomid) return;
+        const state = sanitizeBilingualState(data.studio_suite_bilingual);
+        hostSession = data.randomid;
+        annotations = {
+            positive: new Map(state.positive.map(item => [annotationKey(item.text), item])),
+            negative: new Map(state.negative.map(item => [annotationKey(item.text), item])),
+        };
+        scheduleAnnotationRefresh();
+    });
 
     function byId(id) {
         return document.getElementById(id);
+    }
+
+    function setAttributeIfChanged(element, name, value) {
+        if (element.getAttribute(name) !== value) element.setAttribute(name, value);
     }
 
     function toast(message, type) {
@@ -38,30 +84,34 @@
         const text = byId("studio-suite-llm-progress-text");
         if (!wrap || !text) return;
         if (!active) {
-            wrap.classList.remove("is-active");
-            text.textContent = "空闲";
+            if (wrap.classList.contains("is-active")) wrap.classList.remove("is-active");
+            if (text.textContent !== "空闲") text.textContent = "空闲";
             return;
         }
-        wrap.classList.add("is-active");
+        if (!wrap.classList.contains("is-active")) wrap.classList.add("is-active");
         const elapsed = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
-        text.textContent = `${label || "LLM 推理中"} ${elapsed}s`;
+        const nextText = `${label || "LLM 推理中"} ${elapsed}s`;
+        if (text.textContent !== nextText) text.textContent = nextText;
     }
 
     function setStatusChip(name, label, state) {
         const chip = document.querySelector(`[data-studio-suite-status="${name}"]`);
         if (!chip) return;
-        chip.textContent = label;
-        chip.dataset.state = state || "idle";
+        if (chip.textContent !== label) chip.textContent = label;
+        const nextState = state || "idle";
+        if (chip.dataset.state !== nextState) chip.dataset.state = nextState;
     }
 
     function updateRuntimeStatus() {
         const engineSelect = byId("studio-suite-llm-engine");
         const hyMtOption = engineSelect && engineSelect.querySelector('option[value="hy_mt"]');
         if (hyMtOption && hyMtState.reason !== "not_checked") {
-            hyMtOption.disabled = !hyMtState.available;
-            hyMtOption.textContent = hyMtState.available
+            const disabled = !hyMtState.available;
+            const label = hyMtState.available
                 ? "HY-MT CPU（实验）"
                 : "HY-MT CPU（未安装）";
+            if (hyMtOption.disabled !== disabled) hyMtOption.disabled = disabled;
+            if (hyMtOption.textContent !== label) hyMtOption.textContent = label;
             if (!hyMtState.available && engineSelect.value === "hy_mt") {
                 engineSelect.value = "auto";
                 localStorage.setItem(ENGINE_KEY, "auto");
@@ -98,19 +148,31 @@
 
     function updateLlmControls() {
         const disabled = queueBusy || translationBusy || preloadBusy;
-        document.querySelectorAll("[data-studio-suite-llm-translate]").forEach((button) => {
-            button.disabled = disabled;
+        document.querySelectorAll(".physton-prompt .extend-btn-item:has(.icon-svg-translate), .physton-prompt .translate-to-local").forEach(button => {
+            button.classList.toggle("studio-suite-reference-blocked", disabled);
+            setAttributeIfChanged(button, "aria-disabled", String(disabled));
+            const title = disabled ? "队列或翻译正在使用资源，请稍后" : "生成下方对照，不改上方提示词（词典优先，Hy-MT 补缺）";
+            if (button.title !== title) button.title = title;
+        });
+        document.querySelectorAll("[data-studio-suite-llm-translate], [data-studio-suite-reference]").forEach((button) => {
+            if (button.disabled !== disabled) button.disabled = disabled;
             button.classList.toggle("is-queue-blocked", queueBusy);
-            button.title = queueBusy ? "ComfyUI 有运行中或等待中的任务，翻译已暂停" : "";
+            const title = queueBusy ? "ComfyUI 有运行中或等待中的任务，翻译已暂停" : "";
+            if (button.title !== title) button.title = title;
         });
         const directionSelect = byId("studio-suite-llm-direction");
         const contentTypeSelect = byId("studio-suite-llm-content-type");
         const engineSelect = byId("studio-suite-llm-engine");
         const unloadButton = document.querySelector("[data-studio-suite-llm-unload]");
-        if (directionSelect) directionSelect.disabled = translationBusy || preloadBusy;
-        if (contentTypeSelect) contentTypeSelect.disabled = translationBusy || preloadBusy;
-        if (engineSelect) engineSelect.disabled = translationBusy || preloadBusy;
-        if (unloadButton) unloadButton.disabled = translationBusy || preloadBusy;
+        const controlDisabled = translationBusy || preloadBusy;
+        if (directionSelect && directionSelect.disabled !== controlDisabled) directionSelect.disabled = controlDisabled;
+        if (contentTypeSelect && contentTypeSelect.disabled !== controlDisabled) contentTypeSelect.disabled = controlDisabled;
+        if (engineSelect && engineSelect.disabled !== controlDisabled) engineSelect.disabled = controlDisabled;
+        const referenceLanguage = byId("studio-suite-reference-language");
+        if (referenceLanguage && referenceLanguage.disabled !== controlDisabled) referenceLanguage.disabled = controlDisabled;
+        const cancelButton = byId("studio-suite-reference-cancel");
+        if (cancelButton && cancelButton.hidden !== !comparisonController) cancelButton.hidden = !comparisonController;
+        if (unloadButton && unloadButton.disabled !== controlDisabled) unloadButton.disabled = controlDisabled;
         if (queueBusy) {
             const wrap = byId("studio-suite-llm-progress");
             const text = byId("studio-suite-llm-progress-text");
@@ -266,11 +328,7 @@
     }
 
     function normalizePromptPart(text) {
-        return String(text || "")
-            .replace(/\s+/g, " ")
-            .replace(/\s*,\s*/g, ", ")
-            .trim()
-            .toLowerCase();
+        return annotationKey(text);
     }
 
     function buildPairMap(sourceText, translatedText, pairs) {
@@ -286,7 +344,7 @@
 
         const sourceParts = splitPromptParts(sourceText);
         const translatedParts = splitPromptParts(translatedText);
-        const count = Math.min(sourceParts.length, translatedParts.length);
+        const count = sourceParts.length === translatedParts.length ? sourceParts.length : 0;
         for (let i = 0; i < count; i += 1) {
             const source = sourceParts[i];
             const translated = translatedParts[i];
@@ -326,6 +384,7 @@
                 tagEl.appendChild(wrap);
             }
         }
+        wrap.classList.add("studio-suite-local-language");
         let local = wrap.querySelector(".local-language");
         if (!local) {
             local = document.createElement("span");
@@ -335,35 +394,131 @@
         return local;
     }
 
-    function applyLocalLanguageToPromptTags(kind, sourceText, translatedText, pairs) {
+    function scheduleLocalLanguageSync(kind, sourceText, translatedText, pairs) {
         const map = buildPairMap(sourceText, translatedText, pairs);
-        const translatedParts = splitPromptParts(translatedText);
-        const sourceParts = splitPromptParts(sourceText);
-        const roots = promptTagRoots(kind);
-        for (const root of roots) {
-            const tags = Array.from(root.querySelectorAll(".prompt-tags-list .prompt-tag"));
-            tags.forEach((tagEl, index) => {
-                const tagText = readPromptTagText(tagEl);
-                if (!tagText) return;
-                const localText =
-                    map.get(normalizePromptPart(tagText)) ||
-                    (normalizePromptPart(tagText) === normalizePromptPart(translatedParts[index]) ? sourceParts[index] : "") ||
-                    "";
-                if (!localText || normalizePromptPart(localText) === normalizePromptPart(tagText)) return;
-                const local = ensureLocalLanguage(tagEl);
-                local.textContent = localText;
-                tagEl.setAttribute("data-studio-suite-local-source", localText);
-            });
+        map.set(annotationKey(translatedText), sourceText);
+        for (const [text, local] of map) {
+            rememberAnnotation(kind, text, local, /[\u3400-\u9fff]/.test(local) ? "zh" : "en");
         }
+        publishAnnotations();
+        scheduleAnnotationRefresh();
     }
 
-    function scheduleLocalLanguageSync(kind, sourceText, translatedText, pairs) {
-        [80, 250, 700].forEach((delay) => {
-            window.setTimeout(() => applyLocalLanguageToPromptTags(kind, sourceText, translatedText, pairs), delay);
+    function scheduleAnnotationRefresh() {
+        if (annotationFrame != null) return;
+        annotationFrame = requestAnimationFrame(() => {
+            annotationFrame = null;
+            for (const kind of ["positive", "negative"]) {
+                for (const root of promptTagRoots(kind)) {
+                    for (const tag of root.querySelectorAll(".prompt-tags-list .prompt-tag")) {
+                        const entry = annotations[kind].get(annotationKey(readPromptTagText(tag)));
+                        if (!entry) continue;
+                        const local = ensureLocalLanguage(tag);
+                        if (local.textContent !== entry.local) local.textContent = entry.local;
+                        if (local.title !== entry.local) local.title = entry.local;
+                    }
+                }
+            }
         });
     }
 
+    async function compareText(kind, singleTag) {
+        if (queueBusy || translationBusy || preloadBusy) return;
+        const language = byId("studio-suite-reference-language")?.value || "zh";
+        const textarea = currentTextArea(kind);
+        const snapshot = textarea?.value || "";
+        const snapshotKey = JSON.stringify(splitPromptParts(snapshot).map(annotationKey));
+        // The legacy tag view is debounced; the textarea is the current source of truth.
+        const values = singleTag ? [readPromptTagText(singleTag)] : splitPromptParts(snapshot);
+        const terms = [...new Set(values.filter(text => text && !/^\s*<(lora|lyco|embedding):/i.test(text)))];
+        if (!terms.length) { toast("没有可生成对照的关键词", "info"); return; }
+        if (terms.length > BILINGUAL_LIMIT) { toast(`请分段处理，每次最多 ${BILINGUAL_LIMIT} 个关键词`, "warning"); return; }
+        const missing = terms.filter(text => {
+            const cached = annotations[kind].get(annotationKey(text));
+            return (!cached || cached.lang !== language) && (language === "zh" ? /[A-Za-z]/.test(text) : /[\u3400-\u9fff]/.test(text));
+        });
+        if (!missing.length) { scheduleAnnotationRefresh(); toast("已保留现有对照，无需重复翻译", "success"); return; }
+        const controller = new AbortController();
+        comparisonController = controller;
+        translationBusy = true;
+        updateLlmControls();
+        const started = Date.now();
+        let completed = 0;
+        let ambiguousCount = 0;
+        let failure = null;
+        const checkCurrent = () => {
+            if (controller.signal.aborted) throw new DOMException("Cancelled", "AbortError");
+            if (JSON.stringify(splitPromptParts(textarea.value).map(annotationKey)) !== snapshotKey) throw new Error("提示词已改变，对照已停止；不会覆盖你的编辑");
+        };
+        const save = (text, local) => {
+            checkCurrent();
+            rememberAnnotation(kind, text, local, language);
+            completed++;
+            publishAnnotations();
+            scheduleAnnotationRefresh();
+            setProgress(true, started, `生成对照 ${completed}/${missing.length}`);
+        };
+        try {
+            setProgress(true, started, "查询本地译名");
+            let matches = [];
+            let ambiguous = new Set();
+            try {
+                const response = await fetch("/studio-suite/prompt-studio/glossary_lookup", {
+                    method: "POST", headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ terms: missing, language }), signal: controller.signal,
+                });
+                if (response.ok) {
+                    const data = await response.json();
+                    if (Array.isArray(data.matches)) matches = data.matches;
+                    if (Array.isArray(data.ambiguous)) ambiguous = new Set(data.ambiguous.map(annotationKey));
+                }
+            } catch (error) { if (controller.signal.aborted) throw error; }
+            const known = new Map(matches.filter(item => item && typeof item.text === "string" && typeof item.local === "string" && item.local.trim()).map(item => [annotationKey(item.text), item.local]));
+            for (const text of missing) {
+                checkCurrent();
+                if (ambiguous.has(annotationKey(text))) { ambiguousCount++; continue; }
+                const local = known.get(annotationKey(text));
+                if (local) { save(text, local); continue; }
+                const direction = language === "zh" ? "en_to_zh_text" : "zh_to_en_text";
+                const response = await fetch(API_URL, {
+                    method: "POST", headers: { "Content-Type": "application/json" }, signal: controller.signal,
+                    body: JSON.stringify({ text, direction, engine: currentEngine(), translation_mode: "sentence", target_profile: "prompt_studio_bilingual", dynamic_runtime: true, keep_warm: true, keep_warm_seconds: 600 }),
+                });
+                const payload = await response.json();
+                if (response.status === 409 || payload.error === "comfy_queue_busy") {
+                    queueBusy = true;
+                    throw new Error("跑图队列已启动，对照已暂停");
+                }
+                if (!response.ok || !payload.success || !payload.translated_text) throw new Error(payload.error || `HTTP ${response.status}`);
+                save(text, payload.translated_text.trim());
+            }
+        } catch (error) { failure = error; }
+        finally {
+            comparisonController = null;
+            translationBusy = false;
+            updateLlmControls();
+        }
+        if (failure) toast(failure.name === "AbortError" ? "已取消；已完成的对照已保留" : `对照未全部完成：${failure.message}`, "warning");
+        else if (ambiguousCount) toast(`已完成 ${completed} 项；${ambiguousCount} 个多义名称请在词典库确认，未自动猜测`, "warning");
+        else toast(`对照完成 ${completed} 项，上方提示词未改动`, "success");
+    }
+
+    // Capture the retained A/B controls before their obsolete translator runs.
+    document.addEventListener("click", (event) => {
+        const target = event.target instanceof Element ? event.target : event.target?.parentElement;
+        const button = target?.closest(".extend-btn-item, .translate-to-local");
+        if (!button || (!button.matches(".translate-to-local") && !button.querySelector(".icon-svg-translate"))) return;
+        const root = button.closest(".physton-prompt")?.querySelector(".prompt-tags");
+        if (!root) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        const roots = [...document.querySelectorAll(".physton-prompt .prompt-tags")];
+        const kind = roots.indexOf(root) === 1 ? "negative" : "positive";
+        compareText(kind, button.closest(".prompt-tag"));
+    }, true);
+
     async function translateText(kind) {
+        if (translationBusy || preloadBusy) return;
         if (queueBusy) {
             toast("跑图队列占用中，翻译已暂停", "warning");
             return;
@@ -419,6 +574,10 @@
                 (runtime.hy_mt && runtime.hy_mt.alive)
             );
             const translatedText = payload.translated_text || "";
+            if (!translatedText || textarea.value.trim() !== text) {
+                toast("提示词已改变或翻译结果为空，未覆盖原文", "warning");
+                return;
+            }
             textarea.value = translatedText;
             dispatchTextChange(textarea);
             scheduleLocalLanguageSync(
@@ -547,6 +706,35 @@
         toolbar.appendChild(modeGroup);
         toolbar.appendChild(makeButton("positive", "翻译正向"));
         toolbar.appendChild(makeButton("negative", "翻译反向"));
+        const referenceGroup = document.createElement("div");
+        referenceGroup.className = "studio-suite-reference-tools";
+        referenceGroup.title = "查看下方对照，不改上方提示词；本地词典优先，缺词使用当前翻译引擎";
+        const referenceLanguage = document.createElement("select");
+        referenceLanguage.id = "studio-suite-reference-language";
+        referenceLanguage.className = "studio-suite-llm-select";
+        referenceLanguage.setAttribute("aria-label", "对照语言");
+        referenceLanguage.innerHTML = '<option value="zh">中文对照</option><option value="en">English 对照</option>';
+        referenceLanguage.value = localStorage.getItem(REFERENCE_LANGUAGE_KEY) === "en" ? "en" : "zh";
+        referenceLanguage.addEventListener("change", () => localStorage.setItem(REFERENCE_LANGUAGE_KEY, referenceLanguage.value));
+        referenceGroup.appendChild(referenceLanguage);
+        for (const [kind, label] of [["positive", "正向对照"], ["negative", "反向对照"]]) {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "studio-suite-llm-btn studio-suite-llm-btn-muted";
+            button.dataset.studioSuiteReference = kind;
+            button.textContent = label;
+            button.addEventListener("click", () => compareText(kind));
+            referenceGroup.appendChild(button);
+        }
+        const cancel = document.createElement("button");
+        cancel.id = "studio-suite-reference-cancel";
+        cancel.type = "button";
+        cancel.hidden = true;
+        cancel.className = "studio-suite-llm-btn studio-suite-llm-btn-muted";
+        cancel.textContent = "取消对照";
+        cancel.addEventListener("click", () => comparisonController?.abort());
+        referenceGroup.appendChild(cancel);
+        toolbar.appendChild(referenceGroup);
         const unloadButton = document.createElement("button");
         unloadButton.type = "button";
         unloadButton.className = "studio-suite-llm-btn studio-suite-llm-btn-muted";
@@ -597,11 +785,18 @@
         hideLegacyAiEntrypoints(document);
         if (window.__studioSuiteLegacyUiObserver) return;
         window.__studioSuiteLegacyUiObserver = new MutationObserver((mutations) => {
+            let tagsChanged = false;
             for (const mutation of mutations) {
+                const target = mutation.target.nodeType === 1 ? mutation.target : mutation.target.parentElement;
+                if (target?.closest(".studio-suite-local-language")) continue;
+                if (target?.closest(".prompt-tags-list")) tagsChanged = true;
                 mutation.addedNodes.forEach((node) => {
-                    if (node.nodeType === 1) hideLegacyAiEntrypoints(node);
+                    if (node.nodeType !== 1) return;
+                    hideLegacyAiEntrypoints(node);
+                    if (node.matches(".prompt-tags, .prompt-tags-list, .prompt-tag") || node.querySelector(".prompt-tags-list")) tagsChanged = true;
                 });
             }
+            if (tagsChanged) scheduleAnnotationRefresh();
         });
         window.__studioSuiteLegacyUiObserver.observe(document.body, {
             childList: true,
@@ -614,6 +809,17 @@
         const style = document.createElement("style");
         style.id = "studio-suite-llm-tools-style";
         style.textContent = `
+            html { scroll-behavior: auto !important; }
+            body, body * { scroll-behavior: auto !important; }
+            .physton-prompt *, .common-popup-main *, .topBar *, #newbie-xml-wizard * {
+                animation: none !important;
+                transition: none !important;
+            }
+            body *, body *::before, body *::after { animation: none !important; transition: none !important; }
+            .studio-suite-reference-blocked { opacity: 0.45 !important; cursor: not-allowed !important; }
+            .physton-prompt .hover-scale-120:hover, .physton-prompt .hover-scale-140:hover,
+            .topBar button:hover { transform: none !important; }
+            .studio-suite-reference-tools { display: inline-flex; align-items: center; gap: 5px; flex-wrap: wrap; border-left: 1px solid #555; padding-left: 8px; }
             .studio-suite-llm-tools {
                 display: flex;
                 align-items: center;
@@ -745,14 +951,10 @@
                 position: absolute;
                 top: 0;
                 bottom: 0;
-                width: 38%;
                 border-radius: inherit;
-                background: linear-gradient(90deg, transparent, #a7f3c3, transparent);
-                animation: studio-suite-llm-progress-sweep 1.05s infinite ease-in-out;
-            }
-            @keyframes studio-suite-llm-progress-sweep {
-                0% { left: -45%; }
-                100% { left: 110%; }
+                left: 0;
+                width: 100%;
+                background: #a7f3c3;
             }
             .physton-prompt .prompt-tags .prompt-tags-list .prompt-tag {
                 align-items: flex-start !important;
@@ -799,6 +1001,13 @@
             }
             .physton-prompt .prompt-tags .prompt-tags-list .prompt-tag .prompt-local-language.studio-suite-local-language {
                 display: flex !important;
+                width: auto !important;
+                max-width: 32em !important;
+            }
+            .physton-prompt .prompt-tags .prompt-tags-list .prompt-tag .studio-suite-local-language .local-language {
+                white-space: normal !important;
+                overflow-wrap: anywhere !important;
+                text-overflow: clip !important;
             }
             .physton-prompt .group-tabs .group-body .group-main .sub-group-main .group-tags .tag-item {
                 display: inline-flex !important;
@@ -833,6 +1042,7 @@
         installStyle();
         installToolbar();
         installLegacyUiObserver();
+        scheduleAnnotationRefresh();
         startQueueMonitor();
     }
 
@@ -842,4 +1052,11 @@
         boot();
     }
     window.addEventListener("load", boot);
+    window.addEventListener("pagehide", () => {
+        comparisonController?.abort();
+        clearTimeout(preloadTimer);
+        clearTimeout(statusPollTimer);
+        if (annotationFrame != null) cancelAnimationFrame(annotationFrame);
+        window.__studioSuiteLegacyUiObserver?.disconnect();
+    });
 })();

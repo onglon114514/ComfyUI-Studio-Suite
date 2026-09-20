@@ -67,6 +67,24 @@
 
     ready(init);
 
+    // The library must target the current field, never overwrite the XML document.
+    window.studioSuiteXmlEditor = Object.freeze({
+        current() {
+            return { active: state.modeOpen, editing: Boolean(state.editorTarget), label: state.editorTarget ? editorLabelLine() : "" };
+        },
+        insertTag(tag) {
+            if (!state.modeOpen || !state.editorTarget || state.editorComposing) return false;
+            const input = state.root.querySelector("[data-editor-input]");
+            if (!input || typeof tag !== "string" || !tag.trim()) return false;
+            const value = tag.trim().replace(/\\?([()])/g, "\\$1");
+            const prefix = state.editorDraft.trimEnd();
+            setEditorDraft(prefix + (prefix && !/[,，\n]$/.test(prefix) ? ", " : "") + value + ", ");
+            syncDraftToBridge();
+            commitEditorDraft();
+            return true;
+        },
+    });
+
     function init() {
         state.root = document.getElementById(ROOT_ID);
         if (!state.root) {

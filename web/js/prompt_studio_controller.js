@@ -1,3 +1,5 @@
+import { BILINGUAL_PROPERTY, sanitizeBilingualState } from "/studio-suite/prompt-studio/ui/js/bilingualState.js";
+
 const WINDOW_KEYS = {
     randomId: "weilin_prompt_randomid",
     theme: "weilin_prompt_theme",
@@ -142,6 +144,7 @@ class LegacyPromptStudioController {
             randomid: this.randomId,
             type: "prompt",
             nodeName: legacyPromptNodeName(this.node),
+            studio_suite_bilingual: sanitizeBilingualState(this.node?.properties?.[BILINGUAL_PROPERTY]),
         }, window.location.origin);
     }
 
@@ -206,6 +209,17 @@ class LegacyPromptStudioController {
                     if (this.fields.negative) syncWidgetValue(this.node, this.fields.negative.widget, safePromptText(data.n_value));
                 }
                 break;
+            case "studioSuiteBilingualUpdate":
+                if (this.node && this.fields) {
+                    const state = sanitizeBilingualState(data.state);
+                    this.node.properties ||= {};
+                    if (JSON.stringify(this.node.properties[BILINGUAL_PROPERTY]) !== JSON.stringify(state)) {
+                        this.node.properties[BILINGUAL_PROPERTY] = state;
+                        this.node.graph?.change?.();
+                        this.node.setDirtyCanvas?.(true, false);
+                    }
+                }
+                break;
             case "closeWeilinPromptBox":
                 this.close();
                 break;
@@ -241,7 +255,7 @@ class LegacyPromptStudioController {
         const style = document.createElement("style");
         style.textContent = `
             .studio-suite-prompt-overlay { position: fixed; inset: 0; z-index: 99999; background: rgba(0,0,0,0.62); display: none; align-items: center; justify-content: center; }
-            .studio-suite-prompt-modal { width: 92vw; height: 92vh; max-width: 1600px; max-height: 960px; min-width: 980px; min-height: 680px; border-radius: 12px; overflow: hidden; box-shadow: 0 24px 70px rgba(0,0,0,0.45); background: #111; }
+            .studio-suite-prompt-modal { width: 92vw; height: 92vh; max-width: 1600px; max-height: 960px; min-width: min(980px, 92vw); min-height: min(680px, 92vh); border-radius: 12px; overflow: hidden; box-shadow: 0 24px 70px rgba(0,0,0,0.45); background: #111; }
             .studio-suite-prompt-iframe { width: 100%; height: 100%; border: 0; display: block; background: #111; }
             body.studio-suite-prompt-canvas-paused #graph-canvas-container { visibility: hidden !important; }
         `;

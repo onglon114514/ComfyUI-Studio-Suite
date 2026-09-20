@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import csv
 import json
 import re
 import sqlite3
+import threading
 import unicodedata
 from contextlib import closing
 from pathlib import Path
@@ -33,6 +35,70 @@ class LocalDanbooruDictionary:
         self.index_path = self.cache_dir / "danbooru_character_aliases.sqlite3"
         self._manual_signature: tuple[int, int] | None = None
         self._manual: dict[str, dict] = {}
+        self._glossary_signature = None
+        self._glossary = {"zh": {}, "en": {}}
+        self._glossary_lock = threading.Lock()
+
+    def glossary_lookup(self, terms: list[str], language: str = "zh", *, include_characters: bool = True) -> dict:
+        """Exact bilingual lookups; never send a complete tag table to the UI."""
+        root = self.cache_dir.parent / "local_complete_tags"
+        files = sorted(root.glob("*.csv"))
+        signature = []
+        for path in files:
+            try:
+                stat = path.stat()
+                signature.append((str(path), stat.st_mtime_ns, stat.st_size))
+            except OSError:
+                continue
+        signature = tuple(signature)
+        with self._glossary_lock:
+            if signature != self._glossary_signature:
+                tables = {"zh": {}, "en": {}}
+                for path, _, size in signature:
+                    if size > 16 * 1024 * 1024:
+                        continue
+                    try:
+                        source = Path(path).read_text(encoding="utf-8-sig")
+                    except UnicodeError:
+                        try:
+                            source = Path(path).read_text(encoding="gb18030")
+                        except (OSError, UnicodeError):
+                            continue
+                    except OSError:
+                        continue
+                    try:
+                        rows = list(csv.reader(source.splitlines()))
+                    except csv.Error:
+                        continue
+                    for row in rows:
+                        # Co-occurrence/count CSVs are NOT translation dictionaries.
+                        if len(row) != 2 or not re.search(r"[\u3400-\u9fff]", row[1]):
+                            continue
+                        en, zh = (value.strip() for value in row)
+                        if not en or not zh or len(en) > 8192 or len(zh) > 8192:
+                            continue
+                        if len(tables["zh"]) >= 150000:
+                            break
+                        tables["zh"][_normalize(en)] = (zh, Path(path).name)
+                        tables["en"].setdefault(_normalize(zh), (en, Path(path).name))
+                self._glossary = tables
+                self._glossary_signature = signature
+            glossary = self._glossary[language]
+        try:
+            characters = self.lookup_many(terms) if include_characters else {}
+        except (OSError, ValueError, sqlite3.Error):
+            characters = {}
+        matches = []
+        for text in terms:
+            key = _normalize(text)
+            character = characters.get(key)
+            local = (character.get("display_zh") if language == "zh" else character.get("canonical")) if character else ""
+            source = "character_alias" if local else ""
+            if not local and key in glossary:
+                local, source = glossary[key]
+            if local and _normalize(local) != key:
+                matches.append({"text": text, "local": local, "source": source})
+        return {"matches": matches, "available_entries": len(glossary)}
 
     def _load_manual(self) -> dict[str, dict]:
         if not self.manual_path.exists():
