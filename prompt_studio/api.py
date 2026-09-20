@@ -35,6 +35,7 @@ except Exception:
 
 from .model_info import build_model_payload, save_model_notes
 from .local_dictionary import LocalDanbooruDictionary
+from .openai_server import register_openai_compat_routes
 from .tag_library import TagLibrary
 from .hy_mt_runtime import HyMtRuntime, normalize_tag_separators, translation_needed
 
@@ -759,6 +760,24 @@ def _unload_llm_translate_backend():
         return {"status": "failed", "error": str(error)}
 
 
+def _unload_llm_translate_backend_if_loaded():
+    """Queue-guard variant: only unload when a model is actually resident, so an
+    idle or externally-attached backend is never disturbed by queue submissions."""
+    backend = _LLM_TRANSLATE_BACKEND
+    if backend is None:
+        return {"status": "idle"}
+    try:
+        if backend.is_inprocess_provider:
+            if backend.inprocess_model is not None:
+                return _unload_llm_translate_backend()
+            return {"status": "idle"}
+        if backend._is_managed_process_alive():
+            return _unload_llm_translate_backend()
+        return {"status": "idle"}
+    except Exception as error:
+        return {"status": "failed", "error": str(error)}
+
+
 def _prompt_studio_queue_state() -> dict:
     prompt_server = getattr(PromptServer, "instance", None)
     prompt_queue = getattr(prompt_server, "prompt_queue", None)
@@ -1384,11 +1403,14 @@ def register_prompt_studio_routes():
     if not _PROMPT_STUDIO_PROMPT_GUARD_REGISTERED:
         def release_prompt_studio_llm_before_queue(json_data):
             # This hook runs before ComfyUI accepts a workflow, so drawing never
-            # races a resident Prompt Studio model for GPU/RAM.
+            # races a resident Prompt Studio model for GPU/RAM. The shared
+            # ManagedBackend (which the local OpenAI-compatible server also uses)
+            # follows the same rule: unload it when a model is actually loaded.
             if _prompt_studio_worker_state()["alive"]:
                 _stop_prompt_studio_private_worker()
             if _HY_MT_RUNTIME.status()["alive"]:
                 _HY_MT_RUNTIME.stop()
+            _unload_llm_translate_backend_if_loaded()
             return json_data
 
         prompt_server.add_on_prompt_handler(release_prompt_studio_llm_before_queue)
@@ -2348,6 +2370,14 @@ def register_prompt_studio_routes():
     @routes.get("/weilin/physton_prompt/get_extra_networks")
     async def prompt_studio_get_extra_networks(request):
         return web.Response(status=200, text=_extra_networks_response_text(), content_type="application/json")
+
+    try:
+        # Local OpenAI-compatible surface (/studio-suite/llm/v1/* and, when
+        # unclaimed, bare /v1/*). Cheap and unconditional; the enabled flag is
+        # enforced per request inside the handlers.
+        register_openai_compat_routes(routes, package_dir=PACKAGE_DIR)
+    except Exception as error:
+        print(f"[Prompt Studio] OpenAI-compatible server routes not registered: {error}")
 
     ROUTES_REGISTERED = True
 
