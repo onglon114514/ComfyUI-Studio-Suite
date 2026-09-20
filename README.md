@@ -18,6 +18,7 @@ This repository is intended for early testing and integration. The core workflow
 - Folder-based queue helpers for image/text batch workflows
 - XY matrix testing for LoRA files, LoRA strength, sampler/scheduler, FreeU, and generic node inputs
 - Prompt Studio editor with bundled autocomplete / group-tag storage
+- Optional disk-backed public dictionary: paged lookup, translations and related tags, separate from personal quick tags. [Setup guide (Chinese)](docs/PROMPT_STUDIO_LIBRARY_zh-CN.md)
 - Optional Prompt Studio LLM translation buttons through the Task Agent local backend
 - Fill / crop / resize image helper nodes
 

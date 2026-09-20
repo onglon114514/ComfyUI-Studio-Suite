@@ -73,11 +73,14 @@ def check_required_files(report):
         "prompt_studio/api.py",
         "prompt_studio/hy_mt_runtime.py",
         "prompt_studio/local_dictionary.py",
+        "prompt_studio/tag_library.py",
         "prompt_studio/nodes.py",
         "prompt_studio/i18n.json",
         "web/js/prompt_studio_nodes.js",
         "prompt_studio/frontend/index.html",
         "prompt_studio/frontend/js/studioSuiteLlmTools.js",
+        "prompt_studio/frontend/js/bilingualState.js",
+        "prompt_studio/frontend/js/tagLibrary.js",
         "prompt_studio/bundle/main.entry.js",
         "config/task_agent_config.example.json",
         "config/backend_profiles.example.json",
@@ -87,8 +90,12 @@ def check_required_files(report):
         "scripts/build_release_preview.py",
         "scripts/check_node_registry.py",
         "scripts/install_min_llm_model.py",
+        "scripts/install_tag_library.py",
         "scripts/patch_hy_mt_stq_type_id.py",
         "scripts/build_local_dictionary_index.py",
+        "scripts/build_tag_library.py",
+        "resources/danbooru_library/categories.v1.json",
+        "docs/PROMPT_STUDIO_LIBRARY_zh-CN.md",
         "resources/task_templates/README.md",
         "resources/task_bundles/README.md",
         "docs/SINGLE_RUN_CONTEXT_GUIDE.md",
@@ -252,6 +259,32 @@ def check_resources(report):
             report.note(f"optional resource present: resources/{name} ({path.stat().st_size // 1024 // 1024} MB)")
 
 
+def check_tag_library_install(report):
+    library_dir = PROJECT_DIR / "resources" / "danbooru_library"
+    manifest_path = library_dir / "manifest.json"
+    hint = "Install or repair with: python scripts/install_tag_library.py"
+    if not manifest_path.is_file():
+        report.warn(
+            "tag library manifest missing: resources/danbooru_library/manifest.json; "
+            "Prompt Studio tag dictionary will be unavailable. " + hint
+        )
+        return
+    manifest = load_json(manifest_path, report)
+    if not isinstance(manifest, dict):
+        return
+    database = str(manifest.get("database") or "").strip()
+    if not database:
+        report.warn(f"tag library manifest has no database field: {rel(manifest_path)}. " + hint)
+        return
+    if not (library_dir / database).is_file():
+        report.warn(
+            f"tag library catalog missing: resources/danbooru_library/{database}; "
+            "the manifest points to a database that is not present. " + hint
+        )
+        return
+    report.note(f"tag library installed: {database} (version {manifest.get('version', '<unknown>')})")
+
+
 def find_comfy_root():
     candidates = [*PROJECT_DIR.parents]
     configured = str(os.environ.get("COMFYUI_ROOT", "") or "").strip()
@@ -392,6 +425,7 @@ def main():
     check_backend_profiles(report)
     check_task_agent_config(report)
     check_resources(report)
+    check_tag_library_install(report)
     check_python_imports(report)
     check_release_paths(report)
     report.print()

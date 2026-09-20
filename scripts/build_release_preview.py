@@ -46,6 +46,10 @@ def should_skip(path, include_large_resources):
         return True
     if path.name in EXCLUDE_FILES:
         return True
+    # Generated indexes are a separate resource artifact, never copied mid-build.
+    if rel.parts[:2] == ("resources", "danbooru_library") and len(rel.parts) > 2:
+        if path.name != "categories.v1.json" and path.suffix.lower() != ".md":
+            return True
     if rel.parts[:3] == ("prompt_studio", "storage", "prompt_data") and (
         path.name.startswith("history.") or path.name.startswith("favorite.")
     ):

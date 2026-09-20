@@ -18,6 +18,7 @@ ComfyUI Studio Suite 是一个面向 ComfyUI 的预览版自定义节点包，�
 - 文件夹批处理队列节点
 - LoRA 文件、LoRA 强度、采样器/调度器、FreeU、通用节点输入的 XY 矩阵测试
 - 带内置 autocomplete / 分组 tag 存储的 Prompt Studio 编辑器
+- 可选离线公共词典：分页查词、译名和共现参考，独立于个人快捷库。[使用和建库](docs/PROMPT_STUDIO_LIBRARY_zh-CN.md)
 - Prompt Studio 内置可选 LLM 翻译按钮，可复用 Task Agent 本地后端
 - 图像填充、裁切、缩放辅助节点
 
