@@ -53,6 +53,7 @@ resources/danbooru_library/*.lock
 # Internal handoff/planning notes with local paths.
 docs/HANDOFF_*.md
 docs/*HANDOFF*.md
+docs/OPENCLAW_TRANSITION_zh-CN.md
 docs/MAIN_WORKFLOW_FILL_GUIDE.md
 docs/RESOURCE_LOADER_PLAN.md
 docs/RESOURCE_PATH_INDEX.md
