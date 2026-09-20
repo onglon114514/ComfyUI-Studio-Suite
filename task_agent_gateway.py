@@ -8,11 +8,13 @@ import os
 import re
 import shutil
 import shlex
+import sqlite3
 import subprocess
 import sys
 import tempfile
 import threading
 import time
+import unicodedata
 import urllib.error
 import urllib.request
 import uuid
@@ -39,6 +41,8 @@ GENERATED_CHARACTER_ALIASES_PATH = PROJECT_DIR / "resources" / "danbooru_charact
 CHARACTER_ALIAS_SAFETY_PATH = PROJECT_DIR / "resources" / "character_alias_safety.json"
 CHARACTER_WEBUI_NORMALIZED_PATH = PROJECT_DIR / "resources" / "danbooru_character_webui.normalized.jsonl"
 TAG_COUNT_TAGS_JSONL_PATH = PROJECT_DIR / "resources" / "tag_count_tags_统计.jsonl"
+DANBOORU_LIBRARY_DIR = PROJECT_DIR / "resources" / "danbooru_library"
+DANBOORU_LIBRARY_MANIFEST_PATH = DANBOORU_LIBRARY_DIR / "manifest.json"
 
 
 def read_text_tail(path_value, max_chars=12000):
@@ -853,6 +857,61 @@ def minimum_safe_pre_llama_load_vram_mb(requested_layers, runtime_spec, runtime_
     return 3000
 
 
+def managed_backend_memory_guard(runtime_spec, backend_provider):
+    snapshot = get_combined_memory_snapshot()
+    model_path = Path(str((runtime_spec or {}).get("model_path", "") or ""))
+    mmproj_path = Path(str((runtime_spec or {}).get("mmproj_path", "") or ""))
+    try:
+        model_size_mb = int(model_path.stat().st_size // (1024 * 1024))
+    except OSError:
+        model_size_mb = 0
+    try:
+        mmproj_size_mb = int(mmproj_path.stat().st_size // (1024 * 1024)) if str(mmproj_path) else 0
+    except OSError:
+        mmproj_size_mb = 0
+
+    system = snapshot.get("system", {}) if isinstance(snapshot, dict) else {}
+    process = snapshot.get("process", {}) if isinstance(snapshot, dict) else {}
+    available_mb = int(system.get("avail_phys_mb") or 0)
+    available_commit_mb = int(system.get("avail_pagefile_mb") or 0)
+    process_private_mb = int(process.get("private_mb") or process.get("private_usage_mb") or 0)
+    provider = str(backend_provider or "").lower()
+    # Available physical memory already excludes ComfyUI's resident allocation,
+    # so adding process_private_mb here would count the same memory twice.
+    # KoboldCpp CUDA split measurements keep about 82% of a Q4 GGUF in host
+    # memory; retain a small margin rather than treating the full file as RAM.
+    model_host_fraction = 0.83 if provider == "koboldcpp" else 1.0
+    estimated_backend_host_mb = int(model_size_mb * model_host_fraction + mmproj_size_mb * 0.20)
+    protected_headroom_mb = 3072
+    required_available_mb = estimated_backend_host_mb + protected_headroom_mb
+    required_commit_mb = estimated_backend_host_mb + mmproj_size_mb + 4096
+    enforce = provider in {"koboldcpp", "llama_cpp_server"} and model_size_mb >= 8192
+    block_reasons = []
+    if enforce and available_mb > 0 and available_mb < required_available_mb:
+        block_reasons.append("physical_memory")
+    if enforce and available_commit_mb > 0 and available_commit_mb < required_commit_mb:
+        block_reasons.append("commit_limit")
+    safe = not block_reasons
+    return {
+        "safe": bool(safe),
+        "enforced": bool(enforce),
+        "provider": provider,
+        "model_path": str(model_path),
+        "model_size_mb": model_size_mb,
+        "mmproj_size_mb": mmproj_size_mb,
+        "available_system_mb": available_mb,
+        "available_commit_mb": available_commit_mb,
+        "process_private_mb": process_private_mb,
+        "model_host_fraction": model_host_fraction,
+        "estimated_backend_host_mb": estimated_backend_host_mb,
+        "protected_headroom_mb": protected_headroom_mb,
+        "required_available_mb": required_available_mb,
+        "required_commit_mb": required_commit_mb,
+        "block_reasons": block_reasons,
+        "memory": snapshot,
+    }
+
+
 def normalize_alias_key(text):
     return (
         str(text)
@@ -984,7 +1043,10 @@ def should_skip_character_alias(alias_clean, canonical_clean, metadata, mode):
 
 def load_character_aliases():
     aliases = {}
-    resource_paths = [GENERATED_CHARACTER_ALIASES_PATH, CHARACTER_ALIASES_PATH]
+    # Keep only the curated overrides resident. The generated file expands from
+    # roughly 119 MB on disk to hundreds of MB of Python objects and stalls the
+    # first task for tens of seconds. The full corpus is queried through SQLite.
+    resource_paths = [CHARACTER_ALIASES_PATH]
     for resource_path in resource_paths:
         if not resource_path.exists():
             continue
@@ -1041,6 +1103,133 @@ def load_character_aliases():
 
 
 CHARACTER_ALIASES = load_character_aliases()
+
+
+def normalize_library_term(text):
+    value = unicodedata.normalize("NFKC", str(text or ""))
+    value = value.replace("\\(", "(").replace("\\)", ")").replace("_", " ")
+    return " ".join(value.split()).casefold()
+
+
+def resolve_tag_library_database_path():
+    try:
+        manifest = load_json_file(DANBOORU_LIBRARY_MANIFEST_PATH)
+        database_name = str(manifest.get("database", "")).strip()
+        if not re.fullmatch(r"catalog-[a-f0-9]{32}\.sqlite3", database_name):
+            return None
+        database_path = (DANBOORU_LIBRARY_DIR / database_name).resolve()
+        if database_path.parent != DANBOORU_LIBRARY_DIR.resolve() or not database_path.is_file():
+            return None
+        return database_path
+    except Exception:
+        return None
+
+
+def open_tag_library_database():
+    database_path = resolve_tag_library_database_path()
+    if database_path is None:
+        return None
+    connection = sqlite3.connect(
+        database_path.as_uri() + "?mode=ro&immutable=1",
+        uri=True,
+        timeout=3,
+    )
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA query_only=ON")
+    return connection
+
+
+def lookup_indexed_character_aliases(terms, max_terms=512):
+    normalized_to_input = {}
+    for term in terms or []:
+        cleaned = str(term or "").strip()
+        normalized = normalize_library_term(cleaned)
+        if cleaned and normalized and normalized not in normalized_to_input:
+            normalized_to_input[normalized] = cleaned
+        if len(normalized_to_input) >= int(max_terms):
+            break
+    if not normalized_to_input:
+        return {}
+
+    connection = open_tag_library_database()
+    if connection is None:
+        return {}
+    results = {}
+    try:
+        normalized_terms = list(normalized_to_input)
+        for offset in range(0, len(normalized_terms), 400):
+            chunk = normalized_terms[offset : offset + 400]
+            placeholders = ",".join("?" for _ in chunk)
+            rows = connection.execute(
+                "SELECT tr.term,tr.text,tr.role,tr.source,t.canonical,COALESCE(t.count,0) AS count "
+                "FROM terms tr JOIN tags t ON t.canonical=tr.canonical "
+                f"WHERE tr.term IN ({placeholders}) AND t.kind='character' "
+                "ORDER BY tr.term,CASE tr.role WHEN 'canonical' THEN 0 ELSE 1 END,"
+                "COALESCE(t.count,0) DESC,t.canonical",
+                chunk,
+            )
+            for row in rows:
+                normalized = str(row["term"])
+                if normalized in results:
+                    continue
+                results[normalized] = {
+                    "canonical_tag": str(row["canonical"]),
+                    "matched_alias": normalized_to_input.get(normalized, str(row["text"])),
+                    "blocked_tags": [],
+                    "_priority": int(row["count"] or 0),
+                    "_metadata": {
+                        "_source": "sqlite_index",
+                        "count": int(row["count"] or 0),
+                        "term_source": str(row["source"] or ""),
+                    },
+                }
+    except sqlite3.Error:
+        return {}
+    finally:
+        connection.close()
+    return results
+
+
+def alias_entry_for_token(token, indexed_aliases=None):
+    normalized = normalize_alias_key(token)
+    manual = CHARACTER_ALIASES.get(normalized)
+    if manual is not None:
+        return manual
+    indexed_aliases = indexed_aliases or {}
+    return indexed_aliases.get(normalize_library_term(token))
+
+
+def build_bounded_alias_phrases(text, maximum=480):
+    raw = str(text or "").strip()
+    values = []
+    seen = set()
+
+    def add(value):
+        cleaned = str(value or "").strip()
+        normalized = normalize_library_term(cleaned)
+        if not cleaned or not normalized or normalized in seen or len(cleaned) > 96:
+            return
+        seen.add(normalized)
+        values.append(cleaned)
+
+    if len(raw) <= 96:
+        add(raw)
+    for segment in re.split(r"[,;|/\n\r，。！？、；：:]+", raw):
+        add(segment)
+        words = [item for item in re.split(r"\s+", segment.strip()) if item]
+        for width in range(min(5, len(words)), 0, -1):
+            for index in range(0, len(words) - width + 1):
+                add(" ".join(words[index : index + width]))
+                if len(values) >= maximum:
+                    return values
+
+    for run in re.findall(r"[\u3400-\u9fff]{3,32}", raw):
+        for width in range(min(12, len(run)), 2, -1):
+            for index in range(0, len(run) - width + 1):
+                add(run[index : index + width])
+                if len(values) >= maximum:
+                    return values
+    return values
 
 
 def load_clothing_records():
@@ -1291,18 +1480,38 @@ GENERIC_DESCRIPTOR_ALIAS_WORDS = {
 }
 
 
-def http_get_json(url, timeout=15):
-    request = urllib.request.Request(url, method="GET")
+def backend_auth_headers(backend_config):
+    """Authorization headers for an OpenAI-compatible backend.
+
+    The node package never stores the key itself: `backend.api_key_env` only
+    names the environment variable to read, so the secret stays in the machine's
+    environment (or a protected credential store) and out of the repository.
+    """
+    if not isinstance(backend_config, dict):
+        return {}
+    env_name = str(backend_config.get("api_key_env") or "").strip()
+    if not env_name:
+        return {}
+    value = os.environ.get(env_name, "").strip()
+    if not value:
+        return {}
+    return {"Authorization": f"Bearer {value}"}
+
+
+def http_get_json(url, timeout=15, headers=None):
+    request = urllib.request.Request(url, headers=dict(headers or {}), method="GET")
     with urllib.request.urlopen(request, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
-def http_post_json(url, payload, timeout=600):
+def http_post_json(url, payload, timeout=600, headers=None):
     data = json.dumps(payload).encode("utf-8")
+    request_headers = {"Content-Type": "application/json"}
+    request_headers.update(dict(headers or {}))
     request = urllib.request.Request(
         url,
         data=data,
-        headers={"Content-Type": "application/json"},
+        headers=request_headers,
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -1335,17 +1544,19 @@ def extract_stream_text_delta(chunk):
     return ""
 
 
-def http_post_openai_stream(url, payload, timeout=900, stream_callback=None):
+def http_post_openai_stream(url, payload, timeout=900, stream_callback=None, headers=None):
     stream_payload = dict(payload)
     stream_payload["stream"] = True
     data = json.dumps(stream_payload).encode("utf-8")
+    request_headers = {
+        "Content-Type": "application/json",
+        "Accept": "text/event-stream",
+    }
+    request_headers.update(dict(headers or {}))
     request = urllib.request.Request(
         url,
         data=data,
-        headers={
-            "Content-Type": "application/json",
-            "Accept": "text/event-stream",
-        },
+        headers=request_headers,
         method="POST",
     )
     chunks = []
@@ -1457,6 +1668,24 @@ def build_user_message_content(task_type, user_prompt, inputs):
 
 
 def lookup_tag_statistics_for_tags(tags, limit=14):
+    normalized_terms = [normalize_library_term(tag) for tag in tags if normalize_library_term(tag)]
+    connection = open_tag_library_database()
+    if connection is not None and normalized_terms:
+        try:
+            placeholders = ",".join("?" for _ in normalized_terms[:96])
+            rows = connection.execute(
+                "SELECT DISTINCT t.canonical,COALESCE(t.count,0) AS count "
+                "FROM tags t JOIN terms tr ON tr.canonical=t.canonical "
+                f"WHERE tr.term IN ({placeholders}) "
+                "ORDER BY count DESC,t.canonical LIMIT ?",
+                [*normalized_terms[:96], int(limit)],
+            ).fetchall()
+            return [{"tag": str(row["canonical"]), "count": int(row["count"] or 0)} for row in rows]
+        except sqlite3.Error:
+            pass
+        finally:
+            connection.close()
+
     if not TAG_COUNT_TAGS_JSONL_PATH.exists():
         return []
 
@@ -1494,6 +1723,64 @@ def lookup_tag_statistics_for_tags(tags, limit=14):
 
 
 def lookup_tag_cooccurrence_for_tags(tags, per_seed_limit=8, total_limit=28):
+    normalized_inputs = {
+        normalize_library_term(tag): normalize_lookup_tag(tag)
+        for tag in tags
+        if normalize_library_term(tag) and normalize_lookup_tag(tag) not in COOCCURRENCE_GENERIC_SEED_KEYS
+    }
+    connection = open_tag_library_database()
+    if connection is not None and normalized_inputs:
+        try:
+            placeholders = ",".join("?" for _ in list(normalized_inputs)[:64])
+            seed_rows = connection.execute(
+                "SELECT tr.term,t.canonical FROM terms tr JOIN tags t ON t.canonical=tr.canonical "
+                f"WHERE tr.term IN ({placeholders}) "
+                "ORDER BY COALESCE(t.count,0) DESC,t.canonical",
+                list(normalized_inputs)[:64],
+            ).fetchall()
+            seed_map = {}
+            for row in seed_rows:
+                seed_map.setdefault(str(row["canonical"]), normalized_inputs.get(str(row["term"]), str(row["term"])))
+
+            merged = []
+            seen_pairs = set()
+            for canonical, seed_label in seed_map.items():
+                rows = connection.execute(
+                    "WITH candidates AS ("
+                    "SELECT b AS related,count FROM edges WHERE a=? ORDER BY count DESC,b LIMIT ?"
+                    ") SELECT related,count FROM candidates "
+                    "UNION ALL "
+                    "SELECT a AS related,count FROM edges WHERE b=? ORDER BY count DESC,a LIMIT ?",
+                    (canonical, int(per_seed_limit), canonical, int(per_seed_limit)),
+                ).fetchall()
+                rows = sorted(rows, key=lambda row: int(row["count"] or 0), reverse=True)
+                accepted = 0
+                for row in rows:
+                    related = str(row["related"])
+                    related_norm = normalize_lookup_tag(related)
+                    if related_norm in COOCCURRENCE_DEFAULT_RELATED_BLOCK_KEYS:
+                        continue
+                    pair_key = (canonical, related)
+                    if pair_key in seen_pairs:
+                        continue
+                    seen_pairs.add(pair_key)
+                    merged.append(
+                        {
+                            "seed": seed_label,
+                            "related_tag": related,
+                            "count": int(row["count"] or 0),
+                        }
+                    )
+                    accepted += 1
+                    if accepted >= int(per_seed_limit):
+                        break
+            merged.sort(key=lambda item: int(item.get("count", 0)), reverse=True)
+            return merged[: int(total_limit)]
+        except sqlite3.Error:
+            pass
+        finally:
+            connection.close()
+
     if not TAG_COOCCURRENCE_CSV_PATH.exists():
         return []
 
@@ -1566,6 +1853,42 @@ def dictionary_suggested_tags_for_inputs(inputs, limit=18):
 
 
 def lookup_character_reference_entries(canonical_tags, limit=8):
+    requested = [str(tag).strip() for tag in canonical_tags if str(tag).strip()]
+    connection = open_tag_library_database()
+    if connection is not None and requested:
+        try:
+            placeholders = ",".join("?" for _ in requested[:32])
+            rows = connection.execute(
+                "SELECT t.canonical,t.label_zh,COALESCE(t.count,0) AS count,s.payload "
+                "FROM tags t LEFT JOIN tag_sources s "
+                "ON s.canonical=t.canonical AND s.source='characters' "
+                f"WHERE t.canonical IN ({placeholders}) AND t.kind='character' "
+                "ORDER BY count DESC,t.canonical LIMIT ?",
+                [*requested[:32], int(limit)],
+            ).fetchall()
+            hits = []
+            for row in rows:
+                try:
+                    source = json.loads(row["payload"] or "{}")
+                except Exception:
+                    source = {}
+                hits.append(
+                    {
+                        "canonical_tag": str(row["canonical"]),
+                        "display_name_zh": str(row["label_zh"] or ""),
+                        "copyright_tag": str(source.get("copyright", "") or ""),
+                        "copyright_name_zh": "",
+                        "trigger_tag": "",
+                        "core_tags": "",
+                        "count": int(row["count"] or 0),
+                    }
+                )
+            return hits
+        except sqlite3.Error:
+            pass
+        finally:
+            connection.close()
+
     if not CHARACTER_WEBUI_NORMALIZED_PATH.exists():
         return []
 
@@ -2428,6 +2751,8 @@ def detect_character_aliases_in_text(text):
     normalized_text = normalize_alias_key(raw_text)
     padded_normalized_text = f" {normalized_text} "
     candidates = []
+    indexed_phrases = build_bounded_alias_phrases(raw_text)
+    indexed_aliases = lookup_indexed_character_aliases(indexed_phrases)
     for alias_key, data in CHARACTER_ALIASES.items():
         if not alias_key:
             continue
@@ -2464,6 +2789,35 @@ def detect_character_aliases_in_text(text):
             }
         )
 
+    for phrase in indexed_phrases:
+        data = indexed_aliases.get(normalize_library_term(phrase))
+        if not data:
+            continue
+        matched_alias = str(phrase).strip()
+        if should_skip_character_alias(
+            matched_alias,
+            data["canonical_tag"],
+            data.get("_metadata", {}),
+            mode="free_text",
+        ):
+            continue
+        if contains_cjk(matched_alias):
+            start_index = raw_text.find(matched_alias)
+        else:
+            alias_key = normalize_alias_key(matched_alias)
+            start_index = padded_normalized_text.find(f" {alias_key} ")
+        if start_index < 0:
+            continue
+        candidates.append(
+            {
+                "matched_alias": matched_alias,
+                "canonical_tag": data["canonical_tag"],
+                "blocked_tags": list(data.get("blocked_tags", [])),
+                "_length": len(matched_alias),
+                "_start": start_index,
+            }
+        )
+
     candidates.sort(key=lambda item: (-item["_length"], item["_start"]))
     hits = []
     seen = set()
@@ -2494,11 +2848,12 @@ def resolve_character_aliases_in_tag_text(raw_tags):
     if not tokens:
         return raw_tags, []
 
+    indexed_aliases = lookup_indexed_character_aliases(tokens)
     resolved = []
     hits = []
     seen_canonical = set()
     for token in tokens:
-        alias = CHARACTER_ALIASES.get(normalize_alias_key(token))
+        alias = alias_entry_for_token(token, indexed_aliases)
         if alias:
             if should_skip_character_alias(
                 alias["matched_alias"],
@@ -2531,10 +2886,11 @@ def detect_character_aliases_in_tag_list(raw_tags):
     if not tokens:
         return []
 
+    indexed_aliases = lookup_indexed_character_aliases(tokens)
     hits = []
     seen_canonical = set()
     for token in tokens:
-        alias = CHARACTER_ALIASES.get(normalize_alias_key(token))
+        alias = alias_entry_for_token(token, indexed_aliases)
         if not alias:
             continue
         if should_skip_character_alias(
@@ -4409,6 +4765,11 @@ class ManagedBackend:
             return self.openai_base_url + self.health_path
         return self.api_root_url + self.health_path
 
+    @property
+    def auth_headers(self):
+        """Auth headers for backends that require a key (see `backend.api_key_env`)."""
+        return backend_auth_headers(self.config.get("backend", {}))
+
     def backend_health_is_ready(self, payload):
         if self.is_inprocess_provider:
             return self.inprocess_model is not None
@@ -4861,6 +5222,7 @@ class ManagedBackend:
                         payload,
                         timeout=900,
                         stream_callback=stream_callback,
+                        headers=self.auth_headers,
                     )
                     if streamed_text:
                         return streamed_text
@@ -4878,10 +5240,15 @@ class ManagedBackend:
                         f"provider={self.backend_provider} status={stream_error.code}",
                         flush=True,
                     )
-            response = http_post_json(self.openai_base_url + "/chat/completions", payload, timeout=900)
+            response = http_post_json(
+                self.openai_base_url + "/chat/completions",
+                payload,
+                timeout=900,
+                headers=self.auth_headers,
+            )
         except Exception as error:
             try:
-                health_payload = http_get_json(self.health_check_url, timeout=5)
+                health_payload = http_get_json(self.health_check_url, timeout=5, headers=self.auth_headers)
                 if not self.backend_health_is_ready(health_payload):
                     raise RuntimeError(self.backend_not_ready_reason(health_payload)) from error
             except Exception as health_error:
@@ -5013,13 +5380,36 @@ class ManagedBackend:
                 flush=True,
             )
 
-        command = self._build_launch_command(
+        runtime_spec = self.resolve_model_runtime_spec(
             backend_profile,
             context_size,
             custom_model_path=custom_model_path,
             custom_mmproj_path=custom_mmproj_path,
-            runtime_options=runtime_options,
         )
+        memory_guard = managed_backend_memory_guard(runtime_spec, self.backend_provider)
+        if not memory_guard["safe"]:
+            model_name = Path(memory_guard["model_path"]).name
+            self.last_launch_error = {
+                "type": "managed_backend_memory_guard",
+                **memory_guard,
+            }
+            raise RuntimeError(
+                "managed_backend_memory_guard: refusing unsafe model launch. "
+                f"actual_model={model_name}, model_size={memory_guard['model_size_mb']}MB, "
+                f"available_system_memory={memory_guard['available_system_mb']}MB, "
+                f"estimated_physical_required={memory_guard['required_available_mb']}MB, "
+                f"available_commit={memory_guard['available_commit_mb']}MB, "
+                f"estimated_commit_required={memory_guard['required_commit_mb']}MB, "
+                f"reason={','.join(memory_guard['block_reasons'])}. "
+                "The custom model path overrides the selected profile label. "
+                "Close memory-heavy applications or use an already-running external backend."
+            )
+        if self.backend_provider == "koboldcpp":
+            command = self._build_koboldcpp_launch_command(runtime_spec, runtime_options=runtime_options)
+        elif self.backend_provider == "llama_cpp_server":
+            command = self._build_llama_cpp_server_launch_command(runtime_spec)
+        else:
+            raise ValueError(f"Unsupported managed backend provider: {self.backend_provider}")
         exe_parent = str(Path(command[0]).resolve().parent)
         self.last_launch_command = [str(part) for part in command]
         self.last_launch_error = None
@@ -5038,6 +5428,7 @@ class ManagedBackend:
                 f"runtime_kcpps_path={self.runtime_kcpps_path}\n"
                 f"backend_profile={self.current_backend_profile}\n"
                 f"context_size={self.current_context_size}\n"
+                f"memory_guard={memory_guard}\n"
                 f"runtime_temp_dir={runtime_temp_path(launch_temp_subdir)}\n"
                 f"parent_temp_cleanup={parent_temp_cleanup}\n\n"
             )
@@ -5045,6 +5436,7 @@ class ManagedBackend:
             print(
                 "[TaskAgentWorker] launching managed backend "
                 f"provider={self.backend_provider} profile={self.current_backend_profile} "
+                f"model={self.current_model_name} model_size={memory_guard['model_size_mb']}MB "
                 f"ctx={self.current_context_size} log={log_path}",
                 flush=True,
             )
@@ -5071,7 +5463,8 @@ class ManagedBackend:
                     print(
                         "[TaskAgentWorker] managed backend ready "
                         f"provider={self.backend_provider} profile={self.current_backend_profile} "
-                        f"pid={self.process_pid} log={self.last_launch_log_path}",
+                        f"model={self.current_model_name} pid={self.process_pid} "
+                        f"log={self.last_launch_log_path}",
                         flush=True,
                     )
                     return {

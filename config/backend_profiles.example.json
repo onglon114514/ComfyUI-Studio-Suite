@@ -45,5 +45,25 @@
     "default_context_size": 4096,
     "port": 5001,
     "supports_vision": false
+  },
+  "qwen38_27b_abliterated_vision_q4": {
+    "display_name": "Qwen3.8 27B Abliterated Q4 Vision",
+    "model_name": "qwen38-27b-abliterated-q4-local",
+    "model_path": "models/qwen3.8-27b-abliterated/Qwen3.8-27B-ABLITERATED-Q4_K_M.gguf",
+    "mmproj_path": "models/qwen3.8-27b-abliterated/mmproj-Qwen3.8-27B-ABLITERATED-F16.gguf",
+    "default_context_size": 4096,
+    "port": 5001,
+    "supports_vision": true,
+    "recommended_for": "Uncensored Qwen vision model for image interrogation and vision tagging; large model, keep GPU layers low and expect CPU-bound batches"
+  },
+  "qwen36_35b_a3b_uncensored_vision_q4": {
+    "display_name": "Qwen3.6 35B A3B Uncensored Q4 Vision",
+    "model_name": "qwen36-35b-a3b-uncensored-q4-local",
+    "model_path": "models/qwen3.6-35b-a3b-uncensored/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf",
+    "mmproj_path": "models/qwen3.6-35b-a3b-uncensored/mmproj-Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-f16.gguf",
+    "default_context_size": 4096,
+    "port": 5001,
+    "supports_vision": true,
+    "recommended_for": "Uncensored sparse-MoE Qwen vision model; only a fraction of parameters activate per token, which keeps CPU inference usable, but it still needs a mostly-CPU setup on 8GB VRAM"
   }
 }

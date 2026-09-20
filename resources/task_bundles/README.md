@@ -21,5 +21,7 @@
   - 中文描述 -> 英文 tag -> 扩写 -> 规格化 -> Illustrious XL prompt。
 - `chain_wd14_to_anima_train_caption.json`
   - WD14 标签 -> 标签校正 -> 自然语言训练 caption。
+- `chain_qwen_vision_to_caption.json`
+  - 视觉模型读图 -> 视觉打标 -> 自然语言 caption（不依赖 WD14；需视觉档案，见 `docs/QWEN_BACKEND_zh-CN.md`）。
 
 扩展时可以新增同结构 JSON，不需要改 Python 代码。

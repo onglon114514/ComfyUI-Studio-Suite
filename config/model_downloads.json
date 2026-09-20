@@ -15,5 +15,39 @@
         "required": false
       }
     ]
+  },
+  "qwen38_27b_abliterated_vision_q4": {
+    "profile_key": "qwen38_27b_abliterated_vision_q4",
+    "repo_id": "Blackfrost-AI/Qwen3.8-27B-ABLITERATED-GGUF",
+    "revision": "main",
+    "files": [
+      {
+        "filename": "Qwen3.8-27B-ABLITERATED-Q4_K_M.gguf",
+        "target": "models/qwen3.8-27b-abliterated/Qwen3.8-27B-ABLITERATED-Q4_K_M.gguf",
+        "required": false
+      },
+      {
+        "filename": "mmproj-Qwen3.8-27B-ABLITERATED-F16.gguf",
+        "target": "models/qwen3.8-27b-abliterated/mmproj-Qwen3.8-27B-ABLITERATED-F16.gguf",
+        "required": false
+      }
+    ]
+  },
+  "qwen36_35b_a3b_uncensored_vision_q4": {
+    "profile_key": "qwen36_35b_a3b_uncensored_vision_q4",
+    "repo_id": "HauhauCS/qwen-3.6-35b-a3b-Uncensored-HauhauCS-Aggressive",
+    "revision": "main",
+    "files": [
+      {
+        "filename": "Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf",
+        "target": "models/qwen3.6-35b-a3b-uncensored/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf",
+        "required": false
+      },
+      {
+        "filename": "mmproj-Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-f16.gguf",
+        "target": "models/qwen3.6-35b-a3b-uncensored/mmproj-Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-f16.gguf",
+        "required": false
+      }
+    ]
   }
 }

@@ -1,0 +1,22 @@
+{
+  "gateway": {
+    "host": "127.0.0.1",
+    "port": 8765
+  },
+  "backend": {
+    "mode": "external_service",
+    "provider": "custom_openai_compat",
+    "base_url": "https://api.deepseek.com",
+    "api_key_env": "DEEPSEEK_API_KEY",
+    "health_path": "/models",
+    "startup_timeout_sec": 30,
+    "default_unload_after_run": false
+  },
+  "model": {
+    "name": "remote-openai-compat"
+  },
+  "task_defaults": {
+    "temperature": 0.6,
+    "max_tokens": 1200
+  }
+}

@@ -1321,7 +1321,7 @@ def get_builtin_resource_catalog():
         "resource::danbooru_artist_wildcard_text": (
             resources_dir / "danbooru_artist_wildcard-D站画师列表.txt",
             "reference_notes",
-            "text",
+            "path",
             "Danbooru 画师 wildcard 文本资源，可供 LLM 参考画师 tag 和画风关联",
         ),
         "resource::danbooru_character_webui_normalized": (
@@ -1351,6 +1351,7 @@ def get_builtin_resource_catalog():
 BUILTIN_RESOURCE_CATALOG = get_builtin_resource_catalog()
 BUILTIN_RESOURCE_OPTIONS = sorted(BUILTIN_RESOURCE_CATALOG.keys()) or [""]
 MAX_INLINE_RESOURCE_TEXT_CHARS = 12000
+MAX_INLINE_RESOURCE_FILE_BYTES = 2 * 1024 * 1024
 
 
 def merge_context_field(target, key, value):
@@ -2904,6 +2905,15 @@ class TaskAgentResourceLoaderNode:
             else:
                 detected_mode = "text"
 
+        file_size = path.stat().st_size
+        if detected_mode != "path" and file_size > MAX_INLINE_RESOURCE_FILE_BYTES:
+            detected_mode = "path"
+            status_parts.append(
+                "large_resource_path_only: "
+                f"{file_size} bytes exceeds {MAX_INLINE_RESOURCE_FILE_BYTES}; "
+                "the file will be queried by path instead of copied into workflow JSON"
+            )
+
         text = ""
         if detected_mode != "path":
             try:
@@ -2932,6 +2942,7 @@ class TaskAgentResourceLoaderNode:
             "resource_role": resource_role,
             "description": description,
             "parse_mode": detected_mode,
+            "file_size_bytes": int(file_size),
             "content_text": str(text).strip(),
             "content_json": json_value,
         }

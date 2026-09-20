@@ -1,0 +1,20 @@
+{
+  "task_modules": [
+    {
+      "type": "vision_tagging"
+    },
+    {
+      "type": "generate_natural_caption"
+    }
+  ],
+  "format_module": {
+    "type": "anima_train_v1"
+  },
+  "task_defaults": {
+    "style_hint": "vision tagging then training caption; keep the produced tag line exactly as-is and add one concise natural-language paragraph",
+    "purpose": "视觉反推路线：先用视觉模型读图得到标签行，再补一段自然语言描述。适合没有 WD14 流程、或想拿视觉结果与 WD14 做对照的场景。"
+  },
+  "fixed_inputs": {
+    "caption_mode": "training_tag_plus_nl"
+  }
+}
