@@ -13,7 +13,7 @@ const baseUrl = process.env.COMFY_URL || 'http://127.0.0.1:8188';
 (async () => {
   const browser = await chromium.launch({ headless: true, ...(process.env.CHROME_PATH ? {executablePath: process.env.CHROME_PATH} : {}) });
   const page = await browser.newPage({viewport: {width: 1440, height: 1000}, locale: 'zh-CN'});
-  const errors = [], requests = [], checks = [];
+  const errors = [], requests = [], checks = [], readyPaths = [];
   let queueBusy = false, glossaryMissing = false, delay = 0;
   page.on('pageerror', e => errors.push(e.message));
   page.on('crash', () => errors.push('renderer crash'));
@@ -29,7 +29,7 @@ const baseUrl = process.env.COMFY_URL || 'http://127.0.0.1:8188';
       let file;
       if (pathname.endsWith('/js/prompt_studio_controller.js')) file = 'web/js/prompt_studio_controller.js';
       if (pathname.endsWith('/ui/index.html')) file = 'prompt_studio/frontend/index.html';
-      for (const name of ['studioSuiteLlmTools.js', 'bilingualState.js', 'tagLibrary.js', 'newbieXmlWizard.js']) if (pathname.endsWith('/ui/js/' + name)) file = 'prompt_studio/frontend/js/' + name;
+      for (const name of ['studioSuiteLlmTools.js', 'bilingualState.js', 'tagLibrary.js', 'newbieXmlWizard.js', 'weilinAdapter.js']) if (pathname.endsWith('/ui/js/' + name)) file = 'prompt_studio/frontend/js/' + name;
       if (file) return route.fulfill({contentType: file.endsWith('.html') ? 'text/html' : 'text/javascript', body: fs.readFileSync(root + file, 'utf8')});
       if (pathname.endsWith('/llm_status')) return route.fulfill({json:{queue:{busy:queueBusy}, worker:{alive:false}, hy_mt:{available:true,alive:true}, dictionary:{ready:false,manual_aliases:2}}});
       if (pathname.endsWith('/glossary_lookup')) {
@@ -56,13 +56,17 @@ const baseUrl = process.env.COMFY_URL || 'http://127.0.0.1:8188';
     const open = async (other=false) => {
       await page.evaluate(other=>{const n=other?otherNode:testNode;n.widgets.find(w=>w.type==='button'&&w.name.includes('Prompt Studio')).callback();},other);
       const frame = page.frameLocator('.studio-suite-prompt-iframe');
-      // Ready barrier: the positive editor textarea. `.group-tabs .tag-item` cannot be used:
-      // the physton tag cloud renders its items only in the negative editor (component-5178),
-      // which index.html hides for positive-only nodes (PromptStudioPositiveOutput ->
+      // Ready barrier: Studio Suite's own signal, set by our frontend modules after
+      // init (body[data-studio-suite-ready="1"]) — never third-party DOM.
+      // `.group-tabs .tag-item` cannot be used: the physton tag cloud renders its
+      // items only in the negative editor (component-5178), which index.html hides
+      // for positive-only nodes (PromptStudioPositiveOutput ->
       // WeiLinComfyUIPromptAllInOneGreat), so those items stay 0x0 there forever.
-      await frame.locator('#weilin_prompt_text_input').waitFor({timeout:45000});
+      // waitStudioSuiteReady keeps a bounded fallback on OUR OWN DOM only, so a
+      // broken signal can never hang the test.
+      readyPaths.push(await waitStudioSuiteReady(frame));
       await frame.locator('[data-action="normal-mode"]').click();
-      await frame.locator('[data-studio-suite-llm-translate="positive"]').waitFor();
+      await frame.locator('[data-studio-suite-llm-translate="positive"]').waitFor({timeout:15000});
       await page.waitForTimeout(1000);
       return frame;
     };
@@ -152,7 +156,7 @@ const baseUrl = process.env.COMFY_URL || 'http://127.0.0.1:8188';
     assert.deepEqual(errors,[]);
     assert.deepEqual(await page.evaluate(()=>unhandled),[]);
     console.log(JSON.stringify({
-      passed:true,checks,runtime,mutations,
+      passed:true,checks,runtime,mutations,readyPaths,
       requests:requests.filter(r=>r.type!=='legacy'),errors
     }));
   } catch(e) {
@@ -163,3 +167,16 @@ const baseUrl = process.env.COMFY_URL || 'http://127.0.0.1:8188';
 })().catch(e=>{console.error(e);process.exitCode=1;});
 
 async function assertEventually(fn){let error;for(let i=0;i<80;i++){try{return await fn();}catch(e){error=e;await new Promise(r=>setTimeout(r,100));}}throw error;}
+
+// Own ready signal first; bounded fallback on Studio Suite's own DOM only.
+// Both paths are time-limited, so a broken frontend can never hang the test.
+async function waitStudioSuiteReady(frame){
+  try{
+    await frame.locator('body[data-studio-suite-ready="1"]').waitFor({timeout:20000});
+    return 'signal';
+  }catch(e){
+    await frame.locator('#weilin_prompt_text_input').waitFor({timeout:25000});
+    await frame.locator('[data-studio-suite-llm-translate="positive"]').waitFor({timeout:25000});
+    return 'fallback';
+  }
+}

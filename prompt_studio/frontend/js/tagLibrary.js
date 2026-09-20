@@ -1,3 +1,5 @@
+import { markStudioSuiteReady, weilinClosestPromptTag, weilinReadPromptTagText } from "./weilinAdapter.js";
+
 const API = "/studio-suite/prompt-studio/library/";
 const kinds = { unknown: "未确认类别", general: "普通标签", character: "角色", copyright: "作品", artist: "画师", meta: "元标签" };
 let dialog, opener, life, searchRequest, detailRequest, timer, workTimer, tagLookup, lookupTag, epoch = 0;
@@ -361,21 +363,20 @@ function mount() {
       @media(max-width:760px){.ss-library{padding:10px}.ss-library-filters{grid-template-columns:1fr 1fr}.ss-library-filters [data-part=search],.ss-library-filters [data-part=work]{grid-column:1/-1}.ss-library-layout{grid-template-columns:1fr}.ss-library-detail{max-height:32vh;border-left:0;border-top:1px solid #555;padding:10px 0}.ss-library footer [data-part=page]{flex-basis:100%;order:-1}}
     `;
     document.head.append(style);
+    markStudioSuiteReady("tag-library");
 }
 document.addEventListener("keydown", event => {
     if (dialog && event.key === "Escape") { event.preventDefault(); event.stopImmediatePropagation(); closeLibrary(); }
 }, true);
 document.addEventListener("mouseover", event => {
-    const tag = event.target.closest?.(".prompt-tags-list .prompt-tag");
+    const tag = weilinClosestPromptTag(event.target);
     if (!tag) return;
     lookupTag = tag;
     if (!tagLookup) {
         tagLookup = button("查词", click => {
             click.preventDefault(); click.stopPropagation();
-            const value = lookupTag?.querySelector(".prompt-tag-value")?.cloneNode(true);
-            value?.querySelectorAll("button, svg, .btn-tag-delete, .translate-to-local").forEach(node => node.remove());
-            const text = value?.textContent?.replace(/[×✕]$/g, "");
-            if (text) openLibrary(text.trim());
+            const text = weilinReadPromptTagText(lookupTag);
+            if (text) openLibrary(text);
         });
         tagLookup.className = "ss-library-tag-lookup";
         tagLookup.addEventListener("pointerdown", click => click.stopPropagation());

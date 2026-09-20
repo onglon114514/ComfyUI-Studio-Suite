@@ -15,7 +15,7 @@ const root=path.resolve(__dirname,'..'),out=process.env.STUDIO_SUITE_TEST_OUTPUT
   let file;
   if(p.endsWith('/ui/index.html'))file='prompt_studio/frontend/index.html';
   if(p.endsWith('/js/prompt_studio_controller.js'))file='web/js/prompt_studio_controller.js';
-  for(const name of ['tagLibrary.js','studioSuiteLlmTools.js','bilingualState.js','newbieXmlWizard.js'])if(p.endsWith('/ui/js/'+name))file='prompt_studio/frontend/js/'+name;
+  for(const name of ['tagLibrary.js','studioSuiteLlmTools.js','bilingualState.js','newbieXmlWizard.js','weilinAdapter.js'])if(p.endsWith('/ui/js/'+name))file='prompt_studio/frontend/js/'+name;
   if(file)return route.fulfill({body:fs.readFileSync(path.join(root,file),'utf8'),contentType:file.endsWith('.html')?'text/html':'text/javascript'});
   if(p.endsWith('/manager/component/loads'))return route.fulfill({json:{}});
   if(p.endsWith('/llm_status'))return route.fulfill({json:{queue:{busy:true},worker:{alive:false},hy_mt:{available:true,alive:false},dictionary:{ready:false}}});
@@ -58,10 +58,13 @@ const root=path.resolve(__dirname,'..'),out=process.env.STUDIO_SUITE_TEST_OUTPUT
  await page.waitForTimeout(3000);
  await page.evaluate(()=>{window.testNode=LiteGraph.createNode('PromptStudioOutput');comfyAPI.app.app.graph.add(testNode);testNode.widgets.find(w=>w.type==='button'&&w.name.includes('Prompt Studio')).callback();});
  const f=page.frameLocator('.studio-suite-prompt-iframe');
- await f.locator('.group-tabs .tag-item').first().waitFor({timeout:45000});
+ // Ready barrier: Studio Suite's own signal (body[data-studio-suite-ready="1"]),
+ // never third-party DOM. `.group-tabs .tag-item` is NOT a barrier: those items
+ // render only inside the negative editor and stay 0x0 for positive-only nodes.
+ // waitStudioSuiteReady keeps a bounded fallback on OUR OWN DOM only.
+ const readyPath=await waitStudioSuiteReady(f);
  await f.locator('[data-action="normal-mode"]').click();
- const lib=f.locator('.ss-library'),cards=f.locator('[data-part="results"] .ss-library-card');
- assert.equal(calls,0);assert.equal(llm,0);
+ const lib=f.locator('.ss-library'),cards=f.locator('[data-part="results"] .ss-library-card'); assert.equal(calls,0);assert.equal(llm,0);
  await f.locator('#weilin_prompt_text_input').fill('original,');
  await f.locator('#ss-library-open').click();await cards.nth(39).waitFor();
  assert.equal(await cards.count(),40);assert.equal(await f.locator('#weilin_prompt_text_input').inputValue(),'original,');
@@ -113,6 +116,7 @@ const root=path.resolve(__dirname,'..'),out=process.env.STUDIO_SUITE_TEST_OUTPUT
  await lib.getByRole('button',{name:'关闭词典',exact:true}).click();
  let before=calls;await page.waitForTimeout(1300);assert.equal(calls,before);assert.equal(await lib.count(),0);
  checks.push('closed panel removes DOM and makes zero library requests');
+ await waitWizardReady(f);
  await f.locator('[data-action="newbie-mode"]').click();
  await f.locator('[data-step="2"]').click();
  await f.locator('[data-action="open-section"]').first().click();
@@ -126,7 +130,7 @@ const root=path.resolve(__dirname,'..'),out=process.env.STUDIO_SUITE_TEST_OUTPUT
  await f.locator('[data-action="normal-mode"]').click();
  assert(!/tag_002/.test(await f.locator('#weilin_prompt_text_input').inputValue()));
  checks.push('XML field insert preserves original prompt bridge');
- const baseline=await f.locator('body').evaluate(n=>n.querySelectorAll('*').length);
+ const baseline=await settleDom(page,f);
  for(let i=0;i<50;i++){
    await f.locator('#ss-library-open').click();await cards.nth(39).waitFor();
    await lib.getByRole('button',{name:'关闭词典',exact:true}).click();
@@ -140,8 +144,36 @@ const root=path.resolve(__dirname,'..'),out=process.env.STUDIO_SUITE_TEST_OUTPUT
  await lib.getByRole('button',{name:'关闭词典',exact:true}).click();
  checks.push('missing index shows install guidance without auto-build');
  assert.deepEqual(errors,[]);
- console.log(JSON.stringify({passed:true,checks,calls,writes,llm,baseline,after,errors}));
+ console.log(JSON.stringify({passed:true,checks,calls,writes,llm,baseline,after,readyPath,errors}));
  }catch(e){await page.screenshot({path:path.join(out,'tag-library-failure.png')}).catch(()=>{});console.log(JSON.stringify({errors,calls,writes,llm}));throw e;}
  finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});
 async function assertSoon(fn){for(let i=0;i<100;i++){try{return fn();}catch(e){if(i===99)throw e;await new Promise(r=>setTimeout(r,50));}}}
+// Own ready signal first; bounded fallback on Studio Suite's own DOM only.
+async function waitStudioSuiteReady(frame){
+ try{await frame.locator('body[data-studio-suite-ready="1"]').waitFor({timeout:20000});return 'signal';}
+ catch(e){
+  await frame.locator('#weilin_prompt_text_input').waitFor({timeout:25000});
+  await frame.locator('#ss-library-open').waitFor({timeout:25000});
+  return 'fallback';
+ }
+}
+// The general ready signal fires when our frontend mounts; the XML wizard finishes its
+// async init later and publishes its own signal. Everything below drives the wizard, so
+// wait for that one instead of racing it.
+async function waitWizardReady(frame){
+ try{await frame.locator('body[data-studio-suite-wizard-ready="1"]').waitFor({timeout:20000});return 'signal';}
+ catch(e){return 'timeout';}
+}
+// Measure a node count only once it stops changing, so async wizard rendering is never
+// mistaken for a DOM leak. The leak budget itself (<= baseline+15 over 50 cycles) is unchanged.
+async function settleDom(page,frame,rounds=10){
+ let last=-1;
+ for(let i=0;i<rounds;i++){
+  const n=await frame.locator('body').evaluate(b=>b.querySelectorAll('*').length);
+  if(n===last)return n;
+  last=n;
+  await page.waitForTimeout(300);
+ }
+ return last;
+}

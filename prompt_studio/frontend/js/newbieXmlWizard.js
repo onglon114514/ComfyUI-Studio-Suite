@@ -101,6 +101,7 @@
         bindEvents();
         bindBridgeInput();
         loadRemoteSettings();
+        document.body.dataset.studioSuiteWizardReady = "1";
     }
 
     function render() {

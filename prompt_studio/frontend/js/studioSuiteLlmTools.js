@@ -1,4 +1,16 @@
 import { annotationKey, sanitizeBilingualState, BILINGUAL_LIMIT } from "./bilingualState.js";
+import {
+    markStudioSuiteReady,
+    weilinAllPromptTagRoots,
+    weilinPromptTagRoots,
+    weilinReadPromptTagText,
+    weilinEnsureLocalLanguage,
+    weilinTranslateButtons,
+    weilinTranslateContext,
+    weilinIsTagListElement,
+    weilinIsTagStructureNode,
+    weilinHideLegacyAiEntrypoints,
+} from "./weilinAdapter.js";
 
 (function () {
     "use strict";
@@ -148,7 +160,7 @@ import { annotationKey, sanitizeBilingualState, BILINGUAL_LIMIT } from "./biling
 
     function updateLlmControls() {
         const disabled = queueBusy || translationBusy || preloadBusy;
-        document.querySelectorAll(".physton-prompt .extend-btn-item:has(.icon-svg-translate), .physton-prompt .translate-to-local").forEach(button => {
+        weilinTranslateButtons().forEach(button => {
             button.classList.toggle("studio-suite-reference-blocked", disabled);
             setAttributeIfChanged(button, "aria-disabled", String(disabled));
             const title = disabled ? "队列或翻译正在使用资源，请稍后" : "生成下方对照，不改上方提示词（词典优先，Hy-MT 补缺）";
@@ -355,44 +367,7 @@ import { annotationKey, sanitizeBilingualState, BILINGUAL_LIMIT } from "./biling
         return map;
     }
 
-    function promptTagRoots(kind) {
-        const roots = Array.from(document.querySelectorAll(".physton-prompt .prompt-tags"));
-        if (!roots.length) return [];
-        if (kind === "negative") {
-            return [roots[1] || roots[roots.length - 1]].filter(Boolean);
-        }
-        return [roots[0]].filter(Boolean);
-    }
-
-    function readPromptTagText(tagEl) {
-        const value = tagEl.querySelector(".prompt-tag-value");
-        if (!value) return "";
-        const clone = value.cloneNode(true);
-        clone.querySelectorAll("button, svg, .btn-tag-delete, .translate-to-local").forEach((node) => node.remove());
-        return clone.textContent.replace(/[×✕]$/g, "").trim();
-    }
-
-    function ensureLocalLanguage(tagEl) {
-        let wrap = tagEl.querySelector(".prompt-local-language");
-        if (!wrap) {
-            wrap = document.createElement("div");
-            wrap.className = "prompt-local-language studio-suite-local-language";
-            const main = tagEl.querySelector(".prompt-tag-main") || tagEl;
-            if (main.parentNode) {
-                main.parentNode.insertBefore(wrap, main.nextSibling);
-            } else {
-                tagEl.appendChild(wrap);
-            }
-        }
-        wrap.classList.add("studio-suite-local-language");
-        let local = wrap.querySelector(".local-language");
-        if (!local) {
-            local = document.createElement("span");
-            local.className = "local-language";
-            wrap.appendChild(local);
-        }
-        return local;
-    }
+    // Third-party (weilin/physton) DOM queries live in weilinAdapter.js.
 
     function scheduleLocalLanguageSync(kind, sourceText, translatedText, pairs) {
         const map = buildPairMap(sourceText, translatedText, pairs);
@@ -409,11 +384,11 @@ import { annotationKey, sanitizeBilingualState, BILINGUAL_LIMIT } from "./biling
         annotationFrame = requestAnimationFrame(() => {
             annotationFrame = null;
             for (const kind of ["positive", "negative"]) {
-                for (const root of promptTagRoots(kind)) {
+                for (const root of weilinPromptTagRoots(kind)) {
                     for (const tag of root.querySelectorAll(".prompt-tags-list .prompt-tag")) {
-                        const entry = annotations[kind].get(annotationKey(readPromptTagText(tag)));
+                        const entry = annotations[kind].get(annotationKey(weilinReadPromptTagText(tag)));
                         if (!entry) continue;
-                        const local = ensureLocalLanguage(tag);
+                        const local = weilinEnsureLocalLanguage(tag);
                         if (local.textContent !== entry.local) local.textContent = entry.local;
                         if (local.title !== entry.local) local.title = entry.local;
                     }
@@ -429,7 +404,7 @@ import { annotationKey, sanitizeBilingualState, BILINGUAL_LIMIT } from "./biling
         const snapshot = textarea?.value || "";
         const snapshotKey = JSON.stringify(splitPromptParts(snapshot).map(annotationKey));
         // The legacy tag view is debounced; the textarea is the current source of truth.
-        const values = singleTag ? [readPromptTagText(singleTag)] : splitPromptParts(snapshot);
+        const values = singleTag ? [weilinReadPromptTagText(singleTag)] : splitPromptParts(snapshot);
         const terms = [...new Set(values.filter(text => text && !/^\s*<(lora|lyco|embedding):/i.test(text)))];
         if (!terms.length) { toast("没有可生成对照的关键词", "info"); return; }
         if (terms.length > BILINGUAL_LIMIT) { toast(`请分段处理，每次最多 ${BILINGUAL_LIMIT} 个关键词`, "warning"); return; }
@@ -505,16 +480,12 @@ import { annotationKey, sanitizeBilingualState, BILINGUAL_LIMIT } from "./biling
 
     // Capture the retained A/B controls before their obsolete translator runs.
     document.addEventListener("click", (event) => {
-        const target = event.target instanceof Element ? event.target : event.target?.parentElement;
-        const button = target?.closest(".extend-btn-item, .translate-to-local");
-        if (!button || (!button.matches(".translate-to-local") && !button.querySelector(".icon-svg-translate"))) return;
-        const root = button.closest(".physton-prompt")?.querySelector(".prompt-tags");
-        if (!root) return;
+        const context = weilinTranslateContext(event.target);
+        if (!context) return;
         event.preventDefault();
         event.stopImmediatePropagation();
-        const roots = [...document.querySelectorAll(".physton-prompt .prompt-tags")];
-        const kind = roots.indexOf(root) === 1 ? "negative" : "positive";
-        compareText(kind, button.closest(".prompt-tag"));
+        const kind = weilinAllPromptTagRoots().indexOf(context.root) === 1 ? "negative" : "positive";
+        compareText(kind, context.tag);
     }, true);
 
     async function translateText(kind) {
@@ -763,37 +734,19 @@ import { annotationKey, sanitizeBilingualState, BILINGUAL_LIMIT } from "./biling
         target.appendChild(toolbar);
     }
 
-    function hideLegacyAiEntrypoints(root) {
-        const scope = root && root.querySelectorAll ? root : document;
-        const selectors = [
-            ".icon-svg-chatgpt",
-            ".physton-chatgpt-prompt",
-            ".llm-btn",
-            ".physton-packages-state",
-        ];
-        for (const selector of selectors) {
-            scope.querySelectorAll(selector).forEach((node) => {
-                const container = node.closest(".extend-btn-item, .physton-chatgpt-prompt, .physton-packages-state") || node;
-                if (container.closest && container.closest("#studio-suite-llm-tools")) return;
-                container.style.display = "none";
-                container.setAttribute("data-studio-suite-hidden-legacy-ai", "1");
-            });
-        }
-    }
-
     function installLegacyUiObserver() {
-        hideLegacyAiEntrypoints(document);
+        weilinHideLegacyAiEntrypoints(document, "#studio-suite-llm-tools");
         if (window.__studioSuiteLegacyUiObserver) return;
         window.__studioSuiteLegacyUiObserver = new MutationObserver((mutations) => {
             let tagsChanged = false;
             for (const mutation of mutations) {
                 const target = mutation.target.nodeType === 1 ? mutation.target : mutation.target.parentElement;
                 if (target?.closest(".studio-suite-local-language")) continue;
-                if (target?.closest(".prompt-tags-list")) tagsChanged = true;
+                if (weilinIsTagListElement(target)) tagsChanged = true;
                 mutation.addedNodes.forEach((node) => {
                     if (node.nodeType !== 1) return;
-                    hideLegacyAiEntrypoints(node);
-                    if (node.matches(".prompt-tags, .prompt-tags-list, .prompt-tag") || node.querySelector(".prompt-tags-list")) tagsChanged = true;
+                    weilinHideLegacyAiEntrypoints(node, "#studio-suite-llm-tools");
+                    if (weilinIsTagStructureNode(node)) tagsChanged = true;
                 });
             }
             if (tagsChanged) scheduleAnnotationRefresh();
@@ -1044,6 +997,7 @@ import { annotationKey, sanitizeBilingualState, BILINGUAL_LIMIT } from "./biling
         installLegacyUiObserver();
         scheduleAnnotationRefresh();
         startQueueMonitor();
+        markStudioSuiteReady("llm-tools");
     }
 
     if (document.readyState === "loading") {
