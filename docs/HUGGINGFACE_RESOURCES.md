@@ -121,6 +121,17 @@ git push -u origin main
 
 节点用户下载后，只需要把文件放回主项目的 `resources/` 目录，文件名保持一致即可。
 
+## 发布词典库（danbooru_library）
+
+用户侧的安装入口是主仓库里的 `scripts/install_tag_library.py`，它默认读取本 Dataset 仓库的 `danbooru_library/` 子目录。发布方的流程：
+
+1. 在主仓库本地构建：`python -B scripts/build_tag_library.py`，得到 `resources/danbooru_library/manifest.json` 和 `catalog-<版本>.sqlite3`。
+2. 在 HF Dataset 仓库根目录建 `danbooru_library/` 子目录，把这两个文件成套放进去（catalog 必须走 Git LFS；安装器直接读取 LFS 元数据里的 sha256 做校验）。旧 catalog 不要删除，留给仍指向旧版本的用户。
+3. 按上面的 Git LFS 步骤 `git add` / `git commit` / `git push`。
+4. 用户侧运行 `python scripts/install_tag_library.py` 即可发现新版本；`--check` 可只查不装。
+
+如果要额外提供 http(s) 镜像：把同一套 `manifest.json` + catalog 放到静态服务器目录，并可选加一个 `resource_files.json`（格式 `{"files": [{"name": ..., "size": ..., "sha256": ...}]}`）让安装器能做完整哈希校验；用户用 `--source http(s)://镜像地址` 安装。没有 `resource_files.json` 时只按大小与 SQLite 可读性校验。
+
 ## 当前结论
 
 最稳的方案不是把资源和代码混在一个 GitHub 仓库里，而是：

@@ -4,6 +4,7 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+.tag-library-test-*/
 .vscode/
 .idea/
 
@@ -42,6 +43,12 @@ resources/tag_count_tags_统计.json
 resources/tag_count_tags_统计.jsonl
 resources/tag_count_channels_统计.json
 resources/tag_count_channels_统计.jsonl
+
+# Rebuildable public dictionary packages. Keep schemas and build code tracked.
+resources/danbooru_library/*.sqlite3*
+resources/danbooru_library/manifest.json
+resources/danbooru_library/*.tmp
+resources/danbooru_library/*.lock
 
 # Internal handoff/planning notes with local paths.
 docs/HANDOFF_*.md

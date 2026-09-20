@@ -1,0 +1,309 @@
+{
+  "schema_version": 1,
+  "status": "classification_skeleton_only",
+  "assignment_policy": "multi_label_preserve_unknown_and_ambiguity",
+  "official_categories_source": "https://raw.githubusercontent.com/danbooru/danbooru/master/app/logical/tag_category.rb",
+  "official_categories": [
+    {
+      "label_zh": "普通标签",
+      "name": "general",
+      "id": 0
+    },
+    {
+      "label_zh": "画师",
+      "name": "artist",
+      "id": 1
+    },
+    {
+      "label_zh": "作品",
+      "name": "copyright",
+      "id": 3
+    },
+    {
+      "label_zh": "角色",
+      "name": "character",
+      "id": 4
+    },
+    {
+      "label_zh": "元标签",
+      "name": "meta",
+      "id": 5
+    }
+  ],
+  "unknown_category": {
+    "label_zh": "原始类别未确认",
+    "name": "unknown",
+    "id": null
+  },
+  "sources": {
+    "local_clothing_20260526": {
+      "path": "resources/Danbooru服装查询资源_本地版_2026-05-26.jsonl",
+      "kind": "local_curated",
+      "upstream_snapshot_verified": false
+    },
+    "studio_suite_proposal": {
+      "kind": "proposed_navigation"
+    }
+  },
+  "semantic_groups": [
+    {
+      "id": "group:danbooru_clothing_resource",
+      "label_zh": "Danbooru服装查询资源",
+      "label_en": "Danbooru Clothing Query Resource",
+      "parent_id": null,
+      "source": "local_clothing_20260526",
+      "review_status": "source_mapping_unverified"
+    },
+    {
+      "id": "group:attire:hats_and_headgear",
+      "label_zh": "帽子与头部装束",
+      "label_en": "Hats and Headgear",
+      "parent_id": "group:attire",
+      "source": "local_clothing_20260526",
+      "review_status": "source_mapping_unverified"
+    },
+    {
+      "id": "group:attire:neckwear",
+      "label_zh": "颈部服饰",
+      "label_en": "Neckwear",
+      "parent_id": "group:attire",
+      "source": "local_clothing_20260526",
+      "review_status": "source_mapping_unverified"
+    },
+    {
+      "id": "group:attire:torso_and_tops",
+      "label_zh": "上装与躯干",
+      "label_en": "Torso and Tops",
+      "parent_id": "group:attire",
+      "source": "local_clothing_20260526",
+      "review_status": "source_mapping_unverified"
+    },
+    {
+      "id": "group:attire:pants_and_bottom_wear",
+      "label_zh": "下装",
+      "label_en": "Pants and Bottom wear",
+      "parent_id": "group:attire",
+      "source": "local_clothing_20260526",
+      "review_status": "source_mapping_unverified"
+    },
+    {
+      "id": "group:attire:legs_and_feet",
+      "label_zh": "腿部与袜类",
+      "label_en": "Legs and Feet",
+      "parent_id": "group:attire",
+      "source": "local_clothing_20260526",
+      "review_status": "source_mapping_unverified"
+    },
+    {
+      "id": "group:attire:shoes",
+      "label_zh": "鞋类",
+      "label_en": "Shoes",
+      "parent_id": "group:attire",
+      "source": "local_clothing_20260526",
+      "review_status": "source_mapping_unverified"
+    },
+    {
+      "id": "group:attire:uniforms_and_costumes_costume",
+      "label_zh": "制服与角色服",
+      "label_en": "Uniforms and Costumes（排除明显色情 costume 分支）",
+      "parent_id": "group:attire",
+      "source": "local_clothing_20260526",
+      "review_status": "source_mapping_unverified"
+    },
+    {
+      "id": "group:attire:traditional_clothing",
+      "label_zh": "传统服饰",
+      "label_en": "Traditional Clothing",
+      "parent_id": "group:attire",
+      "source": "local_clothing_20260526",
+      "review_status": "source_mapping_unverified"
+    },
+    {
+      "id": "group:attire:closures_pins_badges_decorations",
+      "label_zh": "扣件与装饰",
+      "label_en": "Closures, Pins, Badges, Decorations",
+      "parent_id": "group:attire",
+      "source": "local_clothing_20260526",
+      "review_status": "source_mapping_unverified"
+    },
+    {
+      "id": "group:attire:patterns",
+      "label_zh": "图案",
+      "label_en": "Patterns",
+      "parent_id": "group:attire",
+      "source": "local_clothing_20260526",
+      "review_status": "source_mapping_unverified"
+    },
+    {
+      "id": "group:attire:clothing_states_misc",
+      "label_zh": "服装状态与杂项",
+      "label_en": "Clothing States / Misc",
+      "parent_id": "group:attire",
+      "source": "local_clothing_20260526",
+      "review_status": "source_mapping_unverified"
+    },
+    {
+      "id": "group:attire",
+      "label_zh": "服装着装",
+      "label_en": "Attire",
+      "parent_id": "group:danbooru_clothing_resource",
+      "source": "local_clothing_20260526",
+      "review_status": "source_mapping_unverified"
+    },
+    {
+      "id": "group:fashion_style:general",
+      "label_zh": "一般风格",
+      "label_en": "General",
+      "parent_id": "group:fashion_style",
+      "source": "local_clothing_20260526",
+      "review_status": "source_mapping_unverified"
+    },
+    {
+      "id": "group:fashion_style:decades",
+      "label_zh": "年代风格",
+      "label_en": "Decades",
+      "parent_id": "group:fashion_style",
+      "source": "local_clothing_20260526",
+      "review_status": "source_mapping_unverified"
+    },
+    {
+      "id": "group:fashion_style:japanese_fashion_styles",
+      "label_zh": "日式时尚风格",
+      "label_en": "Japanese Fashion Styles",
+      "parent_id": "group:fashion_style",
+      "source": "local_clothing_20260526",
+      "review_status": "source_mapping_unverified"
+    },
+    {
+      "id": "group:fashion_style:gyaru",
+      "label_zh": "辣妹系",
+      "label_en": "Gyaru",
+      "parent_id": "group:fashion_style",
+      "source": "local_clothing_20260526",
+      "review_status": "source_mapping_unverified"
+    },
+    {
+      "id": "group:fashion_style:lolita_fashion",
+      "label_zh": "洛丽塔系",
+      "label_en": "Lolita Fashion",
+      "parent_id": "group:fashion_style",
+      "source": "local_clothing_20260526",
+      "review_status": "source_mapping_unverified"
+    },
+    {
+      "id": "group:fashion_style:western_fashion_styles",
+      "label_zh": "西方时尚风格",
+      "label_en": "Western Fashion Styles",
+      "parent_id": "group:fashion_style",
+      "source": "local_clothing_20260526",
+      "review_status": "source_mapping_unverified"
+    },
+    {
+      "id": "group:fashion_style:chinese_and_korean_fashion_styles",
+      "label_zh": "中韩流行风格",
+      "label_en": "Chinese and Korean Fashion Styles",
+      "parent_id": "group:fashion_style",
+      "source": "local_clothing_20260526",
+      "review_status": "source_mapping_unverified"
+    },
+    {
+      "id": "group:fashion_style:cultural_and_historical_styles",
+      "label_zh": "文化与历史风格",
+      "label_en": "Cultural and Historical Styles",
+      "parent_id": "group:fashion_style",
+      "source": "local_clothing_20260526",
+      "review_status": "source_mapping_unverified"
+    },
+    {
+      "id": "group:fashion_style",
+      "label_zh": "时尚风格",
+      "label_en": "Fashion Style",
+      "parent_id": "group:danbooru_clothing_resource",
+      "source": "local_clothing_20260526",
+      "review_status": "source_mapping_unverified"
+    },
+    {
+      "id": "studio:appearance",
+      "label_zh": "外观特征",
+      "parent_id": null,
+      "source": "studio_suite_proposal",
+      "review_status": "proposed"
+    },
+    {
+      "id": "studio:pose",
+      "label_zh": "动作与姿势",
+      "parent_id": null,
+      "source": "studio_suite_proposal",
+      "review_status": "proposed"
+    },
+    {
+      "id": "studio:expression",
+      "label_zh": "表情与情绪",
+      "parent_id": null,
+      "source": "studio_suite_proposal",
+      "review_status": "proposed"
+    },
+    {
+      "id": "studio:environment",
+      "label_zh": "场景与环境",
+      "parent_id": null,
+      "source": "studio_suite_proposal",
+      "review_status": "proposed"
+    },
+    {
+      "id": "studio:composition",
+      "label_zh": "构图与镜头",
+      "parent_id": null,
+      "source": "studio_suite_proposal",
+      "review_status": "proposed"
+    },
+    {
+      "id": "studio:lighting",
+      "label_zh": "光影",
+      "parent_id": null,
+      "source": "studio_suite_proposal",
+      "review_status": "proposed"
+    },
+    {
+      "id": "studio:color",
+      "label_zh": "颜色",
+      "parent_id": null,
+      "source": "studio_suite_proposal",
+      "review_status": "proposed"
+    },
+    {
+      "id": "studio:objects",
+      "label_zh": "物品",
+      "parent_id": null,
+      "source": "studio_suite_proposal",
+      "review_status": "proposed"
+    },
+    {
+      "id": "studio:style",
+      "label_zh": "画风与表现",
+      "parent_id": null,
+      "source": "studio_suite_proposal",
+      "review_status": "proposed"
+    },
+    {
+      "id": "studio:count",
+      "label_zh": "人数与数量",
+      "parent_id": null,
+      "source": "studio_suite_proposal",
+      "review_status": "proposed"
+    },
+    {
+      "id": "studio:unclassified",
+      "label_zh": "待分类",
+      "parent_id": null,
+      "source": "studio_suite_proposal",
+      "review_status": "proposed"
+    }
+  ],
+  "tag_assignments": [],
+  "notes": [
+    "仅分类定义；未完成全量tag分类，也未创建可运行词典库。",
+    "已有服装组不是已验证的全量官方分类；同一tag允许属于多个语义组。",
+    "用户group_tags保持原样，禁止导入时自动覆盖。"
+  ]
+}
