@@ -11,7 +11,9 @@ import atexit
 import queue
 import threading
 import uuid
-from io import BytesIO
+import hashlib
+import sqlite3
+from io import BytesIO, StringIO
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -33,6 +35,7 @@ except Exception:
 
 from .model_info import build_model_payload, save_model_notes
 from .local_dictionary import LocalDanbooruDictionary
+from .tag_library import TagLibrary
 from .hy_mt_runtime import HyMtRuntime, normalize_tag_separators, translation_needed
 
 
@@ -66,6 +69,8 @@ _PREVIEW_EXTS = (".jpg", ".png", ".jpeg", ".gif", ".preview.jpg", ".preview.png"
 _PREVIEW_THUMB_CACHE: dict[str, tuple[tuple[int, int], bytes, str]] = {}
 _PREVIEW_THUMB_MAX_SIZE = 320
 _LOCAL_DICTIONARY = LocalDanbooruDictionary(PACKAGE_DIR, STORAGE_DIR)
+_TAG_LIBRARY = TagLibrary(PACKAGE_DIR)
+_LIBRARY_GROUP_LOCK = threading.Lock()
 _HY_MT_RUNTIME = HyMtRuntime(PACKAGE_DIR)
 
 
@@ -590,6 +595,73 @@ async def _request_json_dict(request) -> dict:
         return data if isinstance(data, dict) else {}
     except Exception:
         return {}
+
+
+def _library_group_state():
+    path = _group_tags_active_file("zh_CN")
+    if path is None:
+        return None, [], "missing"
+    raw = path.read_bytes()
+    data = _yaml_instance().load(raw.decode("utf-8-sig")) or []
+    if not isinstance(data, list):
+        raise ValueError("group tag YAML root must be a list")
+    return path, data, hashlib.sha256(raw).hexdigest()
+
+
+def _library_quick_groups():
+    with _LIBRARY_GROUP_LOCK:
+        _, data, revision = _library_group_state()
+        items = []
+        for group in data:
+            if not isinstance(group, dict):
+                continue
+            for child in group.get("groups", []) or []:
+                if isinstance(child, dict) and group.get("name") and child.get("name"):
+                    items.append({"key": str(group["name"]), "group": str(child["name"])})
+                    if len(items) >= 5000:
+                        break
+            if len(items) >= 5000:
+                break
+        return {"items": items, "revision": revision}
+
+
+def _library_quick_add(data):
+    canonical = data.get("canonical")
+    if not isinstance(canonical, str) or not canonical or len(canonical) > 512:
+        raise ValueError("invalid_canonical")
+    item = _TAG_LIBRARY.detail(canonical)
+    if not item or not item.get("canonical"):
+        raise ValueError("tag_not_found")
+    with _LIBRARY_GROUP_LOCK:
+        _, groups, revision = _library_group_state()
+        if data.get("revision") != revision:
+            raise ValueError("快捷库已改变，请重新选择分组后再加入")
+        candidates = [child for group in groups if isinstance(group, dict) and group.get("name") == data.get("key")
+                      for child in (group.get("groups", []) or []) if isinstance(child, dict) and child.get("name") == data.get("group")]
+        if len(candidates) != 1:
+            raise ValueError("分组不存在或名称有歧义，请先在快捷库整理分组")
+        tags = candidates[0].setdefault("tags", {})
+        if not isinstance(tags, dict):
+            raise ValueError("invalid_group_tags")
+        key = item["canonical"]
+        if any(str(name).replace("\\(", "(").replace("\\)", ")").replace(" ", "_").casefold() == key.replace(" ", "_").casefold() for name in tags):
+            raise ValueError("快捷分组已有此标签，未覆盖原有内容")
+        tags[key] = item.get("label_zh") or key
+        stream = StringIO()
+        _yaml_instance().dump(groups, stream)
+        destination = GROUP_TAGS_DIR / "custom.yaml"
+        temporary = GROUP_TAGS_DIR / (".library-" + uuid.uuid4().hex + ".tmp")
+        try:
+            GROUP_TAGS_DIR.mkdir(parents=True, exist_ok=True)
+            temporary.write_text(stream.getvalue(), encoding="utf-8")
+            # Old editors may save while we serialize. Recheck before replacement.
+            if _library_group_state()[2] != revision:
+                raise ValueError("快捷库已改变，未写入，请重试")
+            os.replace(temporary, destination)
+        finally:
+            temporary.unlink(missing_ok=True)
+        _TEXT_CACHE.pop(str(destination), None)
+        return {"canonical": key}
 
 
 def _list_csvs():
@@ -1737,6 +1809,89 @@ def register_prompt_studio_routes():
             "hy_mt": _HY_MT_RUNTIME.status(),
             "dictionary": _LOCAL_DICTIONARY.status(),
         })
+
+    @routes.get("/studio-suite/prompt-studio/library/{action}")
+    async def prompt_studio_library_get(request):
+        action = request.match_info["action"]
+        try:
+            if action == "status":
+                result = await asyncio.to_thread(_TAG_LIBRARY.status)
+            elif action == "quick-groups":
+                result = await asyncio.to_thread(_library_quick_groups)
+            else:
+                if not (await asyncio.to_thread(_TAG_LIBRARY.status)).get("ready"):
+                    return web.json_response({"success": False, "error": "词典索引未安装，请运行 scripts/build_tag_library.py"}, status=503)
+                if action == "categories":
+                    result = await asyncio.to_thread(_TAG_LIBRARY.categories)
+                elif action == "works":
+                    query = str(request.query.get("q", ""))
+                    if len(query) > 160:
+                        raise ValueError("query_too_long")
+                    limit = min(100, max(1, int(request.query.get("limit", "50"))))
+                    result = await asyncio.to_thread(_TAG_LIBRARY.works, query, limit)
+                elif action == "search":
+                    args = {key: str(request.query.get(key, "")) for key in (
+                        "q", "category", "kind", "cursor", "sort", "initial", "work"
+                    )}
+                    if any(len(args[key]) > (4096 if key == "cursor" else 160) for key in args):
+                        raise ValueError("query_too_long")
+                    args["limit"] = min(100, max(1, int(request.query.get("limit", "40"))))
+                    args["page"] = int(request.query.get("page", "1"))
+                    result = await asyncio.to_thread(_TAG_LIBRARY.search, **args)
+                elif action in {"detail", "related"}:
+                    canonical = str(request.query.get("canonical", ""))
+                    if not canonical or len(canonical) > 512:
+                        raise ValueError("invalid_canonical")
+                    if action == "detail":
+                        item = await asyncio.to_thread(_TAG_LIBRARY.detail, canonical)
+                        if not item:
+                            return web.json_response({"success": False, "error": "tag_not_found"}, status=404)
+                        result = {"item": item}
+                    else:
+                        limit = min(100, max(1, int(request.query.get("limit", "20"))))
+                        result = await asyncio.to_thread(_TAG_LIBRARY.related, canonical, limit)
+                else:
+                    raise web.HTTPNotFound()
+            return web.json_response({"success": True, **result})
+        except (ValueError, TypeError) as error:
+            return web.json_response({"success": False, "error": str(error)}, status=400)
+        except (OSError, RuntimeError, sqlite3.Error) as error:
+            return web.json_response({"success": False, "error": str(error)}, status=503)
+
+    @routes.post("/studio-suite/prompt-studio/library/quick-add")
+    async def prompt_studio_library_quick_add(request):
+        try:
+            result = await asyncio.to_thread(_library_quick_add, await _request_json_dict(request))
+            return web.json_response({"success": True, **result})
+        except (ValueError, TypeError) as error:
+            return web.json_response({"success": False, "error": str(error)}, status=409)
+        except (OSError, RuntimeError, sqlite3.Error) as error:
+            return web.json_response({"success": False, "error": str(error)}, status=503)
+
+    @routes.post("/studio-suite/prompt-studio/glossary_lookup")
+    async def prompt_studio_glossary_lookup(request):
+        data = await _request_json_dict(request)
+        terms = data.get("terms", [])
+        language = data.get("language", "zh")
+        if (language not in ("zh", "en") or not isinstance(terms, list) or len(terms) > 512
+                or any(not isinstance(term, str) or len(term) > 8192 or "\x00" in term for term in terms)
+                or sum(len(term) for term in terms) > 120000):
+            return web.json_response({"success": False, "error": "invalid_glossary_request"}, status=400)
+        try:
+            if (await asyncio.to_thread(_TAG_LIBRARY.status)).get("ready"):
+                result = await asyncio.to_thread(_TAG_LIBRARY.lookup, terms, language)
+                missing = result.get("unmatched", [])
+                if missing:
+                    # Preserve extra local CSVs, never resurrect ambiguous legacy aliases.
+                    extra = await asyncio.to_thread(_LOCAL_DICTIONARY.glossary_lookup, missing, language, include_characters=False)
+                    result["matches"].extend(extra["matches"])
+                    found = {item["text"] for item in extra["matches"]}
+                    result["unmatched"] = [term for term in missing if term not in found]
+            else:
+                result = await asyncio.to_thread(_LOCAL_DICTIONARY.glossary_lookup, terms, language)
+        except (OSError, RuntimeError, sqlite3.Error) as error:
+            return web.json_response({"success": False, "error": str(error)}, status=503)
+        return web.json_response({"success": True, **result})
 
     @routes.post("/studio-suite/prompt-studio/dictionary_lookup")
     async def prompt_studio_dictionary_lookup(request):
