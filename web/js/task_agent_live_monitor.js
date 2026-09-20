@@ -2,6 +2,7 @@ import { app } from "/scripts/app.js";
 
 const STATUS_URL = "/studio-suite/task-agent/monitor/status";
 const POSITION_KEY = "studio-suite-task-agent-monitor-position";
+const REQUEST_TIMEOUT_MS = 10000;
 
 function formatMb(value) {
   const number = Number(value);
@@ -343,7 +344,9 @@ function setText(panel, field, value) {
 
 function renderPayload(dom, payload) {
   const summary = backendSummary(payload);
-  dom.bubble.dataset.health = summary.health;
+  if (dom.bubble.dataset.health !== summary.health) dom.bubble.dataset.health = summary.health;
+  // The bubble stays live; a closed panel must not rebuild hidden log/output DOM.
+  if (!dom.panel.classList.contains("open")) return;
   const healthHtml = `<span class="ss-ta-health" data-health="${summary.health}"><span class="ss-ta-dot"></span>${summary.health}</span>`;
   const healthElement = dom.panel.querySelector('[data-field="health"]');
   if (healthElement && healthElement.dataset.health !== summary.health) {
@@ -380,7 +383,8 @@ function renderPayload(dom, payload) {
   setText(
     dom.panel,
     "live_output",
-    latestOutputEvent?.output_text
+    activeTask?.stream_text
+      || latestOutputEvent?.output_text
       || latestOutputEvent?.metadata?.raw_text_preview
       || lastOutput?.output_text
       || activeTask?.message
@@ -453,46 +457,84 @@ function installDragging(dom) {
   });
 }
 
-async function fetchMonitorStatus(dom) {
-  try {
-    const response = await fetch(`${STATUS_URL}?t=${Date.now()}`, { cache: "no-store" });
-    const payload = await response.json();
-    renderPayload(dom, payload);
-  } catch (error) {
-    dom.bubble.dataset.health = "error";
-    setText(dom.panel, "updated", new Date().toLocaleTimeString());
-    setText(dom.panel, "log_tail", `monitor request failed: ${error}`);
-  }
-}
-
 function installMonitor() {
   if (document.querySelector(".ss-ta-monitor-bubble")) return;
   const dom = createMonitorDom();
   installDragging(dom);
   let open = false;
   let timer = null;
+  let inFlight = false;
+  let controller = null;
+  let pageActive = true;
+  const visible = () => pageActive && !document.hidden;
 
   const schedule = () => {
-    clearInterval(timer);
-    timer = setInterval(() => fetchMonitorStatus(dom), open ? 2000 : 8000);
+    clearTimeout(timer);
+    if (visible() && !inFlight) timer = setTimeout(refresh, open ? 750 : 8000);
   };
+
+  async function refresh() {
+    clearTimeout(timer);
+    if (inFlight || !visible()) return;
+    inFlight = true;
+    controller = new AbortController();
+    const request = controller;
+    const timeout = setTimeout(() => request.abort("monitor-timeout"), REQUEST_TIMEOUT_MS);
+    try {
+      const response = await fetch(`${STATUS_URL}?t=${Date.now()}`, {
+        cache: "no-store", signal: request.signal,
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const payload = await response.json();
+      if (visible() && !request.signal.aborted) renderPayload(dom, payload);
+    } catch (error) {
+      if (visible() && request.signal.reason !== "monitor-hidden") {
+        if (dom.bubble.dataset.health !== "error") dom.bubble.dataset.health = "error";
+        if (open) {
+          setText(dom.panel, "updated", new Date().toLocaleTimeString());
+          setText(dom.panel, "log_tail", `monitor request failed: ${error}`);
+        }
+      }
+    } finally {
+      clearTimeout(timeout);
+      controller = null;
+      inFlight = false;
+      // Schedule after completion so slow backends and refresh clicks cannot pile up requests.
+      schedule();
+    }
+  }
+
+  const suspend = () => {
+    clearTimeout(timer);
+    controller?.abort("monitor-hidden");
+  };
+  document.addEventListener("visibilitychange", () => {
+    if (visible()) refresh();
+    else suspend();
+  });
+  window.addEventListener("pagehide", () => {
+    pageActive = false;
+    suspend();
+  });
+  window.addEventListener("pageshow", () => {
+    pageActive = true;
+    refresh();
+  });
 
   dom.bubble.addEventListener("click", () => {
     open = !open;
     dom.panel.classList.toggle("open", open);
     placePanelNearBubble(dom.panel, dom.bubble);
-    fetchMonitorStatus(dom);
-    schedule();
+    refresh();
   });
   dom.panel.querySelector('[data-action="close"]')?.addEventListener("click", () => {
     open = false;
     dom.panel.classList.remove("open");
     schedule();
   });
-  dom.panel.querySelector('[data-action="refresh"]')?.addEventListener("click", () => fetchMonitorStatus(dom));
+  dom.panel.querySelector('[data-action="refresh"]')?.addEventListener("click", refresh);
 
-  fetchMonitorStatus(dom);
-  schedule();
+  refresh();
 }
 
 app.registerExtension({
