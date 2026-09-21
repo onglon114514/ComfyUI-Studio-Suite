@@ -18,8 +18,12 @@
 // Rules out so far: the input path. input.fill() and real key-by-key typing both
 // leave the tag lists empty. Rules in: the stubbed browser tests DO render tags,
 // so the difference is what the environment provides, not how text arrives.
-// Open question: whether the tag cloud needs a prompt snapshot pushed into the
-// iframe by the node controller before it renders anything.
+// Open question (ANSWERED here): the tag cloud is built from the prompt snapshot
+// the node controller pushes when the panel OPENS (g_value/n_value). Setting the
+// node's `positive` widget and reopening renders tags; typing into physton's own
+// textarea never does, because that textarea is an endpoint of the flow, not its
+// source. #handleMessage pushes a snapshot only for openWeiLinPrompt /
+// getWeilinPromptBox; changeWeiLinPrompt merely writes the node widgets back.
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const path = require('node:path');
 const output = process.env.STUDIO_SUITE_TEST_OUTPUT || require('node:os').tmpdir();
@@ -148,11 +152,24 @@ const AFTER_FILL_EXPECTATIONS = [
     }
 
     if (selectorMap) {
-      // Phase 2: fill the positive editor, physton re-renders the tag cloud.
-      await frame.locator('#weilin_prompt_text_input').fill('1girl, blue eyes');
-      try {
-        await frame.locator('.prompt-tags-list .prompt-tag .prompt-tag-value').first().waitFor({ timeout: 20000 });
-      } catch { /* judged below with exact counts */ }
+      // Phase 2: put text on the NODE and reopen the panel. The tag cloud is built
+      // from the snapshot the node controller pushes on open (g_value/n_value), not
+      // from physton's textarea: typing there (fill OR real keystrokes) leaves the
+      // tag lists empty, while setting the node widget renders them. Measured, not
+      // assumed — see the correction note in this file's header.
+      await page.evaluate(() => {
+        const widget = (probeFullNode.widgets || []).find(w => w.name === 'positive');
+        if (widget) { widget.value = '1girl, blue eyes'; probeFullNode.setDirtyCanvas?.(true, true); }
+      });
+      await page.evaluate(() => dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })));
+      await page.waitForTimeout(400);
+      frame = await openEditor(false);
+      const tagValueSelector = afterFill.find(e => e.id === 'tag-values')?.selector;
+      if (tagValueSelector) {
+        try {
+          await frame.locator(tagValueSelector).first().waitFor({ state: 'attached', timeout: 30000 });
+        } catch { /* judged below with exact counts */ }
+      }
       const fillDiag = await frame.locator('body').evaluate(() => {
         const ta = document.querySelector('#weilin_prompt_text_input');
         const lists = [...document.querySelectorAll('.prompt-tags-list')];
@@ -176,9 +193,23 @@ const AFTER_FILL_EXPECTATIONS = [
       await page.evaluate(() => dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })));
       await page.waitForTimeout(300);
       frame = await openEditor(true);
-      await frame.locator('body[data-studio-suite-ready="1"]').waitFor({ timeout: 45000 }).catch(() => {
-        failures.push('positive-only studio-suite-ready: ready signal missing after switching node');
-      });
+      // Same policy as the browser tests: our own signal first, then a bounded
+      // fallback on our own DOM, and report which path was taken instead of
+      // hanging. A missing signal alone is not proof the panel failed.
+      let posReadyPath = 'signal';
+      try {
+        await frame.locator('body[data-studio-suite-ready="1"]').waitFor({ timeout: 30000 });
+      } catch {
+        posReadyPath = 'fallback';
+        try {
+          await frame.locator('#weilin_prompt_text_input').waitFor({ timeout: 20000 });
+        } catch {
+          posReadyPath = 'none';
+          const diag = await frame.locator('body').evaluate(b => ({ nodes: b.querySelectorAll('*').length, htmlLength: b.innerHTML.length })).catch(() => null);
+          failures.push(`positive-only: neither our ready signal nor our own DOM appeared after switching node — the panel never initialized (frame: ${JSON.stringify(diag)})`);
+        }
+      }
+      report.push({ phase: 'positive-only', id: 'ready-path', path: posReadyPath, note: 'our own ready signal vs bounded fallback on our own DOM' });
       const posExp = expectations.find(e => e.id === 'group-tag-items');
       if (posExp) {
         const posGroup = (await measure(frame, [posExp]))[0];
