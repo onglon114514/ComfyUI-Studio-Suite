@@ -9,6 +9,17 @@
 // window.__studioSuiteWeilinSelectors, published by weilinAdapter.js, so this
 // probe cannot drift from production. A missing map means the deployed frontend
 // is older than this probe — deploy first, then re-run.
+// Expected state on a live ComfyUI (2026-09-21): the `filled` checks report zero
+// prompt tags. The explanation committed in 8771f74 — that our frontend never
+// POSTs /weilin/physton_prompt/set_data — is WRONG and is corrected here: that
+// route is the XML wizard persisting its own settings (newbieXmlWizard
+// saveSettings, key=SETTINGS_KEY), not a prompt-text bridge.
+//
+// Rules out so far: the input path. input.fill() and real key-by-key typing both
+// leave the tag lists empty. Rules in: the stubbed browser tests DO render tags,
+// so the difference is what the environment provides, not how text arrives.
+// Open question: whether the tag cloud needs a prompt snapshot pushed into the
+// iframe by the node controller before it renders anything.
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const path = require('node:path');
 const output = process.env.STUDIO_SUITE_TEST_OUTPUT || require('node:os').tmpdir();
