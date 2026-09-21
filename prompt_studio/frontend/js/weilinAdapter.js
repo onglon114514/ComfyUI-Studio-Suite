@@ -14,6 +14,11 @@
 // studioSuiteLlmTools.js#installStyle; they are presentation-only and do not
 // affect readiness or behavior queries.
 
+const LEGACY_AI_ICON = ".icon-svg-chatgpt";
+const LEGACY_AI_CHAT = ".physton-chatgpt-prompt";
+const LEGACY_AI_BUTTON = ".llm-btn";
+const LEGACY_AI_PACKAGES = ".physton-packages-state";
+
 export const WEILIN_SELECTORS = Object.freeze({
     promptScope: ".physton-prompt",
     tags: ".prompt-tags",
@@ -33,9 +38,20 @@ export const WEILIN_SELECTORS = Object.freeze({
     // Known trap: these items render only inside the negative editor container,
     // so they stay 0x0 forever on positive-only nodes. Never a readiness barrier.
     groupTagItems: ".group-tabs .tag-item",
-    legacyAi: [".icon-svg-chatgpt", ".physton-chatgpt-prompt", ".llm-btn", ".physton-packages-state"],
+    legacyAiIcon: LEGACY_AI_ICON,
+    legacyAiChat: LEGACY_AI_CHAT,
+    legacyAiButton: LEGACY_AI_BUTTON,
+    legacyAiPackages: LEGACY_AI_PACKAGES,
+    legacyAi: [LEGACY_AI_ICON, LEGACY_AI_CHAT, LEGACY_AI_BUTTON, LEGACY_AI_PACKAGES],
     legacyAiContainers: ".extend-btn-item, .physton-chatgpt-prompt, .physton-packages-state",
 });
+
+// Published so scripts/check_weilin_dom.cjs asserts against this exact map
+// instead of duplicating selector strings. The probe treats a missing map as
+// proof that the DEPLOYED frontend is older than the probe.
+if (typeof window !== "undefined") {
+    window.__studioSuiteWeilinSelectors = WEILIN_SELECTORS;
+}
 
 export const STUDIO_SUITE_READY_ATTRIBUTE = "data-studio-suite-ready";
 export const STUDIO_SUITE_READY_EVENT = "studio-suite-ready";
