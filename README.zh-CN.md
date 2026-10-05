@@ -318,18 +318,4 @@ ComfyUI/custom_nodes/comfyui_studio_suite/resources
 - `docs/ATTRIBUTION.md`
 - `THIRD_PARTY_NOTICES.md`
 
-## 发布前检查
 
-在打包或发布更新前，建议执行：
-
-```powershell
-python scripts/doctor_release.py
-python scripts/build_release_preview.py
-```
-
-它会检查：
-
-- 必需文件是否缺失
-- 是否泄露本机路径
-- 是否误打包大资源
-- 发布结构是否完整
