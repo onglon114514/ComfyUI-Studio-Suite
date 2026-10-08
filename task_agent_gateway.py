@@ -28,6 +28,15 @@ GATEWAY_BUILD_ID = str(Path(__file__).stat().st_mtime_ns)
 FRONTEND_PATH = PROJECT_DIR / "frontend" / "index.html"
 RUNTIME_DIR = PROJECT_DIR / "runtime"
 RUNTIME_LOG_DIR = RUNTIME_DIR / "logs"
+# webui ntr: ComfyUI upstream for Prompt Studio asset/API passthrough.
+# Requests are forwarded WITHOUT a foreign Origin so ComfyUI treats them as local.
+COMFYUI_UPSTREAM = os.environ.get("STUDIO_SUITE_COMFYUI_UPSTREAM", "http://127.0.0.1:8188")
+# Local group-tags store (same YAML store the Prompt Studio API reads).
+GROUP_TAGS_DIR = PROJECT_DIR / "prompt_studio" / "storage" / "group_tags"
+# Built-in workflow store (ComfyUI API-format json), scanned for ETN_Parameter nodes.
+WORKFLOWS_DIR = PROJECT_DIR / "workflows"
+# Graph-format workflow store (ComfyUI native .json with nodes/links/groups), for group switches.
+WORKFLOWS_GRAPH_DIR = PROJECT_DIR / "workflows_graph"
 RUNTIME_TEMP_DIR = RUNTIME_DIR / "temp"
 KOBOLDCPP_TEMP_ROOT = Path(
     os.environ.get("STUDIO_SUITE_KOBOLDCPP_TEMP_DIR")
@@ -5831,10 +5840,245 @@ class GatewayHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         return
 
+    def _load_local_group_tags(self, lang="zh_CN"):
+        """Read group-tags YAML from the local store (no ComfyUI dependency).
+        Mirrors prompt_studio/api.py:_load_group_tags: custom.yaml first,
+        then <lang>.yaml, then default.yaml; merged with prepend/append parts.
+        """
+        source_dir = GROUP_TAGS_DIR
+        if not source_dir.is_dir():
+            return ""
+
+        def tags_file(name):
+            return source_dir / f"{name}.yaml"
+
+        chosen = None
+        custom = tags_file("custom")
+        if custom.is_file():
+            try:
+                if custom.read_text(encoding="utf-8", errors="replace").strip():
+                    chosen = custom
+            except Exception:
+                chosen = None
+        if chosen is None:
+            lang_file = tags_file(lang)
+            if lang_file.is_file():
+                chosen = lang_file
+            else:
+                fallback = tags_file("default")
+                if fallback.is_file():
+                    chosen = fallback
+        if chosen is None:
+            return ""
+
+        parts = []
+        for extra in ("prepend", None, "append"):
+            try:
+                path = chosen if extra is None else tags_file(extra)
+                if path.is_file():
+                    text = path.read_text(encoding="utf-8", errors="replace").strip()
+                    if text:
+                        parts.append(text)
+            except Exception:
+                continue
+        return "\n\n".join(parts)
+
+    def _proxy_to_comfyui(self, method="GET"):
+        """Forward /studio-suite/* and /weilin/* to ComfyUI (8188) without a foreign Origin."""
+        path = self.path
+        target = COMFYUI_UPSTREAM + path
+        body = None
+        headers = {
+            "Accept": self.headers.get("Accept", "application/json"),
+            "Content-Type": self.headers.get("Content-Type", "application/json"),
+        }
+        if method == "POST":
+            length = int(self.headers.get("Content-Length", "0") or 0)
+            body = self.rfile.read(length) if length > 0 else None
+        try:
+            req = urllib.request.Request(target, data=body, headers=headers, method=method)
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                payload = resp.read()
+                self.send_response(resp.status)
+                self.send_header(
+                    "Content-Type",
+                    resp.headers.get("Content-Type", "application/json; charset=utf-8"),
+                )
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+        except urllib.error.HTTPError as error:
+            payload = error.read()
+            self.send_response(error.code)
+            self.send_header(
+                "Content-Type",
+                error.headers.get("Content-Type", "application/json; charset=utf-8"),
+            )
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+        except Exception as error:
+            self._send_json(
+                HTTPStatus.BAD_GATEWAY,
+                {"error": "comfyui_proxy_error", "detail": str(error)[:300]},
+            )
+
+    def _graph_param_view(self, graph):
+        """Build an API-ish node view from a graph so the frontend can render ETN_Parameter controls.
+
+        - every node -> {class_type, inputs}; inputs built from links (target -> [origin, origin_slot])
+        - ETN_Parameter nodes additionally get name/type/default/min/max from widgets_values
+        """
+        nodes = graph.get("nodes") or []
+        view = {}
+        for node in nodes:
+            nid = str(node.get("id"))
+            view[nid] = {"class_type": node.get("type"), "inputs": {}}
+        # links -> inputs
+        for link in graph.get("links") or []:
+            try:
+                if isinstance(link, dict):
+                    origin_id = link.get("origin_id", link.get("source"))
+                    origin_slot = link.get("origin_slot", link.get("sourceSlot", 0))
+                    target_id = link.get("target_id", link.get("target"))
+                    target_slot = link.get("target_slot", link.get("targetSlot", 0))
+                    link_type = link.get("type")
+                else:
+                    origin_id, origin_slot, target_id, target_slot, link_type = link[1], link[2], link[3], link[4], (link[5] if len(link) > 5 else None)
+            except Exception:
+                continue
+            tgt = view.get(str(target_id))
+            if tgt is None:
+                continue
+            # resolve the target input's name from the node's inputs array
+            field = None
+            for node in nodes:
+                if str(node.get("id")) == str(target_id):
+                    ins = node.get("inputs") or []
+                    if isinstance(ins, list) and target_slot is not None and 0 <= int(target_slot) < len(ins):
+                        item = ins[int(target_slot)]
+                        field = item.get("name") if isinstance(item, dict) else None
+                    break
+            if not field:
+                field = f"input_{target_slot}"
+            tgt["inputs"][field] = [str(origin_id), origin_slot, link_type]
+        # ETN_Parameter widgets
+        for node in nodes:
+            if node.get("type") != "ETN_Parameter":
+                continue
+            nid = str(node.get("id"))
+            wv = node.get("widgets_values") or []
+            entry = view[nid]
+            entry["inputs"]["name"] = wv[0] if len(wv) > 0 else ""
+            entry["inputs"]["type"] = wv[1] if len(wv) > 1 else "text"
+            entry["inputs"]["default"] = wv[2] if len(wv) > 2 else ""
+            if len(wv) > 3:
+                entry["inputs"]["min"] = wv[3]
+            if len(wv) > 4:
+                entry["inputs"]["max"] = wv[4]
+        return view
+
     def do_GET(self):
         if self.path in ("/", "/index.html"):
             html = FRONTEND_PATH.read_text(encoding="utf-8")
             self._send_html(HTTPStatus.OK, html)
+            return
+        if self.path == "/api/workflow":
+            # list available built-in workflows
+            names = []
+            if WORKFLOWS_DIR.is_dir():
+                names = sorted(p.stem for p in WORKFLOWS_DIR.glob("*.json"))
+            body = json.dumps({"workflows": names}, ensure_ascii=False)
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body.encode("utf-8"))))
+            self.end_headers()
+            self.wfile.write(body.encode("utf-8"))
+            return
+        if self.path.startswith("/api/workflow/") and self.path.count("/") == 3:
+            name = self.path.split("/")[-1]
+            target = WORKFLOWS_DIR / f"{name}.json"
+            if not WORKFLOWS_DIR.is_dir() or not target.is_file():
+                self._send_json(HTTPStatus.NOT_FOUND, {"error": "workflow_not_found", "name": name})
+                return
+            body = target.read_text(encoding="utf-8", errors="replace")
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body.encode("utf-8"))))
+            self.end_headers()
+            self.wfile.write(body.encode("utf-8"))
+            return
+        if self.path == "/api/graph-workflow":
+            names = []
+            if WORKFLOWS_GRAPH_DIR.is_dir():
+                names = sorted(p.stem for p in WORKFLOWS_GRAPH_DIR.glob("*.json"))
+            self._send_json(HTTPStatus.OK, {"workflows": names})
+            return
+        if self.path.startswith("/api/graph-workflow/") and self.path.endswith("/groups"):
+            name = self.path[len("/api/graph-workflow/"):-len("/groups")].strip("/")
+            target = WORKFLOWS_GRAPH_DIR / f"{name}.json"
+            if not WORKFLOWS_GRAPH_DIR.is_dir() or not target.is_file():
+                self._send_json(HTTPStatus.NOT_FOUND, {"error": "graph_workflow_not_found", "name": name})
+                return
+            try:
+                import graph_to_prompt as _g2p
+                graph = json.loads(target.read_text(encoding="utf-8", errors="replace"))
+                groups = _g2p.list_groups(graph)
+                mode_by_id = {str(n.get("id")): n.get("mode", 0) for n in (graph.get("nodes") or [])}
+                color_by_title = {g.get("title"): g.get("color") for g in (graph.get("groups") or [])}
+                for grp in groups:
+                    modes = [mode_by_id.get(str(nid), 0) for nid in (grp.get("node_ids") or [])]
+                    grp["default_enabled"] = any(m != 4 for m in modes)
+                    grp["bypassed_count"] = sum(1 for m in modes if m == 4)
+                    grp["color"] = color_by_title.get(grp.get("title"))
+                subgraphs = [
+                    {"title": sg.get("name"), "kind": "subgraph", "node_count": len(sg.get("nodes") or [])}
+                    for sg in ((graph.get("definitions") or {}).get("subgraphs") or [])
+                    if sg.get("name")
+                ]
+            except Exception as error:
+                self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "graph_parse_failed", "detail": str(error)[:300]})
+                return
+            self._send_json(HTTPStatus.OK, {"name": name, "groups": groups, "subgraphs": subgraphs})
+            return
+        if self.path.startswith("/api/graph-workflow/") and self.path.endswith("/param-view"):
+            name = self.path[len("/api/graph-workflow/"):-len("/param-view")].strip("/")
+            target = WORKFLOWS_GRAPH_DIR / f"{name}.json"
+            if not WORKFLOWS_GRAPH_DIR.is_dir() or not target.is_file():
+                self._send_json(HTTPStatus.NOT_FOUND, {"error": "graph_workflow_not_found", "name": name})
+                return
+            try:
+                graph = json.loads(target.read_text(encoding="utf-8", errors="replace"))
+                view = self._graph_param_view(graph)
+            except Exception as error:
+                self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "graph_param_view_failed", "detail": str(error)[:300]})
+                return
+            self._send_json(HTTPStatus.OK, {"name": name, "nodes": view})
+            return
+        if self.path.startswith("/api/graph-workflow/") and self.path.count("/") == 3:
+            name = self.path.split("/")[-1]
+            target = WORKFLOWS_GRAPH_DIR / f"{name}.json"
+            if not WORKFLOWS_GRAPH_DIR.is_dir() or not target.is_file():
+                self._send_json(HTTPStatus.NOT_FOUND, {"error": "graph_workflow_not_found", "name": name})
+                return
+            body = target.read_text(encoding="utf-8", errors="replace")
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body.encode("utf-8"))))
+            self.end_headers()
+            self.wfile.write(body.encode("utf-8"))
+            return
+        if self.path == "/api/tag-groups":
+            payload = {"tags": self._load_local_group_tags("zh_CN")}
+            body = json.dumps(payload, ensure_ascii=False)
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body.encode("utf-8"))))
+            self.end_headers()
+            self.wfile.write(body.encode("utf-8"))
+            return
+        if self.path.startswith("/studio-suite/") or self.path.startswith("/weilin/") or self.path.startswith("/sd-webui-prompt-all-in-one-js") or self.path.startswith("/physton_prompt/") or self.path.startswith("/view") or self.path.startswith("/history") or self.path.startswith("/object_info"):
+            self._proxy_to_comfyui("GET")
             return
         if self.path == "/backend/status":
             self._send_json(HTTPStatus.OK, self.backend.status())
@@ -5845,6 +6089,9 @@ class GatewayHandler(BaseHTTPRequestHandler):
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
 
     def do_POST(self):
+        if self.path.startswith("/studio-suite/") or self.path.startswith("/weilin/") or self.path.startswith("/physton_prompt/") or self.path.startswith("/prompt") or self.path.startswith("/upload"):
+            self._proxy_to_comfyui("POST")
+            return
         length = int(self.headers.get("Content-Length", "0") or "0")
         raw = self.rfile.read(length) if length > 0 else b"{}"
         try:
@@ -5854,6 +6101,108 @@ class GatewayHandler(BaseHTTPRequestHandler):
             return
 
         try:
+            if self.path == "/api/generate-graph":
+                name = str(payload.get("name") or "")
+                disabled = payload.get("disabled_groups") or []
+                positive = payload.get("positive") or ""
+                negative = payload.get("negative") or ""
+                target = WORKFLOWS_GRAPH_DIR / f"{name}.json"
+                if not WORKFLOWS_GRAPH_DIR.is_dir() or not target.is_file():
+                    self._send_json(HTTPStatus.NOT_FOUND, {"error": "graph_workflow_not_found", "name": name})
+                    return
+                try:
+                    import graph_to_prompt as _g2p
+                    graph = json.loads(target.read_text(encoding="utf-8", errors="replace"))
+                    result = _g2p.graph_to_prompt(
+                        graph,
+                        object_info_url=COMFYUI_UPSTREAM + "/object_info",
+                        disabled_groups=disabled,
+                    )
+                except Exception as error:
+                    self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "graph_convert_failed", "detail": str(error)[:400]})
+                    return
+                prompt = result.get("prompt") or {}
+                warnings = result.get("warnings") or []
+
+                # 注入遵循 webui ntr 约定：只认 ETN_Parameter
+                #   type 含 prompt (positive) → 正；含 prompt (negative) → 负；其余参数走 overrides
+                injected = {"positive": 0, "negative": 0, "overrides": 0}
+                overrides = payload.get("overrides") or {}
+                for _nid, node in list(prompt.items()):
+                    if str(node.get("class_type") or "") != "ETN_Parameter":
+                        continue
+                    ins = node.setdefault("inputs", {})
+                    typ = str(ins.get("type") or "")
+                    if "prompt" in typ:
+                        if positive and "negative" not in typ:
+                            ins["default"] = positive
+                            injected["positive"] += 1
+                        elif negative and "negative" in typ:
+                            ins["default"] = negative
+                            injected["negative"] += 1
+                    elif _nid in overrides:
+                        value = overrides.get(_nid)
+                        if isinstance(value, bool):
+                            ins["default"] = "true" if value else "false"
+                        else:
+                            ins["default"] = "" if value is None else str(value)
+                        injected["overrides"] += 1
+                # 兜底：经典 KSampler 直连 CLIPTextEncode（字面量）时也能注入
+                if positive or negative:
+                    for _nid, node in list(prompt.items()):
+                        if "Sampler" not in str(node.get("class_type") or ""):
+                            continue
+                        ins = node.get("inputs") or {}
+                        for field, value in (("positive", positive), ("negative", negative)):
+                            if not value:
+                                continue
+                            ref = ins.get(field)
+                            if isinstance(ref, list) and len(ref) == 2:
+                                encoder = prompt.get(str(ref[0]))
+                                if encoder is not None and isinstance((encoder.get("inputs") or {}).get("text"), str):
+                                    encoder["inputs"]["text"] = value
+
+                if payload.get("dry_run"):
+                    self._send_json(HTTPStatus.OK, {
+                        "dry_run": True,
+                        "node_count": len(prompt),
+                        "warnings": warnings,
+                        "injected": injected,
+                        "disabled_groups": disabled,
+                        "sample_nodes": [
+                            {"id": key, "class_type": value.get("class_type")}
+                            for key, value in list(prompt.items())[:12]
+                        ],
+                    })
+                    return
+                body = json.dumps({"prompt": prompt, "client_id": "webui-ntr-graph"}).encode("utf-8")
+                try:
+                    request = urllib.request.Request(
+                        COMFYUI_UPSTREAM + "/prompt",
+                        data=body,
+                        headers={"Content-Type": "application/json"},
+                        method="POST",
+                    )
+                    with urllib.request.urlopen(request, timeout=60) as response:
+                        submitted = json.loads(response.read().decode("utf-8", errors="replace"))
+                    self._send_json(HTTPStatus.OK, {
+                        "prompt_id": submitted.get("prompt_id"),
+                        "node_count": len(prompt),
+                        "warnings": warnings,
+                        "injected": injected,
+                        "disabled_groups": disabled,
+                    })
+                except urllib.error.HTTPError as error:
+                    detail = error.read().decode("utf-8", errors="replace")[:600]
+                    self._send_json(error.code, {
+                        "error": "comfyui_submit_failed",
+                        "detail": detail,
+                        "node_count": len(prompt),
+                        "warnings": warnings,
+                    })
+                except Exception as error:
+                    self._send_json(HTTPStatus.BAD_GATEWAY, {"error": "comfyui_unreachable", "detail": str(error)[:300]})
+                return
             if self.path == "/backend/load":
                 result = self.backend.ensure_loaded(
                     backend_profile=payload.get("backend_profile"),

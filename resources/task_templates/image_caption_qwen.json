@@ -1,6 +1,6 @@
 {
   "task_type": "image_captioning",
-  "target_profile": "newbie_exp01",
+  "target_profile": "qwen36_35b_a3b_vision",
   "style_hint": "one concise natural-language paragraph describing the image; no tag spam, no quality words, no meta commentary",
   "purpose": "用视觉模型为单张图生成一段自然语言描述，可直接当反推提示词的素材，或作为训练 caption 的第二段。",
   "input_field": "image_path",

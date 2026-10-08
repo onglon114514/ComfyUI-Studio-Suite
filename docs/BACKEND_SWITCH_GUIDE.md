@@ -23,7 +23,7 @@ This project now supports backend selection at the node level through `backend_p
 
 `gateway_url` is still kept for compatibility, but its meaning is now:
 
-- if you keep `http://127.0.0.1:8765`
+- if you keep `http://127.0.0.1:7860`
   - local direct execution stays enabled
   - provider-specific defaults may apply
 - if you enter a real backend URL
@@ -50,13 +50,13 @@ This project now supports backend selection at the node level through `backend_p
 ### `lm_studio`
 
 - mode: attach existing
-- if `gateway_url` is left at the default `8765`, the node will fall back to:
+- if `gateway_url` is left at the default `7860`, the node will fall back to:
   - `http://127.0.0.1:1234/v1`
 
 ### `vllm`
 
 - mode: attach existing
-- if `gateway_url` is left at the default `8765`, the node will fall back to:
+- if `gateway_url` is left at the default `7860`, the node will fall back to:
   - `http://127.0.0.1:8000/v1`
 
 ### `custom_openai_compat`

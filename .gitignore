@@ -30,6 +30,7 @@ prompt_studio/storage/prompt_data/history.*.json
 prompt_studio/storage/prompt_data/favorite.*.json
 prompt_studio/storage/notes/
 prompt_studio/storage/autocomplete/custom_words.csv
+prompt_studio/storage/preview_thumbs/
 
 # Large optional Danbooru/resource files.
 # Host these on Hugging Face or another release asset store instead.
@@ -62,3 +63,15 @@ docs/RESOURCE_PATH_INDEX.md
 dist/
 *.zip
 *.7z
+
+# Scratch one-off backups created by local fix scripts
+*.bak-*
+*.bak
+
+# Large local data resources (regenerable; not for git)
+resources/danbooru_snapshot_*.sqlite
+resources/danbooru_wiki_pages_*.parquet
+resources/qdlabs_tags.jsonl
+resources/danbooru_tags_data_zh/
+resources/danbooru_tags_classified/
+resources/danbooru_tag_implications.csv

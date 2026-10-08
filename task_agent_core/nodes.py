@@ -308,7 +308,7 @@ def maybe_backend_base_url_from_gateway_field(gateway_url):
     if not value:
         return ""
     lowered = value.lower()
-    if lowered.endswith(":8765") or lowered.endswith(":8765/"):
+    if lowered.endswith(":7860") or lowered.endswith(":7860/"):
         return ""
     if lowered.startswith("http://") or lowered.startswith("https://"):
         return value
@@ -745,7 +745,7 @@ def is_local_gateway_url(gateway_url):
 def parse_gateway_host_port(gateway_url):
     parsed = urlparse(str(gateway_url or "").strip())
     host = parsed.hostname or "127.0.0.1"
-    port = parsed.port or 8765
+    port = parsed.port or 7860
     return host, port
 
 
@@ -936,7 +936,7 @@ def build_common_inputs():
     return {
         "gateway_url": (
             "STRING",
-            {"default": "http://127.0.0.1:8765", "multiline": False},
+            {"default": "http://127.0.0.1:7860", "multiline": False},
         ),
         "backend_provider": (
             BACKEND_PROVIDER_OPTIONS,
@@ -1020,7 +1020,36 @@ def inject_backend_payload(payload, backend_provider, model_source, backend_prof
 
 def custom_model_looks_like_vision_family(custom_model_path):
     path_text = str(custom_model_path or "").strip().lower()
-    return "gemma" in path_text and ("hauhaucs" in path_text or "vision" in path_text or "aggressive" in path_text)
+    has_vision_marker = (
+        "vision" in path_text
+        or "mmproj" in path_text
+        or "vl" in path_text
+        or "vl-" in path_text
+    )
+    if has_vision_marker:
+        return True
+    if "gemma" in path_text and ("hauhaucs" in path_text or "aggressive" in path_text):
+        return True
+    # Qwen vision-capable families shipped with an mmproj sibling (e.g.
+    # qwen-3.6-35b-a3b-Uncensored-HauhauCS-Aggressive) are vision-capable;
+    # the marker files sit next to the model in the same directory.
+    if "qwen" in path_text and ("a3b" in path_text or "a4b" in path_text or "uncensored" in path_text):
+        # confirm an mmproj sibling exists to avoid misclassifying text-only Qwen
+        return _mmproj_sibling_exists(custom_model_path)
+    return False
+
+
+def _mmproj_sibling_exists(custom_model_path):
+    try:
+        model_file = Path(str(custom_model_path or "").strip())
+        if not model_file.is_file():
+            return False
+        for sibling in model_file.parent.iterdir():
+            if sibling.name.lower().startswith("mmproj") and sibling.suffix.lower() == ".gguf":
+                return True
+        return False
+    except Exception:
+        return False
 
 
 def task_inputs_need_vision(resolved_task_type, inputs):

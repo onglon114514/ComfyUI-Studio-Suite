@@ -1,0 +1,362 @@
+{
+  "10": {
+    "inputs": {
+      "unet_name": [
+        "13",
+        0
+      ],
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "UNet加载器"
+    }
+  },
+  "11": {
+    "inputs": {
+      "vae_name": [
+        "15",
+        0
+      ]
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "加载VAE"
+    }
+  },
+  "12": {
+    "inputs": {
+      "clip_name": [
+        "14",
+        0
+      ],
+      "type": [
+        "19",
+        0
+      ],
+      "device": [
+        "23",
+        0
+      ]
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "加载CLIP"
+    }
+  },
+  "13": {
+    "inputs": {
+      "name": "unet_name",
+      "type": "choice",
+      "default": "anima\\anima_baseV10.safetensors"
+    },
+    "class_type": "ETN_Parameter",
+    "_meta": {
+      "title": "Parameter"
+    }
+  },
+  "14": {
+    "inputs": {
+      "name": "clip_name",
+      "type": "choice",
+      "default": "anima\\qwen_3_06b_base.safetensors"
+    },
+    "class_type": "ETN_Parameter",
+    "_meta": {
+      "title": "Parameter"
+    }
+  },
+  "15": {
+    "inputs": {
+      "name": "vae",
+      "type": "choice",
+      "default": "qwen_image_vae.safetensors"
+    },
+    "class_type": "ETN_Parameter",
+    "_meta": {
+      "title": "Parameter"
+    }
+  },
+  "16": {
+    "inputs": {
+      "seed": 0,
+      "steps": [
+        "27",
+        0
+      ],
+      "cfg": [
+        "28",
+        0
+      ],
+      "sampler_name": [
+        "30",
+        0
+      ],
+      "scheduler": [
+        "32",
+        0
+      ],
+      "denoise": [
+        "31",
+        0
+      ],
+      "model": [
+        "10",
+        0
+      ],
+      "positive": [
+        "17",
+        0
+      ],
+      "negative": [
+        "18",
+        0
+      ],
+      "latent_image": [
+        "20",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "K采样器"
+    }
+  },
+  "17": {
+    "inputs": {
+      "text": [
+        "38",
+        0
+      ],
+      "clip": [
+        "12",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP文本编码"
+    }
+  },
+  "18": {
+    "inputs": {
+      "text": [
+        "39",
+        0
+      ],
+      "clip": [
+        "12",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP文本编码"
+    }
+  },
+  "19": {
+    "inputs": {
+      "name": "clip_类型",
+      "type": "choice",
+      "default": "stable_diffusion"
+    },
+    "class_type": "ETN_Parameter",
+    "_meta": {
+      "title": "Parameter"
+    }
+  },
+  "20": {
+    "inputs": {
+      "width": [
+        "21",
+        0
+      ],
+      "height": [
+        "22",
+        0
+      ],
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "空Latent图像"
+    }
+  },
+  "21": {
+    "inputs": {
+      "name": "宽",
+      "type": "number (integer)",
+      "default": 1024,
+      "min": -10000000000,
+      "max": 10000000000
+    },
+    "class_type": "ETN_Parameter",
+    "_meta": {
+      "title": "Parameter"
+    }
+  },
+  "22": {
+    "inputs": {
+      "name": "高",
+      "type": "number (integer)",
+      "default": 1024,
+      "min": -10000000000,
+      "max": 10000000000
+    },
+    "class_type": "ETN_Parameter",
+    "_meta": {
+      "title": "Parameter"
+    }
+  },
+  "23": {
+    "inputs": {
+      "name": "clip_编码设备",
+      "type": "choice",
+      "default": "default"
+    },
+    "class_type": "ETN_Parameter",
+    "_meta": {
+      "title": "Parameter"
+    }
+  },
+  "24": {
+    "inputs": {
+      "samples": [
+        "16",
+        0
+      ],
+      "vae": [
+        "11",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE解码"
+    }
+  },
+  "26": {
+    "inputs": {
+      "output_path": "[time(%Y-%m-%d)]",
+      "filename_prefix": [
+        "34",
+        0
+      ],
+      "filename_delimiter": "_",
+      "filename_number_padding": 4,
+      "filename_number_start": "false",
+      "extension": "png",
+      "dpi": 300,
+      "quality": 100,
+      "optimize_image": "true",
+      "lossless_webp": "false",
+      "overwrite_mode": "false",
+      "show_history": "false",
+      "show_history_by_prefix": "true",
+      "embed_workflow": "true",
+      "show_previews": "true",
+      "images": [
+        "24",
+        0
+      ]
+    },
+    "class_type": "Image Save",
+    "_meta": {
+      "title": "图像保存"
+    }
+  },
+  "27": {
+    "inputs": {
+      "name": "步数",
+      "type": "number (integer)",
+      "default": 20,
+      "min": 1,
+      "max": 999
+    },
+    "class_type": "ETN_Parameter",
+    "_meta": {
+      "title": "Parameter"
+    }
+  },
+  "28": {
+    "inputs": {
+      "name": "cfg",
+      "type": "number",
+      "default": 5,
+      "min": 0,
+      "max": 100
+    },
+    "class_type": "ETN_Parameter",
+    "_meta": {
+      "title": "Parameter"
+    }
+  },
+  "30": {
+    "inputs": {
+      "name": "采样器",
+      "type": "choice",
+      "default": "er_sde"
+    },
+    "class_type": "ETN_Parameter",
+    "_meta": {
+      "title": "Parameter"
+    }
+  },
+  "31": {
+    "inputs": {
+      "name": "denoise",
+      "type": "number",
+      "default": 1,
+      "min": 0,
+      "max": 1
+    },
+    "class_type": "ETN_Parameter",
+    "_meta": {
+      "title": "Parameter"
+    }
+  },
+  "32": {
+    "inputs": {
+      "name": "调度器",
+      "type": "choice",
+      "default": "simple"
+    },
+    "class_type": "ETN_Parameter",
+    "_meta": {
+      "title": "Parameter"
+    }
+  },
+  "34": {
+    "inputs": {
+      "name": "保存文件名前缀",
+      "type": "text",
+      "default": "comfy"
+    },
+    "class_type": "ETN_Parameter",
+    "_meta": {
+      "title": "Parameter"
+    }
+  },
+  "38": {
+    "inputs": {
+      "name": "text",
+      "type": "prompt (positive)",
+      "default": ""
+    },
+    "class_type": "ETN_Parameter",
+    "_meta": {
+      "title": "Parameter"
+    }
+  },
+  "39": {
+    "inputs": {
+      "name": "text",
+      "type": "prompt (negative)",
+      "default": ""
+    },
+    "class_type": "ETN_Parameter",
+    "_meta": {
+      "title": "Parameter"
+    }
+  }
+}

@@ -1,6 +1,6 @@
 {
   "task_type": "vision_tagging",
-  "target_profile": "generic_tag_model",
+  "target_profile": "qwen36_35b_a3b_vision",
   "style_hint": "danbooru tag list only, lowercase, comma separated, no full sentences, no quality words",
   "purpose": "用视觉模型直接读图反推 Danbooru 标签，不依赖 WD14。输出保持纯标签行，便于直接接进提示词或与 WD14 结果做对照。",
   "input_field": "image_path",

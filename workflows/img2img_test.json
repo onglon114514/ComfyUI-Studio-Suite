@@ -1,0 +1,523 @@
+{
+  "18": {
+    "inputs": {
+      "unet_name": [
+        "23",
+        0
+      ],
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "UNet加载器"
+    }
+  },
+  "19": {
+    "inputs": {
+      "vae_name": [
+        "28",
+        0
+      ]
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "加载VAE"
+    }
+  },
+  "20": {
+    "inputs": {
+      "clip_name": [
+        "25",
+        0
+      ],
+      "type": [
+        "30",
+        0
+      ],
+      "device": [
+        "31",
+        0
+      ]
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "加载CLIP"
+    }
+  },
+  "23": {
+    "inputs": {
+      "name": "unet_name",
+      "type": "choice",
+      "default": "anima\\anima_qingwei style V1 Official Version.safetensors"
+    },
+    "class_type": "ETN_Parameter",
+    "_meta": {
+      "title": "Parameter"
+    }
+  },
+  "25": {
+    "inputs": {
+      "name": "te选择",
+      "type": "choice",
+      "default": "anima\\qwen_3_06b_base.safetensors"
+    },
+    "class_type": "ETN_Parameter",
+    "_meta": {
+      "title": "Parameter"
+    }
+  },
+  "28": {
+    "inputs": {
+      "name": "vae_name",
+      "type": "choice",
+      "default": "qwen_image_vae.safetensors"
+    },
+    "class_type": "ETN_Parameter",
+    "_meta": {
+      "title": "Parameter"
+    }
+  },
+  "29": {
+    "inputs": {
+      "name": "正面词",
+      "type": "text",
+      "default": ""
+    },
+    "class_type": "ETN_Parameter",
+    "_meta": {
+      "title": "Parameter"
+    }
+  },
+  "30": {
+    "inputs": {
+      "name": "te类型",
+      "type": "choice",
+      "default": "stable_diffusion"
+    },
+    "class_type": "ETN_Parameter",
+    "_meta": {
+      "title": "Parameter"
+    }
+  },
+  "31": {
+    "inputs": {
+      "name": "设备类型",
+      "type": "choice",
+      "default": "default"
+    },
+    "class_type": "ETN_Parameter",
+    "_meta": {
+      "title": "Parameter"
+    }
+  },
+  "32": {
+    "inputs": {
+      "seed": 0,
+      "steps": [
+        "50",
+        0
+      ],
+      "cfg": [
+        "54",
+        0
+      ],
+      "sampler_name": [
+        "53",
+        0
+      ],
+      "scheduler": [
+        "55",
+        0
+      ],
+      "denoise": [
+        "56",
+        0
+      ],
+      "model": [
+        "47",
+        0
+      ],
+      "positive": [
+        "34",
+        0
+      ],
+      "negative": [
+        "35",
+        0
+      ],
+      "latent_image": [
+        "57",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "K采样器"
+    }
+  },
+  "33": {
+    "inputs": {
+      "samples": [
+        "32",
+        0
+      ],
+      "vae": [
+        "19",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE解码"
+    }
+  },
+  "34": {
+    "inputs": {
+      "text": [
+        "45",
+        0
+      ],
+      "clip": [
+        "20",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP文本编码"
+    }
+  },
+  "35": {
+    "inputs": {
+      "text": [
+        "37",
+        0
+      ],
+      "clip": [
+        "20",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP文本编码"
+    }
+  },
+  "36": {
+    "inputs": {
+      "name": "负面词",
+      "type": "text",
+      "default": ""
+    },
+    "class_type": "ETN_Parameter",
+    "_meta": {
+      "title": "Parameter"
+    }
+  },
+  "37": {
+    "inputs": {
+      "value": [
+        "36",
+        0
+      ]
+    },
+    "class_type": "PrimitiveString",
+    "_meta": {
+      "title": "字符串"
+    }
+  },
+  "38": {
+    "inputs": {
+      "value": [
+        "29",
+        0
+      ]
+    },
+    "class_type": "PrimitiveString",
+    "_meta": {
+      "title": "字符串"
+    }
+  },
+  "40": {
+    "inputs": {
+      "name": "name",
+      "type": "choice",
+      "default": "anima\\controlnetLlliteAnima_ab1CANNY.safetensors"
+    },
+    "class_type": "ETN_Parameter",
+    "_meta": {
+      "title": "Parameter"
+    }
+  },
+  "41": {
+    "inputs": {
+      "name": "质量词+Lora堆",
+      "type": "text",
+      "default": ""
+    },
+    "class_type": "ETN_Parameter",
+    "_meta": {
+      "title": "Parameter"
+    }
+  },
+  "42": {
+    "inputs": {
+      "value": [
+        "41",
+        0
+      ]
+    },
+    "class_type": "PrimitiveString",
+    "_meta": {
+      "title": "字符串"
+    }
+  },
+  "43": {
+    "inputs": {
+      "inputcount": 2,
+      "delimiter": " ",
+      "return_list": false,
+      "Update inputs": null,
+      "string_1": [
+        "42",
+        0
+      ],
+      "string_2": [
+        "38",
+        0
+      ]
+    },
+    "class_type": "JoinStringMulti",
+    "_meta": {
+      "title": "Join String Multi"
+    }
+  },
+  "44": {
+    "inputs": {
+      "root": "output",
+      "filename_prefix": "[time(%Y-%m-%d)]/ComfyUI",
+      "filename_delimiter": "_",
+      "filename_number_padding": 4,
+      "filename_number_start": false,
+      "extension": "png",
+      "dpi": 300,
+      "quality": 100,
+      "optimize_image": true,
+      "lossless_webp": false,
+      "overwrite_mode": false,
+      "show_history": false,
+      "show_history_by_prefix": true,
+      "embed_workflow": true,
+      "show_previews": true,
+      "bit_depth": "16-bit",
+      "images": [
+        "33",
+        0
+      ]
+    },
+    "class_type": "Image Save",
+    "_meta": {
+      "title": "图像保存"
+    }
+  },
+  "45": {
+    "inputs": {
+      "text": [
+        "43",
+        0
+      ]
+    },
+    "class_type": "StudioSuite_LoraFromText",
+    "_meta": {
+      "title": "LoRA 文本翻译"
+    }
+  },
+  "47": {
+    "inputs": {
+      "strength": 1,
+      "start_percent": 0,
+      "end_percent": 1,
+      "model": [
+        "18",
+        0
+      ],
+      "model_patch": [
+        "48",
+        0
+      ],
+      "image": [
+        "65",
+        0
+      ]
+    },
+    "class_type": "AnimaLLLiteApply",
+    "_meta": {
+      "title": "应用 Anima LLLite"
+    }
+  },
+  "48": {
+    "inputs": {
+      "name": [
+        "40",
+        0
+      ]
+    },
+    "class_type": "ModelPatchLoader",
+    "_meta": {
+      "title": "加载模型补丁"
+    }
+  },
+  "50": {
+    "inputs": {
+      "name": "steps",
+      "type": "number (integer)",
+      "default": 30,
+      "min": 1,
+      "max": 100
+    },
+    "class_type": "ETN_Parameter",
+    "_meta": {
+      "title": "Parameter"
+    }
+  },
+  "53": {
+    "inputs": {
+      "name": "sampler_name",
+      "type": "choice",
+      "default": "euler"
+    },
+    "class_type": "ETN_Parameter",
+    "_meta": {
+      "title": "Parameter"
+    }
+  },
+  "54": {
+    "inputs": {
+      "name": "cfg",
+      "type": "number",
+      "default": 5,
+      "min": 0.9999999999999999,
+      "max": 30
+    },
+    "class_type": "ETN_Parameter",
+    "_meta": {
+      "title": "Parameter"
+    }
+  },
+  "55": {
+    "inputs": {
+      "name": "scheduler",
+      "type": "choice",
+      "default": "simple"
+    },
+    "class_type": "ETN_Parameter",
+    "_meta": {
+      "title": "Parameter"
+    }
+  },
+  "56": {
+    "inputs": {
+      "name": "denoise",
+      "type": "number",
+      "default": 1,
+      "min": 0,
+      "max": 1
+    },
+    "class_type": "ETN_Parameter",
+    "_meta": {
+      "title": "Parameter"
+    }
+  },
+  "57": {
+    "inputs": {
+      "width": [
+        "59",
+        0
+      ],
+      "height": [
+        "58",
+        0
+      ],
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "空Latent图像"
+    }
+  },
+  "58": {
+    "inputs": {
+      "name": "高",
+      "type": "number (integer)",
+      "default": 1216,
+      "min": 16,
+      "max": 4096
+    },
+    "class_type": "ETN_Parameter",
+    "_meta": {
+      "title": "Parameter"
+    }
+  },
+  "59": {
+    "inputs": {
+      "name": "宽",
+      "type": "number (integer)",
+      "default": 832,
+      "min": 16,
+      "max": 4096
+    },
+    "class_type": "ETN_Parameter",
+    "_meta": {
+      "title": "Parameter"
+    }
+  },
+  "60": {
+    "inputs": {
+      "upscale_method": "lanczos",
+      "width": [
+        "59",
+        0
+      ],
+      "height": [
+        "58",
+        0
+      ],
+      "crop": "center",
+      "image": [
+        "75",
+        0
+      ]
+    },
+    "class_type": "ImageScale",
+    "_meta": {
+      "title": "缩放图像"
+    }
+  },
+  "65": {
+    "inputs": {
+      "low_threshold": 100,
+      "high_threshold": 200,
+      "resolution": [
+        "59",
+        0
+      ],
+      "image": [
+        "60",
+        0
+      ]
+    },
+    "class_type": "CannyEdgePreprocessor",
+    "_meta": {
+      "title": "Canny Edge"
+    }
+  },
+  "75": {
+    "inputs": {
+      "image": ""
+    },
+    "class_type": "ETN_LoadImageBase64",
+    "_meta": {
+      "title": "Load Image (Base64)"
+    }
+  }
+}

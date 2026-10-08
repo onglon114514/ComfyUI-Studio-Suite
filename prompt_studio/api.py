@@ -8,6 +8,7 @@ import time
 import importlib.util
 import subprocess
 import atexit
+import concurrent.futures
 import queue
 import threading
 import uuid
@@ -53,6 +54,7 @@ GROUP_TAGS_DIR = STORAGE_DIR / "group_tags"
 LOCAL_COMPLETE_TAGS_DIR = STORAGE_DIR / "local_complete_tags"
 NOTES_DIR = STORAGE_DIR / "notes"
 PROMPT_DATA_DIR = STORAGE_DIR / "prompt_data"
+PREVIEW_THUMBS_DIR = STORAGE_DIR / "preview_thumbs"
 CUSTOM_WORDS_PATH = AUTOCOMPLETE_DIR / "custom_words.csv"
 AUTOCOMPLETE_WORDS_PATH = AUTOCOMPLETE_DIR / "autocomplete.txt"
 
@@ -67,8 +69,16 @@ _TEXT_CACHE: dict[str, tuple[tuple[int, int], str]] = {}
 _VALUE_CACHE: dict[str, tuple[float, object]] = {}
 _FOLDER_LIST_CACHE_TTL = 20.0
 _PREVIEW_EXTS = (".jpg", ".png", ".jpeg", ".gif", ".preview.jpg", ".preview.png", ".preview.jpeg", ".preview.gif")
-_PREVIEW_THUMB_CACHE: dict[str, tuple[tuple[int, int], bytes, str]] = {}
-_PREVIEW_THUMB_MAX_SIZE = 320
+_PREVIEW_THUMB_CACHE: dict[str, tuple[tuple[int, int, int], bytes, str]] = {}
+# Default preview thumbnail bound. The old value (320) over-decode/over-scaled
+# grid previews; 192 keeps cards sharp enough while cutting bytes. The `?w=`
+# query param may raise this up to _PREVIEW_THUMB_W_MAX, but never higher.
+_PREVIEW_THUMB_MAX_SIZE = 192
+_PREVIEW_THUMB_W_MAX = 512
+_PREVIEW_THUMB_JPEG_QUALITY = 75
+# PIL work is CPU-bound; keep it on a small dedicated pool so a preview burst
+# cannot starve the event loop (or spawn one thread per request).
+_PREVIEW_THUMB_WORKERS = 4
 _LOCAL_DICTIONARY = LocalDanbooruDictionary(PACKAGE_DIR, STORAGE_DIR)
 _TAG_LIBRARY = TagLibrary(PACKAGE_DIR)
 _LIBRARY_GROUP_LOCK = threading.Lock()
@@ -81,6 +91,7 @@ def _ensure_dirs() -> None:
     LOCAL_COMPLETE_TAGS_DIR.mkdir(parents=True, exist_ok=True)
     NOTES_DIR.mkdir(parents=True, exist_ok=True)
     PROMPT_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    PREVIEW_THUMBS_DIR.mkdir(parents=True, exist_ok=True)
     PROMPT_BUNDLE_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -189,29 +200,91 @@ def _model_preview_url(model_type: str, model_name: str) -> str | None:
     })
 
 
-def _preview_response(preview_path: Path) -> web.StreamResponse:
-    suffix = preview_path.suffix.lower()
-    if Image is None or suffix == ".gif":
-        response = web.FileResponse(preview_path)
-        response.headers["Cache-Control"] = "public, max-age=3600"
-        return response
+_PREVIEW_CACHE_HEADERS = {"Cache-Control": "public, max-age=3600"}
+_PREVIEW_THUMB_POOL: concurrent.futures.ThreadPoolExecutor | None = None
+_PREVIEW_THUMB_POOL_LOCK = threading.Lock()
 
+
+def _preview_thumb_pool() -> concurrent.futures.ThreadPoolExecutor:
+    global _PREVIEW_THUMB_POOL
+    if _PREVIEW_THUMB_POOL is None:
+        with _PREVIEW_THUMB_POOL_LOCK:
+            if _PREVIEW_THUMB_POOL is None:
+                _PREVIEW_THUMB_POOL = concurrent.futures.ThreadPoolExecutor(
+                    max_workers=_PREVIEW_THUMB_WORKERS,
+                    thread_name_prefix="preview-thumb",
+                )
+    return _PREVIEW_THUMB_POOL
+
+
+def _parse_preview_width(value) -> int:
+    """Parse the `?w=` query param: default _PREVIEW_THUMB_MAX_SIZE, hard ceiling
+    _PREVIEW_THUMB_W_MAX. Non-numeric or non-positive input falls back to default."""
+    if value is None:
+        return _PREVIEW_THUMB_MAX_SIZE
+    try:
+        width = int(str(value).strip())
+    except (TypeError, ValueError):
+        return _PREVIEW_THUMB_MAX_SIZE
+    if width < 1:
+        return _PREVIEW_THUMB_MAX_SIZE
+    return min(width, _PREVIEW_THUMB_W_MAX)
+
+
+def _preview_cache_digest(preview_path: Path, target_size: int) -> str:
+    """Stable cache key: path + mtime + size + target width. A changed width or an
+    edited file yields a different digest, so a stale thumbnail is never reused."""
     stat = preview_path.stat()
-    signature = (stat.st_mtime_ns, stat.st_size)
-    cache_key = str(preview_path)
-    cached = _PREVIEW_THUMB_CACHE.get(cache_key)
-    if cached and cached[0] == signature:
-        return web.Response(
-            body=cached[1],
-            content_type=cached[2],
-            headers={"Cache-Control": "public, max-age=3600"},
-        )
+    digest = hashlib.sha1()
+    digest.update(str(preview_path).encode("utf-8", "surrogatepass"))
+    digest.update(b"\x00")
+    digest.update(str(stat.st_mtime_ns).encode("ascii"))
+    digest.update(b"\x00")
+    digest.update(str(stat.st_size).encode("ascii"))
+    digest.update(b"\x00")
+    digest.update(str(target_size).encode("ascii"))
+    return digest.hexdigest()
 
+
+def _preview_thumb_disk_candidates(preview_path: Path, target_size: int) -> tuple[Path, Path]:
+    """Disk-cache locations. JPEG is the common case (`.jpg`); alpha thumbnails are
+    re-encoded as PNG and live under the same digest with a `.png` suffix. Only one
+    of the two ever exists for a given digest, because alpha-ness is a property of
+    the source image."""
+    digest = _preview_cache_digest(preview_path, target_size)
+    return PREVIEW_THUMBS_DIR / f"{digest}.jpg", PREVIEW_THUMBS_DIR / f"{digest}.png"
+
+
+def _write_preview_thumb_disk(preview_path: Path, target_size: int, body: bytes, content_type: str) -> Path | None:
+    """Persist a rendered thumbnail atomically so a later process (fresh memory
+    cache) can serve it straight from disk without re-rendering. A failure is
+    non-fatal: the disk cache is an optimisation, never a correctness dependency."""
+    try:
+        PREVIEW_THUMBS_DIR.mkdir(parents=True, exist_ok=True)
+        jpg_path, png_path = _preview_thumb_disk_candidates(preview_path, target_size)
+        destination = png_path if content_type == "image/png" else jpg_path
+        temporary = destination.with_suffix(destination.suffix + ".tmp")
+        temporary.write_bytes(body)
+        os.replace(temporary, destination)
+        return destination
+    except Exception:
+        return None
+
+
+def _render_preview_thumb(preview_path: Path, target_size: int = _PREVIEW_THUMB_MAX_SIZE) -> tuple[bytes, str] | None:
+    """CPU-only half of the preview path: decode, orient, downscale, re-encode.
+
+    Returns None when the file cannot be decoded so the caller can fall back to
+    serving the original bytes. Never touches aiohttp, so it is safe to run on a
+    worker thread.
+    """
+    if Image is None:
+        return None
     try:
         with Image.open(preview_path) as img:
             if ImageOps is not None:
                 img = ImageOps.exif_transpose(img)
-            img.thumbnail((_PREVIEW_THUMB_MAX_SIZE, _PREVIEW_THUMB_MAX_SIZE))
+            img.thumbnail((target_size, target_size))
             has_alpha = img.mode in {"RGBA", "LA"} or "transparency" in img.info
             buffer = BytesIO()
             if has_alpha:
@@ -219,16 +292,47 @@ def _preview_response(preview_path: Path) -> web.StreamResponse:
                 content_type = "image/png"
             else:
                 img = img.convert("RGB")
-                img.save(buffer, format="JPEG", quality=85, optimize=True)
+                img.save(buffer, format="JPEG", quality=_PREVIEW_THUMB_JPEG_QUALITY, optimize=True)
                 content_type = "image/jpeg"
-            body = buffer.getvalue()
+            return buffer.getvalue(), content_type
     except Exception:
+        return None
+
+
+async def _preview_response(preview_path: Path, target_size: int = _PREVIEW_THUMB_MAX_SIZE) -> web.StreamResponse:
+    suffix = preview_path.suffix.lower()
+    if Image is None or suffix == ".gif":
         response = web.FileResponse(preview_path)
-        response.headers["Cache-Control"] = "public, max-age=3600"
+        response.headers.update(_PREVIEW_CACHE_HEADERS)
         return response
 
+    stat = preview_path.stat()
+    signature = (stat.st_mtime_ns, stat.st_size, target_size)
+    cache_key = f"{preview_path}:{target_size}"
+    cached = _PREVIEW_THUMB_CACHE.get(cache_key)
+    if cached and cached[0] == signature:
+        return web.Response(body=cached[1], content_type=cached[2],
+                            headers=dict(_PREVIEW_CACHE_HEADERS))
+
+    # Disk cache: a previous process (fresh memory cache) may have rendered this
+    # exact thumbnail already. Serve it straight from disk, no re-render.
+    for candidate in _preview_thumb_disk_candidates(preview_path, target_size):
+        if candidate.is_file() and candidate.stat().st_size > 0:
+            response = web.FileResponse(candidate)
+            response.headers.update(_PREVIEW_CACHE_HEADERS)
+            return response
+
+    loop = asyncio.get_running_loop()
+    rendered = await loop.run_in_executor(_preview_thumb_pool(), _render_preview_thumb, preview_path, target_size)
+    if rendered is None:
+        response = web.FileResponse(preview_path)
+        response.headers.update(_PREVIEW_CACHE_HEADERS)
+        return response
+
+    body, content_type = rendered
     _PREVIEW_THUMB_CACHE[cache_key] = (signature, body, content_type)
-    return web.Response(body=body, content_type=content_type, headers={"Cache-Control": "public, max-age=3600"})
+    _write_preview_thumb_disk(preview_path, target_size, body, content_type)
+    return web.Response(body=body, content_type=content_type, headers=dict(_PREVIEW_CACHE_HEADERS))
 
 
 def _lora_user_info_path(sha256: str) -> Path:
@@ -1445,10 +1549,11 @@ def register_prompt_studio_routes():
     async def prompt_studio_get_model_preview(request):
         model_type = str(request.query.get("type", "loras")).strip()
         model_name = str(request.query.get("name", "")).strip()
+        target_size = _parse_preview_width(request.query.get("w"))
         preview_path = _find_preview_path(_resolve_model_path(model_type, model_name))
         if preview_path is None:
             return web.Response(status=404, text="preview_not_found")
-        return _preview_response(preview_path)
+        return await _preview_response(preview_path, target_size)
 
     @routes.post("/studio-suite/prompt-studio/model-info/notes")
     async def prompt_studio_save_model_notes(request):

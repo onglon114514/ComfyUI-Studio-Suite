@@ -919,6 +919,18 @@
 <script src="./js/main.js"></script>
 <script type="module" src="./js/studioSuiteLlmTools.js?v=studio-suite-20260920-weilin-adapter"></script>
 <script type="module" src="./js/tagLibrary.js?v=studio-suite-20260920-weilin-adapter"></script>
+<script type="module" src="./js/loraGrid.js?v=studio-suite-20260922-lora-grid"></script>
+<script type="module">
+    // LoRA 网格虚拟化（外观不变、DOM 卡片 ≤ 40、缩略图懒加载并发 ≤ 4）。
+    // 旧渲染器是异步把卡片塞进 DOM 的，而 installLoraGrid() 在找不到旧容器时
+    // 会直接返回（幂等），所以这里做有界重试，直到接管成功或超时退出。
+    import { installLoraGrid } from "./js/loraGrid.js?v=studio-suite-20260922-lora-grid";
+    let loraGridTries = 0;
+    const loraGridTimer = setInterval(() => {
+        installLoraGrid();
+        if (window.__studioSuiteLoraGridInstalled || ++loraGridTries > 120) clearInterval(loraGridTimer);
+    }, 250);
+</script>
 <script src="./js/clipboard.min.js"></script>
 <script>
     const APP_MODE = true

@@ -553,7 +553,7 @@
         "Node name for S&R": "TaskAgentTagUtilityNode"
       },
       "widgets_values": [
-        "http://127.0.0.1:8765",
+        "http://127.0.0.1:7860",
         "llama_cpp_python_inproc",
         "profile_catalog",
         "gemma4_e4b_q4 | Gemma 4 E4B Q4",

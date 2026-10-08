@@ -1,0 +1,281 @@
+{
+  "id": "test-params-graph",
+  "revision": 0,
+  "last_node_id": 6,
+  "last_link_id": 13,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "ETN_Parameter",
+      "mode": 0,
+      "pos": [
+        0,
+        0
+      ],
+      "size": [
+        220,
+        60
+      ],
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "value",
+          "type": "*",
+          "links": [
+            10
+          ]
+        }
+      ],
+      "widgets_values": [
+        "text",
+        "prompt (positive)",
+        ""
+      ]
+    },
+    {
+      "id": 2,
+      "type": "ETN_Parameter",
+      "mode": 0,
+      "pos": [
+        0,
+        200
+      ],
+      "size": [
+        220,
+        60
+      ],
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "value",
+          "type": "*",
+          "links": [
+            11
+          ]
+        }
+      ],
+      "widgets_values": [
+        "text",
+        "prompt (negative)",
+        ""
+      ]
+    },
+    {
+      "id": 3,
+      "type": "ETN_Parameter",
+      "mode": 0,
+      "pos": [
+        0,
+        400
+      ],
+      "size": [
+        220,
+        60
+      ],
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "value",
+          "type": "*",
+          "links": [
+            12
+          ]
+        }
+      ],
+      "widgets_values": [
+        "Steps",
+        "number (integer)",
+        20,
+        1,
+        10000
+      ]
+    },
+    {
+      "id": 4,
+      "type": "CLIPTextEncode",
+      "mode": 0,
+      "pos": [
+        320,
+        0
+      ],
+      "size": [
+        300,
+        100
+      ],
+      "inputs": [
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": null
+        },
+        {
+          "name": "text",
+          "type": "STRING",
+          "link": 10
+        }
+      ],
+      "outputs": [
+        {
+          "name": "CONDITIONING",
+          "type": "CONDITIONING",
+          "links": [
+            13
+          ]
+        }
+      ],
+      "widgets_values": [
+        ""
+      ]
+    },
+    {
+      "id": 5,
+      "type": "CLIPTextEncode",
+      "mode": 0,
+      "pos": [
+        320,
+        200
+      ],
+      "size": [
+        300,
+        100
+      ],
+      "inputs": [
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": null
+        },
+        {
+          "name": "text",
+          "type": "STRING",
+          "link": 11
+        }
+      ],
+      "outputs": [
+        {
+          "name": "CONDITIONING",
+          "type": "CONDITIONING",
+          "links": [
+            14
+          ]
+        }
+      ],
+      "widgets_values": [
+        ""
+      ]
+    },
+    {
+      "id": 6,
+      "type": "KSampler",
+      "mode": 0,
+      "pos": [
+        700,
+        0
+      ],
+      "size": [
+        300,
+        260
+      ],
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": null
+        },
+        {
+          "name": "positive",
+          "type": "CONDITIONING",
+          "link": 13
+        },
+        {
+          "name": "negative",
+          "type": "CONDITIONING",
+          "link": 14
+        },
+        {
+          "name": "latent_image",
+          "type": "LATENT",
+          "link": null
+        },
+        {
+          "name": "steps",
+          "type": "INT",
+          "link": 12
+        }
+      ],
+      "outputs": [
+        {
+          "name": "LATENT",
+          "type": "LATENT",
+          "links": null
+        }
+      ],
+      "widgets_values": [
+        0,
+        "randomize",
+        20,
+        8.0,
+        "euler",
+        "normal",
+        1.0
+      ]
+    }
+  ],
+  "links": [
+    [
+      10,
+      1,
+      0,
+      4,
+      1,
+      "STRING"
+    ],
+    [
+      11,
+      2,
+      0,
+      5,
+      1,
+      "STRING"
+    ],
+    [
+      12,
+      3,
+      0,
+      6,
+      4,
+      "INT"
+    ],
+    [
+      13,
+      4,
+      0,
+      6,
+      1,
+      "CONDITIONING"
+    ],
+    [
+      14,
+      5,
+      0,
+      6,
+      2,
+      "CONDITIONING"
+    ]
+  ],
+  "groups": [
+    {
+      "title": "测试·提示词组",
+      "bounding": [
+        0,
+        -40,
+        1000,
+        520
+      ],
+      "color": "#3f789e"
+    }
+  ],
+  "config": {},
+  "extra": {},
+  "version": 0.4
+}

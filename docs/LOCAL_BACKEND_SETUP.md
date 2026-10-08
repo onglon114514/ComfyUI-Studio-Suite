@@ -10,7 +10,7 @@ This package now supports direct task execution inside ComfyUI. For normal local
    - `llama.cpp server`:
      - `runtime/llama.cpp`
 2. In ComfyUI Task Agent nodes:
-   - keep `gateway_url` as `http://127.0.0.1:8765`
+   - keep `gateway_url` as `http://127.0.0.1:7860`
    - choose `backend_provider`
    - turn on `auto_load_backend`
    - choose `model_source = custom_path` if you do not want to edit preset JSON files

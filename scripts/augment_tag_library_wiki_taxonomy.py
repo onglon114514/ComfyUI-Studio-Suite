@@ -78,11 +78,49 @@ PAGE_SPECS = (
     ("military_uniform", "wiki:attire:uniforms_and_costumes", "军装细分", False),
     ("maid", "wiki:attire:uniforms_and_costumes", "女仆装细分", False),
     ("tag_group:fashion_style", "wiki:attire:styles_and_patterns", "时尚风格细分", False),
+    # --- wiki:pose tree: posture hub + aggregated buckets (single-pose pages
+    #     have no membership lists; the posture/gestures hubs carry the tags) ---
+    ("tag_group:posture", "wiki:pose", "姿势总聚合", False),
+    ("tag_group:gestures", "wiki:pose:hand_gestures", "手势聚合页", False),
+    ("tag_group:hands", "wiki:pose:hand_gestures", "手部聚合页", False),
+    ("tag_group:dances", "wiki:pose:dancing", "舞蹈聚合页", False),
+    ("holding", "wiki:pose:holding", "持物总纲", False),
+    ("carrying", "wiki:pose:holding", "搬运/背负细分", False),
+    ("tag_group:sex_acts", "wiki:pose:sexual", "性行为聚合页（涩涩）", False),
+    ("tag_group:sexual_positions", "wiki:pose:sexual", "性体位聚合页（涩涩）", False),
+    ("tag_group:simulated_sex_acts", "wiki:pose:sexual", "模拟性行为聚合页", False),
+    ("tag_group:sex_objects", "wiki:pose:sexual", "性道具聚合页", False),
+    ("tag_group:sexual_attire", "wiki:pose:sexual", "性向服饰聚合页", False),
+    ("sex", "wiki:pose:sexual", "性行为总纲（涩涩）", False),
+    ("anal", "wiki:pose:sexual", "后入/肛交细分", False),
+    ("oral", "wiki:pose:sexual", "口交细分", False),
+    ("vaginal", "wiki:pose:sexual", "插入细分", False),
+    ("masturbation", "wiki:pose:sexual", "自慰细分", False),
+    ("handjob", "wiki:pose:sexual", "手交细分", False),
+    ("footjob", "wiki:pose:sexual", "足交细分", False),
+    ("fellatio", "wiki:pose:sexual", "口交（吞）细分", False),
+    ("cunnilingus", "wiki:pose:sexual", "舔阴细分", False),
+    ("paizuri", "wiki:pose:sexual", "乳交细分", False),
+    ("penetration", "wiki:pose:sexual", "插入过程细分", False),
+    ("missionary", "wiki:pose:sexual", "传教士体位细分", False),
+    ("doggystyle", "wiki:pose:sexual", "后入体位（涩涩）", False),
+    ("cowgirl_position", "wiki:pose:sexual", "骑乘位（涩涩）", False),
+    ("reverse_cowgirl_position", "wiki:pose:sexual", "反骑乘位（涩涩）", False),
+    ("facesitting", "wiki:pose:sexual", "颜坐（涩涩）", False),
+    ("fingering", "wiki:pose:sexual", "指交细分", False),
+    ("tribadism", "wiki:pose:sexual", "磨镜（涩涩）", False),
+    ("prone_bone", "wiki:pose:sexual", "俯卧后入（涩涩）", False),
 )
 
 EXTRA_GROUPS = (
     ("wiki:attire:one_piece", "连衣裙与一体式服装", ROOT_GROUP),
     ("wiki:attire:underwear", "内衣", ROOT_GROUP),
+    # --- wiki:pose tree (动作与姿势): second root, explicit buckets ---
+    ("wiki:pose", "动作与姿势（Danbooru Wiki）", None),
+    ("wiki:pose:hand_gestures", "手部动作", "wiki:pose"),
+    ("wiki:pose:holding", "持物动作", "wiki:pose"),
+    ("wiki:pose:dancing", "舞蹈动作", "wiki:pose"),
+    ("wiki:pose:sexual", "性姿势（涩涩）", "wiki:pose"),
 )
 
 LABELS_ZH = {
@@ -240,8 +278,12 @@ def _label(value: str) -> str:
     return LABELS_ZH.get(plain.casefold(), plain)
 
 
-def _excluded(value: str) -> bool:
+def _excluded(value: str, allow_related_tags: bool = False) -> bool:
     key = _key(value)
+    if allow_related_tags and key == "related tags":
+        # pose/action pages carry their real category links under this heading;
+        # treat it as transparent (content merges into the page group).
+        return False
     return key in EXCLUDED_HEADINGS or key.startswith(("not ", "false "))
 
 
@@ -285,7 +327,8 @@ def _unique_group_id(base: str, label: str, used: set[str]) -> str:
 
 
 def parse_page(db: sqlite3.Connection, title: str, body: str, parent_id: str,
-               page_label: str, flatten_root: bool = False) -> ParsedPage:
+               page_label: str, flatten_root: bool = False,
+               allow_related_tags: bool = False) -> ParsedPage:
     groups: list[Group] = []
     memberships: set[tuple[str, str]] = set()
     unresolved: set[str] = set()
@@ -319,9 +362,15 @@ def parse_page(db: sqlite3.Connection, title: str, body: str, parent_id: str,
                 heading_stack.pop()
             expand_stack.clear()
             bullet_stack.clear()
-            if _excluded(text):
+            if _excluded(text, allow_related_tags=allow_related_tags):
                 heading_stack.append((level, ""))
                 current_parent = ""
+                continue
+            if allow_related_tags and _key(text) == "related tags":
+                # transparent: keep existing group; child headings/bullets attach
+                # to the innermost real group so categories land in the page.
+                current_parent = next((gid for _, gid in reversed(heading_stack) if gid), page_id)
+                heading_stack.append((level, current_parent))
                 continue
             parent = next((gid for _, gid in reversed(heading_stack) if gid), page_id)
             group_id = _unique_group_id(page_base, text, used)
@@ -332,7 +381,7 @@ def parse_page(db: sqlite3.Connection, title: str, body: str, parent_id: str,
         expand = EXPAND_RE.match(line)
         if expand:
             text = _plain(expand.group(1))
-            valid = bool(current_parent) and not _excluded(text)
+            valid = bool(current_parent) and not _excluded(text, allow_related_tags=allow_related_tags)
             if valid:
                 group_id = _unique_group_id(page_base, text, used)
                 groups.append(Group(group_id, _label(text), active_parent()))
@@ -469,7 +518,8 @@ def augment(wiki_path: Path, output_dir: Path) -> dict:
                             known_groups.add(gid)
                     if parent_id not in known_groups:
                         raise ValueError(f"unknown practical parent for {title}: {parent_id}")
-                parsed = parse_page(db, title, pages[title.casefold()], parent_id, label, flatten)
+                parsed = parse_page(db, title, pages[title.casefold()], parent_id, label, flatten,
+                                   allow_related_tags=str(parent_id).startswith("wiki:pose"))
                 for group in parsed.groups:
                     _upsert_group(db, group)
                     known_groups.add(group.id)

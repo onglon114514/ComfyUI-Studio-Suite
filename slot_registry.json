@@ -1,0 +1,9 @@
+{
+  "types": ["IMAGE","MASK","FLOAT","INT","STRING","BOOLEAN","MODEL","CLIP","VAE","CONDITIONING","LATENT","LORA_STACK","CONTROL_NET"],
+  "tags": {
+    "IMAGE": ["img2img_source","cn1_raw","cn1_preprocess","result_preview","mask_source"],
+    "MASK": ["inpaint","cn1_mask"],
+    "FLOAT": ["cfg","denoise","lora_strength"],
+    "LORA_STACK": ["main","style"]
+  }
+}

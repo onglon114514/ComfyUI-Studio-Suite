@@ -24,7 +24,7 @@ def parse_int_list(text):
 def run_once(args, n_gpu_layers, n_batch, unload_after_run):
     start = time.time()
     response = run_task_direct(
-        gateway_url="http://127.0.0.1:8765",
+        gateway_url="http://127.0.0.1:7860",
         backend_provider="llama_cpp_python_inproc",
         task_type="translate_anime_tags",
         inputs={

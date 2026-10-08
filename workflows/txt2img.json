@@ -1,0 +1,30 @@
+{
+  "1": { "class_type": "CheckpointLoaderSimple", "inputs": { "ckpt_name": "noob\\mix\\noob_and_ntr_mix+miratsu.safetensors" } },
+  "pos": { "class_type": "CLIPTextEncode", "inputs": { "text": "", "clip": ["1", 1] } },
+  "neg": { "class_type": "CLIPTextEncode", "inputs": { "text": "", "clip": ["1", 1] } },
+  "p_sampler": { "class_type": "ETN_Parameter", "inputs": { "name": "Sampler", "type": "text", "default": "euler_ancestral" } },
+  "p_scheduler": { "class_type": "ETN_Parameter", "inputs": { "name": "Scheduler", "type": "text", "default": "normal" } },
+  "p_steps": { "class_type": "ETN_Parameter", "inputs": { "name": "Steps", "type": "number (integer)", "default": "24", "min": "1", "max": "150" } },
+  "p_cfg": { "class_type": "ETN_Parameter", "inputs": { "name": "CFG", "type": "number", "default": "6", "min": "0", "max": "30" } },
+  "p_seed": { "class_type": "ETN_Parameter", "inputs": { "name": "Seed", "type": "number (integer)", "default": "-1", "min": "-1" } },
+  "p_width": { "class_type": "ETN_Parameter", "inputs": { "name": "Width", "type": "number (integer)", "default": "1024", "min": "256", "max": "2048" } },
+  "p_height": { "class_type": "ETN_Parameter", "inputs": { "name": "Height", "type": "number (integer)", "default": "1024", "min": "256", "max": "2048" } },
+  "latent": { "class_type": "EmptyLatentImage", "inputs": { "width": ["p_width", 0], "height": ["p_height", 0], "batch_size": 1 } },
+  "sampler": {
+    "class_type": "KSampler",
+    "inputs": {
+      "seed": ["p_seed", 0],
+      "steps": ["p_steps", 0],
+      "cfg": ["p_cfg", 0],
+      "sampler_name": ["p_sampler", 0],
+      "scheduler": ["p_scheduler", 0],
+      "denoise": 1,
+      "model": ["1", 0],
+      "positive": ["pos", 0],
+      "negative": ["neg", 0],
+      "latent_image": ["latent", 0]
+    }
+  },
+  "decode": { "class_type": "VAEDecode", "inputs": { "samples": ["sampler", 0], "vae": ["1", 2] } },
+  "save": { "class_type": "SaveImage", "inputs": { "images": ["decode", 0], "filename_prefix": "webui-ntr" } }
+}

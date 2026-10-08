@@ -14,7 +14,7 @@
   "usevulkan": null,
   "usecpu": false,
   "contextsize": 8192,
-  "gpulayers": -1,
+  "gpulayers": 20,
   "tensor_split": null,
   "autofit": false,
   "maingpu": -1,

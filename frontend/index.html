@@ -2,423 +2,1669 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <title>Gemma4 E4B Task Agent Baseline</title>
+  <title>webui ntr · Studio Suite</title>
   <style>
-    body { font-family: "Segoe UI", sans-serif; margin: 24px; background: #111827; color: #f3f4f6; }
-    .row { display: flex; gap: 16px; align-items: flex-start; }
-    .col { flex: 1; min-width: 0; }
-    textarea, input, select { width: 100%; box-sizing: border-box; padding: 10px; border-radius: 8px; border: 1px solid #374151; background: #1f2937; color: #f9fafb; }
-    textarea { min-height: 90px; resize: vertical; }
-    button { padding: 10px 14px; border: 0; border-radius: 8px; background: #2563eb; color: white; cursor: pointer; }
-    button.secondary { background: #374151; }
-    pre { white-space: pre-wrap; word-break: break-word; background: #0b1220; border: 1px solid #374151; padding: 12px; border-radius: 8px; }
-    .muted { color: #9ca3af; }
-    .card { background: #111827; border: 1px solid #374151; border-radius: 10px; padding: 16px; margin-bottom: 16px; }
-    label { display: block; font-weight: 600; margin: 10px 0 6px; }
-    .inline { display: inline-flex; gap: 8px; align-items: center; margin-right: 16px; }
+    :root {
+      --bg: #1e1e22;
+      --panel: #25252b;
+      --panel2: #2a2a30;
+      --border: #3a3a42;
+      --text: #d4d4d8;
+      --muted: #8b8b94;
+      --accent: #f0883e;
+      --accent-h: #e07020;
+      --btn-blue: #3b6ea5;
+      --btn-blue-h: #4a7fb8;
+      --green: #4caf50;
+      --chip-bg: #2a2a30;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--text);
+      font: 13px/1.45 "Segoe UI", system-ui, -apple-system, sans-serif;
+    }
+
+    /* ── top tab bar ── */
+    .tabs {
+      display: flex; gap: 0; background: var(--panel);
+      border-bottom: 1px solid var(--border); padding: 0 8px; overflow-x: auto;
+      position: sticky; top: 0; z-index: 10;
+    }
+    .tab {
+      padding: 9px 14px; cursor: pointer; color: var(--muted);
+      border-bottom: 2px solid transparent; white-space: nowrap; user-select: none;
+      font-size: 12px;
+    }
+    .tab:hover { color: var(--text); background: rgba(255,255,255,.03); }
+    .tab.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+    .tab .badge { font-size: 10px; background: var(--panel2); border: 1px solid var(--border); padding: 1px 5px; border-radius: 8px; margin-left: 4px; }
+
+    .main { display: flex; gap: 12px; padding: 12px; max-width: 1400px; margin: 0 auto; align-items: flex-start; }
+    .col-left { flex: 3; min-width: 0; }
+    .col-right { flex: 2; min-width: 320px; }
+
+    textarea, input, select {
+      width: 100%; box-sizing: border-box; padding: 8px 10px;
+      border-radius: 4px; border: 1px solid var(--border);
+      background: #1a1a1e; color: var(--text); outline: none;
+      font-size: 12px;
+    }
+    textarea:focus, input:focus, select:focus { border-color: var(--btn-blue); }
+    textarea { resize: vertical; }
+
+    /* ── Prompt Unit: textarea + tag editor 贴装一体 ── */
+    .prompt-unit {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      margin-bottom: 12px;
+      overflow: hidden;
+    }
+    .prompt-unit .prompt-wrap {
+      position: relative;
+      margin-bottom: 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .prompt-unit .prompt-label {
+      display: flex; justify-content: space-between; align-items: center;
+      font-size: 11px; color: var(--muted);
+      padding: 6px 10px 3px;
+    }
+    .prompt-unit .prompt-label b { color: var(--text); font-weight: 600; font-size: 12px; }
+    .prompt-unit .counter { font-size: 11px; color: var(--muted); }
+    .prompt-unit textarea {
+      min-height: 72px; font-size: 12px; padding-bottom: 20px;
+      border: none; border-radius: 0; background: transparent;
+      resize: vertical;
+    }
+    .prompt-unit textarea:focus { border: none; }
+    .prompt-unit .resize-grip {
+      position: absolute; right: 6px; bottom: 4px;
+      color: var(--muted); font-size: 11px; cursor: ns-resize; user-select: none;
+    }
+
+    button {
+      padding: 7px 12px; border: 1px solid var(--border); border-radius: 4px; cursor: pointer;
+      background: var(--btn-blue); color: #fff; font-size: 12px;
+    }
+    button:hover { background: var(--btn-blue-h); }
+    button.primary-generate {
+      width: 100%; padding: 12px; font-size: 15px; font-weight: 700; letter-spacing: .08em;
+      background: var(--accent); border: none; border-radius: 6px;
+      box-shadow: 0 2px 8px rgba(240,136,62,.25);
+    }
+    button.primary-generate:hover { background: var(--accent-h); }
+    button.ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
+    button.ghost:hover { background: var(--panel2); }
+    button.small { padding: 5px 9px; font-size: 11px; border-radius: 3px; }
+    button.icon-btn { width: 32px; height: 28px; padding: 0; background: var(--btn-blue); border-radius: 4px; font-size: 13px; border: none; }
+
+    .row { display: flex; gap: 8px; align-items: center; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .card { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 12px; margin-bottom: 12px; }
+    .card h3 { margin: 0 0 8px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+    label { display: block; font-size: 11px; color: var(--muted); margin: 7px 0 3px; }
+    .inline { display: inline-flex; align-items: center; gap: 5px; margin-right: 12px; font-size: 11px; color: var(--muted); }
+    .inline input[type=checkbox] { width: auto; }
+    pre { white-space: pre-wrap; word-break: break-word; background: #1a1a1e; border: 1px solid var(--border); padding: 8px; border-radius: 4px; max-height: 300px; overflow: auto; font: 11px/1.5 ui-monospace, Consolas, monospace; color: #b0b0b8; }
+    .muted { color: var(--muted); }
+    .result-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .placeholder { color: var(--muted); text-align: center; padding: 40px 10px; }
+    details { margin-top: 8px; }
+    summary { cursor: pointer; color: var(--muted); font-size: 11px; }
+    .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 999px; background: #f7c948; margin-right: 5px; vertical-align: middle; }
+    .status-dot.ok { background: var(--green); }
+    .status-dot.err { background: #f85149; }
+
+    /* ── Tag Editor (inside .prompt-unit) ── */
+    .tag-editor { background: transparent; }
+    .tag-editor-header {
+      display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+      border-bottom: 1px solid var(--border); background: var(--panel2);
+    }
+    .tag-editor-header .title { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+    .tag-editor-header .target-hint { font-size: 10px; color: var(--muted); margin-left: auto; }
+    .tag-target-btn {
+      padding: 3px 9px; font-size: 11px; border-radius: 3px;
+      border: 1px solid var(--border); background: transparent; color: var(--muted);
+      cursor: pointer;
+    }
+    .tag-target-btn.active { background: var(--btn-blue); color: #fff; border-color: var(--btn-blue); }
+    .tag-target-btn:hover:not(.active) { background: var(--panel2); color: var(--text); }
+
+    .chips-row {
+      display: flex; flex-wrap: wrap; gap: 5px; padding: 8px 10px;
+      min-height: 34px; border-bottom: 1px solid var(--border);
+      background: #222228;
+    }
+    .chip {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 3px 8px; border-radius: 3px; font-size: 11px;
+      border: 1px solid var(--border); background: var(--chip-bg);
+      color: var(--text);
+      user-select: none;
+    }
+    .chip.dragging { opacity: .4; }
+    .chip .drag-handle {
+      cursor: grab; color: var(--muted); font-size: 11px;
+      padding: 0 2px; user-select: none; line-height: 1;
+    }
+    .chip .drag-handle:active { cursor: grabbing; }
+    .chip .chip-en { font-weight: 600; }
+    .chip .chip-zh { font-size: 10px; color: var(--muted); }
+    .chip .chip-del {
+      border: none; background: transparent; color: var(--muted);
+      cursor: pointer; font-size: 12px; padding: 0 2px; line-height: 1;
+    }
+    .chip .chip-del:hover { color: #f85149; }
+
+    .cat-tabs {
+      display: flex; gap: 4px; flex-wrap: wrap; padding: 6px 10px;
+      border-bottom: 1px solid var(--border);
+    }
+    .cat-tabs.sub { padding-top: 0; }
+    .cat-tab {
+      padding: 4px 10px; font-size: 11px; border-radius: 3px;
+      border: 1px solid var(--border); background: transparent; color: var(--muted);
+      cursor: pointer; white-space: nowrap;
+    }
+    .cat-tab:hover { background: var(--panel2); color: var(--text); }
+    .cat-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .cat-tab.sub-active { background: var(--btn-blue); color: #fff; border-color: var(--btn-blue); }
+
+    .tag-toolbar {
+      display: flex; gap: 6px; padding: 6px 10px;
+      border-bottom: 1px solid var(--border); align-items: center;
+    }
+    .tag-toolbar input { flex: 1; font-size: 11px; padding: 5px 8px; }
+    .tag-toolbar input#tagCustom { flex: 0 0 160px; }
+
+    .tag-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+      gap: 4px; padding: 8px 10px; max-height: 280px; overflow-y: auto;
+    }
+    .tag-cell {
+      padding: 5px 7px; border-radius: 3px; border: 1px solid var(--border);
+      background: var(--panel2); cursor: pointer; text-align: left;
+      transition: background .1s;
+    }
+    .tag-cell:hover { background: var(--btn-blue); border-color: var(--btn-blue); }
+    .tag-cell .en { display: block; font-size: 11px; font-weight: 600; color: var(--text); }
+    .tag-cell .zh { display: block; font-size: 10px; color: var(--muted); margin-top: 1px; }
+    .tag-cell:hover .zh { color: rgba(255,255,255,.7); }
+    .tag-empty { grid-column: 1/-1; text-align: center; color: var(--muted); padding: 20px; font-size: 11px; }
+    /* Prompt Studio 风格的拖拽态（范本：newbieXmlWizard.js） */
+    .chip.is-dragging { opacity: .45; }
+    .chip.is-drop-target { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .chips-row.is-drop-target { outline: 1px dashed var(--accent); }
   </style>
 </head>
 <body>
-  <h1>Gemma4 E4B Task Agent Baseline</h1>
-  <p class="muted">先测试第一环节角色设计任务。当前后端是 task gateway，模型后端是 koboldcpp + gemma4 e4b。</p>
 
-  <div class="card">
-    <div style="display:flex; gap:12px; flex-wrap:wrap;">
-      <button id="statusBtn" class="secondary">刷新状态</button>
-      <button id="loadBtn">加载后端</button>
-      <button id="unloadBtn" class="secondary">卸载后端</button>
-    </div>
-    <div class="row" style="margin-top:12px;">
-      <div class="col">
-        <label>后端模型 Profile</label>
-        <select id="backend_profile">
-          <option value="gemma4_e4b_q4">gemma4_e4b_q4</option>
-          <option value="qwen35_4b_q8">qwen35_4b_q8</option>
-          <option value="gemma4_26b_q4">gemma4_26b_q4</option>
-          <option value="qwen35_27b_q4">qwen35_27b_q4</option>
-        </select>
+  <!-- top tab bar -->
+  <div class="tabs" id="tabbar">
+    <div class="tab active" data-tab="txt2img">文生图</div>
+    <div class="tab" data-tab="img2img">图生图</div>
+    <div class="tab" data-tab="postprocess">后期处理</div>
+    <div class="tab" data-tab="pnginfo">PNG 图片信息</div>
+    <div class="tab" data-tab="modelmerge">模型融合</div>
+    <div class="tab" data-tab="extra">无边图像浏览</div>
+    <div class="tab" data-tab="settings">设置</div>
+    <div class="tab" data-tab="extensions">扩展</div>
+  </div>
+
+  <!-- 文生图 panel -->
+  <div class="main" id="panel-txt2img">
+    <div class="col-left">
+
+      <!-- 模型区（顶部横向，webui 原版位置） -->
+      <div class="card">
+        <h3>模型 / 工作流</h3>
+        <label>工作流</label>
+        <select id="wfSelect"><option value="">加载中…</option></select>
+        <div id="wfModelRow" style="display:flex; flex-wrap:wrap; gap:10px; margin-top:8px;"></div>
+        <div id="wfImageRow" style="display:flex; flex-wrap:wrap; gap:10px; margin-top:8px;"></div>
       </div>
-      <div class="col">
+
+      <div class="card" id="wfGroupCard" style="display:none;">
+        <h3>功能开关 · 组</h3>
+        <div class="muted" style="font-size:11px;margin-bottom:6px;">取消勾选 = 关闭该功能（组内节点 bypass）</div>
+        <div id="wfGroupPanel"></div>
+      </div>
+
+      <!-- Positive Prompt Unit: 输入框 + Tag 编辑器 贴装一体（工厂生成） -->
+      <div class="prompt-unit" id="posUnit">
+        <div class="prompt-wrap">
+          <div class="prompt-label"><b>Prompt</b><span class="counter" id="posCounter">0 / 75</span></div>
+          <textarea id="positiveBox" placeholder="(Ctrl+Enter to Generate; Alt+Enter to Skip; Esc to Interrupt)&#10;1girl, student council vice president, black long hair, stern expression, school uniform"></textarea>
+          <div class="resize-grip">⋮</div>
+        </div>
+        <div class="tag-editor" id="posEditor">
+          <div class="tag-editor-header"><span class="title">Positive · Tag 编辑器</span><span class="target-hint">已选标签可拖拽排序</span></div>
+          <div class="chips-row" id="posChips" data-reorder-container="pos"></div>
+          <div class="cat-tabs" id="posMainCats"></div>
+          <div class="cat-tabs sub" id="posSubCats"></div>
+          <div class="tag-toolbar">
+            <input id="posSearch" placeholder="搜索当前分类 tag…">
+            <input id="posCustom" placeholder="在此新增 Tag">
+            <button class="small" id="posAdd">+</button>
+          </div>
+          <div class="tag-grid" id="posGrid"></div>
+        </div>
+      </div>
+
+      <!-- Negative Prompt Unit: 输入框 + 自己的 Tag 编辑器（工厂生成） -->
+      <div class="prompt-unit" id="negUnit">
+        <div class="prompt-wrap">
+          <div class="prompt-label"><b>Negative Prompt</b><span class="counter" id="negCounter">0 / 75</span></div>
+          <textarea id="negativeBox" placeholder="lowres, bad anatomy, bad hands, extra fingers, watermark"></textarea>
+          <div class="resize-grip">⋮</div>
+        </div>
+        <div class="tag-editor" id="negEditor">
+          <div class="tag-editor-header"><span class="title">Negative · Tag 编辑器</span><span class="target-hint">已选标签可拖拽排序</span></div>
+          <div class="chips-row" id="negChips" data-reorder-container="neg"></div>
+          <div class="cat-tabs" id="negMainCats"></div>
+          <div class="cat-tabs sub" id="negSubCats"></div>
+          <div class="tag-toolbar">
+            <input id="negSearch" placeholder="搜索当前分类 tag…">
+            <input id="negCustom" placeholder="在此新增 Tag">
+            <button class="small" id="negAdd">+</button>
+          </div>
+          <div class="tag-grid" id="negGrid"></div>
+        </div>
+      </div>
+
+      <!-- 采样与数值参数区（tag 编辑器下方，webui 原版位置） -->
+      <div class="card">
+        <h3>采样与数值参数</h3>
+        <div id="wfParamGrid" class="grid2"></div>
+      </div>
+
+      <div class="card">
+        <h3>执行结果</h3>
+        <div class="result-grid">
+          <div class="col">
+            <label>格式化输出</label>
+            <pre id="outputBox">尚未执行</pre>
+          </div>
+          <div class="col">
+            <label>JSON</label>
+            <pre id="jsonBox">尚未执行</pre>
+          </div>
+        </div>
+        <label>后端状态</label>
+        <div class="row" style="margin-top:4px;">
+          <div style="flex:1"><pre id="statusBox" style="max-height:90px;">等待刷新状态...</pre></div>
+          <div style="display:flex; flex-direction:column; gap:6px;">
+            <button class="small" id="taskRunBtn">执行 LLM 任务</button>
+            <button class="small ghost" id="statusBtn">刷新状态</button>
+            <button class="small" id="loadBtn">加载后端</button>
+            <button class="small ghost" id="unloadBtn">卸载后端</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-right">
+      <button class="primary-generate" id="runBtn">生成图像</button>
+      <pre id="wfStatus" style="display:none; max-height:70px; font-size:10px; margin-top:6px;">待提交</pre>
+      <div id="wfResult" style="margin-top:8px;"></div>
+      <div class="row" style="margin:8px 0;">
+        <button class="icon-btn" title="读取提示词/风格" id="btnLoadStyle">📂</button>
+        <button class="icon-btn" title="提示词矩阵 / X/Y/Z" id="btnMatrix">▦</button>
+        <button class="icon-btn" title="提示词预设 / LoRA" id="btnPresets">🏷</button>
+        <button class="icon-btn" title="LoRA 语法教程" id="btnLoraHelp">❓</button>
+        <div style="flex:1"></div>
+        <button class="small ghost" id="btnRefreshModels">↻</button>
+      </div>
+
+      <div class="card" id="loraHelpCard" style="display:none;">
+        <h3>LoRA 语法教程</h3>
+        <div class="muted" style="font-size:11px;margin-bottom:6px;">与 webui（A1111 / forge）一致，直接写在提示词里</div>
+        <pre id="loraHelpBody" style="font-size:11px; white-space:pre-wrap; line-height:1.6; max-height:340px;"></pre>
+      </div>
+
+      <div class="card">
+        <h3>后端模型（Parameter 获取）</h3>
+        <label>Profile</label>
+        <select id="backend_profile"><option value="">加载中...</option></select>
         <label>上下文长度</label>
-        <input id="context_size" value="16384">
-      </div>
-    </div>
-    <label>状态</label>
-    <pre id="statusBox">等待刷新状态...</pre>
-  </div>
-
-  <div class="card">
-    <h2>generate_character_design</h2>
-    <div class="row">
-      <div class="col">
-        <label>项目背景</label>
-        <textarea id="project_background">现代校园恋爱视觉小说，偏日系二次元，立绘需要方便后续做多表情差分与训练数据构建。</textarea>
-
-        <label>题材 / 类型</label>
-        <input id="genre" value="galgame, anime, visual novel">
-
-        <label>目标受众</label>
-        <input id="target_audience" value="二次元男性向，喜欢高辨识度角色设计">
-
-        <label>视觉风格</label>
-        <textarea id="visual_style">clean anime line art, polished sdxl style, readable silhouette, vivid but controlled color palette</textarea>
-      </div>
-
-      <div class="col">
-        <label>角色原型</label>
-        <textarea id="role_archetype">外冷内热、责任感很强、嘴硬但会在熟人面前露出笨拙关心的学生会副会长。</textarea>
-
-        <label>约束</label>
-        <textarea id="constraints">避免过度性感；需要适合半身与全身立绘；设计要能稳定做出多种galgame常见表情；服装与发型需要有明确辨识度。</textarea>
-
-        <label>参考说明</label>
-        <textarea id="reference_notes">请用二次元角色设计逻辑思考，输出适合绘图模型理解的英文 prompt 和 tag_list，同时保留中文设计说明。</textarea>
-
-        <label>温度 / 最大输出</label>
-        <div class="row">
-          <div class="col"><input id="temperature" value="0.7"></div>
-          <div class="col"><input id="max_tokens" value="1200"></div>
+        <input id="context_size" value="4096" type="number" min="0">
+        <label>任务类型</label>
+        <select id="task_type">
+          <option value="expand_anime_tags">tag 扩写</option>
+          <option value="translate_anime_tags">tag 翻译</option>
+          <option value="normalize_anime_tags">tag 归一化</option>
+          <option value="generate_character_design">角色设计</option>
+          <option value="generate_outfit_tags">服装生成</option>
+          <option value="generate_natural_caption">自然语言描述</option>
+          <option value="vision_tagging">视觉打标</option>
+        </select>
+        <div class="grid2">
+          <div>
+            <label>温度</label>
+            <input id="temperature" value="0.6" type="number" step="0.05">
+          </div>
+          <div>
+            <label>最大输出</label>
+            <input id="max_tokens" value="900" type="number" step="32">
+          </div>
+        </div>
+        <div style="margin-top:8px;">
+          <label class="inline"><input type="checkbox" id="auto_load_backend" checked> 自动加载后端</label>
+          <label class="inline"><input type="checkbox" id="unload_after_run"> 完成后卸载</label>
         </div>
       </div>
     </div>
-
-    <div style="margin-top:12px;">
-      <label class="inline"><input type="checkbox" id="auto_load_backend" checked> 自动加载后端</label>
-      <label class="inline"><input type="checkbox" id="unload_after_run"> 任务完成后卸载后端</label>
-    </div>
-
-    <div style="margin-top:12px;">
-      <button id="runBtn">执行任务</button>
-    </div>
   </div>
 
-  <div class="row">
-    <div class="col card">
-      <h3>格式化正向 Prompt</h3>
-      <pre id="positiveBox">尚未执行</pre>
-    </div>
-    <div class="col card">
-      <h3>格式化负向 Prompt</h3>
-      <pre id="negativeBox">尚未执行</pre>
-    </div>
-  </div>
-
-  <div class="row">
-    <div class="col card">
-      <h3>解析后的 JSON</h3>
-      <pre id="jsonBox">尚未执行</pre>
-    </div>
-    <div class="col card">
-      <h3>原始文本</h3>
-      <pre id="rawBox">尚未执行</pre>
-    </div>
-  </div>
-
-  <div class="card">
-    <h2>基础调试任务：tag 扩写 / 翻译</h2>
-    <div class="row">
-      <div class="col">
-        <label>tag 原文 / 短描述</label>
-        <textarea id="tag_input">1girl, student council vice president, black long hair, stern expression, school uniform</textarea>
-
-        <label>风格提示</label>
-        <textarea id="tag_style_hint">anime, galgame, clean sdxl style, readable character design</textarea>
-
-        <label>用途</label>
-        <input id="tag_purpose" value="用于角色立绘设计 prompt 调试">
-      </div>
-      <div class="col">
-        <label>翻译方向</label>
-        <select id="translate_direction">
-          <option value="zh_to_en_tags">中文 -> 英文 tags</option>
-          <option value="en_to_zh_explain">英文 tags -> 中文解释</option>
-        </select>
-
-        <label>目标模型范式</label>
-        <select id="target_profile">
-          <option value="generic_tag_model">generic_tag_model</option>
-          <option value="anima_v1">anima_v1</option>
-          <option value="illustrious_xl_v01">illustrious_xl_v01</option>
-          <option value="noobai_xl_1_1">noobai_xl_1_1</option>
-          <option value="newbie_exp01">newbie_exp01</option>
-        </select>
-
-        <label class="inline"><input type="checkbox" id="mini_auto_load" checked> 自动加载后端</label>
-        <label class="inline"><input type="checkbox" id="mini_unload_after_run"> 任务完成后卸载后端</label>
-      </div>
-    </div>
-
-    <div style="margin-top:12px; display:flex; gap:12px; flex-wrap:wrap;">
-      <button id="expandTagsBtn">执行 tag 扩写</button>
-      <button id="translateTagsBtn" class="secondary">执行 tag 翻译</button>
-      <button id="normalizeTagsBtn" class="secondary">执行 tag 归一化</button>
-    </div>
-  </div>
-
-  <div class="card">
-    <h2>generate_outfit_tags</h2>
-    <div class="row">
-      <div class="col">
-        <label>角色描述</label>
-        <textarea id="outfit_character_description">高中少女，黑色中长发，冷静认真但有一点笨拙的温柔感。</textarea>
-
-        <label>性格 / 气质</label>
-        <textarea id="outfit_personality_traits">克制、知性、责任感强，带一点不擅长表达的温柔。</textarea>
-
-        <label>使用场景</label>
-        <textarea id="outfit_scene">放学后去排练室前的日常常服立绘。</textarea>
-
-        <label>季节</label>
-        <input id="outfit_season" value="春季">
-      </div>
-      <div class="col">
-        <label>风格倾向</label>
-        <textarea id="outfit_style_direction">学院感、清爽、日系少女感，不要过于制式校服。</textarea>
-
-        <label>额外约束</label>
-        <textarea id="outfit_design_constraints">保持少女感，不要成熟写实，不要过度暴露；上下装不要冲突。</textarea>
-
-        <label>补充参考</label>
-        <textarea id="outfit_reference_notes">优先使用 Danbooru 服装 tag，利用服装词典做合理选择，不要机械复制模板。</textarea>
-
-        <label>目标模型范式</label>
-        <select id="outfit_target_profile">
-          <option value="anima_v1">anima_v1</option>
-          <option value="illustrious_xl_v01">illustrious_xl_v01</option>
-          <option value="noobai_xl_1_1">noobai_xl_1_1</option>
-          <option value="newbie_exp01">newbie_exp01</option>
-          <option value="generic_tag_model">generic_tag_model</option>
-        </select>
-
-        <label>温度 / 最大输出</label>
-        <div class="row">
-          <div class="col"><input id="outfit_temperature" value="0.55"></div>
-          <div class="col"><input id="outfit_max_tokens" value="1200"></div>
-        </div>
-      </div>
-    </div>
-
-    <div style="margin-top:12px;">
-      <label class="inline"><input type="checkbox" id="outfit_auto_load" checked> 自动加载后端</label>
-      <label class="inline"><input type="checkbox" id="outfit_unload_after_run"> 任务完成后卸载后端</label>
-    </div>
-
-    <div style="margin-top:12px;">
-      <button id="runOutfitBtn">执行服装生成任务</button>
-    </div>
-  </div>
+  <!-- placeholder panels -->
+  <div class="placeholder" id="panel-img2img" style="display:none;">图生图（待接入：对应 ComfyUI 工作流 json 导入）</div>
+  <div class="placeholder" id="panel-postprocess" style="display:none;">后期处理（待接入）</div>
+  <div class="placeholder" id="panel-pnginfo" style="display:none;">PNG 图片信息（待接入）</div>
+  <div class="placeholder" id="panel-modelmerge" style="display:none;">模型融合（待接入）</div>
+  <div class="placeholder" id="panel-extra" style="display:none;">无边图像浏览（待接入）</div>
+  <div class="placeholder" id="panel-settings" style="display:none;">设置（待接入：后端加载 / 卸载 / 端口 114514）</div>
+  <div class="placeholder" id="panel-extensions" style="display:none;">扩展（待接入）</div>
 
   <script>
+    const $ = (id) => document.getElementById(id);
+
     async function requestJson(url, options = {}) {
       const resp = await fetch(url, options);
-      const data = await resp.json();
-      if (!resp.ok) {
-        throw new Error(JSON.stringify(data, null, 2));
-      }
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(JSON.stringify(data) || resp.statusText);
       return data;
     }
 
+    // ── tabs ──
+    document.querySelectorAll(".tab").forEach((tab) => {
+      tab.addEventListener("click", () => {
+        document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
+        tab.classList.add("active");
+        document.querySelectorAll(".main, .placeholder").forEach((p) => (p.style.display = "none"));
+        const panel = $("panel-" + tab.dataset.tab);
+        if (panel) panel.style.display = tab.dataset.tab === "txt2img" ? "flex" : "block";
+      });
+    });
+
+    // ── counters ──
+    function tokenEstimate(text) {
+      let t = 0;
+      for (const ch of text) t += ch.charCodeAt(0) > 127 ? 1 : 0.3;
+      return Math.round(t);
+    }
+    function updateCounters() {
+      $("posCounter").textContent = tokenEstimate($("positiveBox").value) + " / 75";
+      $("negCounter").textContent = tokenEstimate($("negativeBox").value) + " / 75";
+    }
+    $("positiveBox").addEventListener("input", updateCounters);
+    $("negativeBox").addEventListener("input", updateCounters);
+
+    ["positiveBox", "negativeBox"].forEach((id) => {
+      $(id).addEventListener("keydown", (e) => {
+        if (e.ctrlKey && e.key === "Enter") runTask();
+      });
+    });
+
+    // ── model profiles ──
+    async function refreshProfiles() {
+      try {
+        const data = await requestJson("/backend/profiles");
+        const select = $("backend_profile");
+        select.innerHTML = "";
+        const entries = Object.entries(data || {});
+        if (!entries.length) {
+          select.innerHTML = '<option value="">（无 profile）</option>';
+          return;
+        }
+        for (const [key, meta] of entries) {
+          const opt = document.createElement("option");
+          opt.value = key;
+          opt.textContent = meta.display_name || key + (meta.supports_vision ? " · 视觉" : "");
+          select.appendChild(opt);
+        }
+      } catch (err) {
+        $("backend_profile").innerHTML = "<option value=''>获取失败: " + String(err).slice(0, 40) + "</option>";
+      }
+    }
+
+    // ── backend status / load / unload ──
     async function refreshStatus() {
-      const box = document.getElementById("statusBox");
+      const box = $("statusBox");
       box.textContent = "刷新中...";
       try {
         const data = await requestJson("/backend/status");
-        box.textContent = JSON.stringify(data, null, 2);
+        const s = data.status || data || {};
+        const health = s.healthy ? "healthy" : s.health_error ? "error" : "idle";
+        box.textContent = "health: " + health + "\n" + JSON.stringify(
+          { provider: s.backend_provider, base_url: s.base_url, model: s.model_name, pid: s.backend_pid },
+          null, 2) + (s.health_error ? "\nerror: " + s.health_error : "");
       } catch (err) {
         box.textContent = String(err);
       }
     }
 
     async function loadBackend() {
-      const box = document.getElementById("statusBox");
-      box.textContent = "加载中...";
+      $("statusBox").textContent = "加载中...";
       try {
         const data = await requestJson("/backend/load", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
+          method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            backend_profile: document.getElementById("backend_profile").value,
-            context_size: parseInt(document.getElementById("context_size").value || "0", 10)
+            backend_profile: $("backend_profile").value,
+            context_size: parseInt($("context_size").value || "0", 10),
+            auto_load_backend: true,
           })
         });
-        box.textContent = JSON.stringify(data, null, 2);
-      } catch (err) {
-        box.textContent = String(err);
-      }
+        $("statusBox").textContent = JSON.stringify(data, null, 2).slice(0, 900);
+      } catch (err) { $("statusBox").textContent = String(err); }
     }
 
     async function unloadBackend() {
-      const box = document.getElementById("statusBox");
-      box.textContent = "卸载中...";
+      $("statusBox").textContent = "卸载中...";
       try {
         const data = await requestJson("/backend/unload", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({})
+          method: "POST", headers: { "Content-Type": "application/json" }, body: "{}"
         });
-        box.textContent = JSON.stringify(data, null, 2);
-      } catch (err) {
-        box.textContent = String(err);
-      }
+        $("statusBox").textContent = JSON.stringify(data, null, 2).slice(0, 900);
+      } catch (err) { $("statusBox").textContent = String(err); }
     }
 
+    // ── run task ──
     async function runTask() {
-      document.getElementById("positiveBox").textContent = "执行中...";
-      document.getElementById("negativeBox").textContent = "执行中...";
-      document.getElementById("jsonBox").textContent = "执行中...";
-      document.getElementById("rawBox").textContent = "执行中...";
+      const taskType = $("task_type").value;
+      $("outputBox").textContent = "执行中...";
+      $("jsonBox").textContent = "";
 
-      const payload = {
-        task_type: "generate_character_design",
-        backend_profile: document.getElementById("backend_profile").value,
-        context_size: parseInt(document.getElementById("context_size").value || "0", 10),
-        auto_load_backend: document.getElementById("auto_load_backend").checked,
-        unload_after_run: document.getElementById("unload_after_run").checked,
-        temperature: parseFloat(document.getElementById("temperature").value || "0.7"),
-        max_tokens: parseInt(document.getElementById("max_tokens").value || "1200", 10),
-        inputs: {
-          project_background: document.getElementById("project_background").value,
-          genre: document.getElementById("genre").value,
-          target_audience: document.getElementById("target_audience").value,
-          visual_style: document.getElementById("visual_style").value,
-          role_archetype: document.getElementById("role_archetype").value,
-          constraints: document.getElementById("constraints").value,
-          reference_notes: document.getElementById("reference_notes").value
-        }
-      };
-
-      try {
-        const data = await requestJson("/run_task", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
-        });
-        document.getElementById("positiveBox").textContent = data.json_result?.formatted_prompt || "";
-        document.getElementById("negativeBox").textContent = data.json_result?.formatted_negative_prompt || "";
-        document.getElementById("jsonBox").textContent = JSON.stringify(data.json_result, null, 2);
-        document.getElementById("rawBox").textContent = data.raw_text || "";
-        await refreshStatus();
-      } catch (err) {
-        document.getElementById("positiveBox").textContent = "";
-        document.getElementById("negativeBox").textContent = "";
-        document.getElementById("jsonBox").textContent = String(err);
-        document.getElementById("rawBox").textContent = "";
-      }
-    }
-
-    async function runMiniTask(taskType) {
-      document.getElementById("positiveBox").textContent = "执行中...";
-      document.getElementById("negativeBox").textContent = "执行中...";
-      document.getElementById("jsonBox").textContent = "执行中...";
-      document.getElementById("rawBox").textContent = "执行中...";
-
-      let inputs;
-      if (taskType === "expand_anime_tags") {
-        inputs = {
-          raw_tags: document.getElementById("tag_input").value,
-          style_hint: document.getElementById("tag_style_hint").value,
-          purpose: document.getElementById("tag_purpose").value,
-          target_profile: document.getElementById("target_profile").value
-        };
-      } else if (taskType === "normalize_anime_tags") {
-        inputs = {
-          raw_tags: document.getElementById("tag_input").value,
-          style_hint: document.getElementById("tag_style_hint").value,
-          purpose: document.getElementById("tag_purpose").value,
-          target_profile: document.getElementById("target_profile").value
-        };
-      } else {
-        inputs = {
-          raw_text: document.getElementById("tag_input").value,
-          direction: document.getElementById("translate_direction").value,
-          target_profile: document.getElementById("target_profile").value
-        };
-      }
+      const positive = $("positiveBox").value;
+      const negative = $("negativeBox").value;
+      let inputs = { raw_tags: positive, style_hint: "anime, detailed", purpose: "生成提示词", target_profile: "anima_train_v1" };
+      if (taskType === "translate_anime_tags") inputs = { raw_text: positive, direction: "zh_to_en_tags", target_profile: "anima_train_v1" };
+      else if (taskType === "generate_character_design") inputs = { project_background: positive, genre: "anime", target_audience: "二次元", visual_style: negative || "anime style" };
+      else if (taskType === "generate_outfit_tags") inputs = { character_description: positive, style_direction: "学院感", target_profile: "anima_v1" };
+      else if (taskType === "generate_natural_caption") inputs = { raw_tags: positive, style_hint: negative || undefined, target_profile: "anima_train_v1" };
+      else if (taskType === "vision_tagging") inputs = { image_path: positive, target_profile: "anima_train_v1" };
 
       const payload = {
         task_type: taskType,
-        backend_profile: document.getElementById("backend_profile").value,
-        context_size: parseInt(document.getElementById("context_size").value || "0", 10),
-        auto_load_backend: document.getElementById("mini_auto_load").checked,
-        unload_after_run: document.getElementById("mini_unload_after_run").checked,
-        temperature: 0.4,
-        max_tokens: 900,
-        inputs
+        backend_profile: $("backend_profile").value,
+        context_size: parseInt($("context_size").value || "0", 10),
+        auto_load_backend: $("auto_load_backend").checked,
+        unload_after_run: $("unload_after_run").checked,
+        temperature: parseFloat($("temperature").value || "0.6"),
+        max_tokens: parseInt($("max_tokens").value || "900", 10),
+        inputs,
       };
 
       try {
         const data = await requestJson("/run_task", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
+          method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload)
         });
-        document.getElementById("positiveBox").textContent = data.json_result?.formatted_prompt || "";
-        document.getElementById("negativeBox").textContent = data.json_result?.formatted_negative_prompt || "";
-        document.getElementById("jsonBox").textContent = JSON.stringify(data.json_result, null, 2);
-        document.getElementById("rawBox").textContent = data.raw_text || "";
+        $("outputBox").textContent = data.json_result?.formatted_prompt || data.json_result?.formatted_positive_prompt || data.raw_text || JSON.stringify(data, null, 2).slice(0, 800);
+        $("jsonBox").textContent = JSON.stringify(data.json_result ?? data, null, 2).slice(0, 2000);
         await refreshStatus();
       } catch (err) {
-        document.getElementById("positiveBox").textContent = "";
-        document.getElementById("negativeBox").textContent = "";
-        document.getElementById("jsonBox").textContent = String(err);
-        document.getElementById("rawBox").textContent = "";
+        $("outputBox").textContent = "错误: " + err.message;
+        $("jsonBox").textContent = "";
       }
     }
 
-    async function runOutfitTask() {
-      document.getElementById("positiveBox").textContent = "执行中...";
-      document.getElementById("negativeBox").textContent = "执行中...";
-      document.getElementById("jsonBox").textContent = "执行中...";
-      document.getElementById("rawBox").textContent = "执行中...";
+    // ── bindings ──
+    $("statusBtn").addEventListener("click", refreshStatus);
+    $("loadBtn").addEventListener("click", loadBackend);
+    $("unloadBtn").addEventListener("click", unloadBackend);
+    // LoRA 语法教程（内容与工作流侧的 LoraFromText 翻译器一致）
+    const LORA_HELP_TEXT = [
+      "基础",
+      "  <lora:名字>                  权重 1.0",
+      "  <lora:名字:0.8>              统一权重 0.8",
+      "",
+      "双权重（te : unet）",
+      "  <lora:名字:0.8:1.0>          文本编码器 0.8 / UNet 1.0",
+      "  <lora:名字:te=0.8:unet=1.0>  同上（命名写法）",
+      "",
+      "分块权重（LoRA Block Weight）",
+      "  <lora:名字:1:lbw=1,0,0,1,...> 向量照抄 ComfyUI 的 block_vector",
+      "",
+      "别名",
+      "  <lyco:名字:0.5>              LyCORIS",
+      "",
+      "说明",
+      "  · 可写多个，按出现顺序叠加",
+      "  · 大小写不敏感；名字可含子目录（如 anima\\@miratsu）",
+      "  · 映射：webui 的 te → ComfyUI strength_clip；unet → strength_model",
+      "  · 标记会被自动剔除，交工作流里的「LoRA 文本翻译」节点处理",
+    ].join("\n");
 
-      const payload = {
-        task_type: "generate_outfit_tags",
-        backend_profile: document.getElementById("backend_profile").value,
-        context_size: parseInt(document.getElementById("context_size").value || "0", 10),
-        auto_load_backend: document.getElementById("outfit_auto_load").checked,
-        unload_after_run: document.getElementById("outfit_unload_after_run").checked,
-        temperature: parseFloat(document.getElementById("outfit_temperature").value || "0.55"),
-        max_tokens: parseInt(document.getElementById("outfit_max_tokens").value || "1200", 10),
-        inputs: {
-          character_description: document.getElementById("outfit_character_description").value,
-          personality_traits: document.getElementById("outfit_personality_traits").value,
-          outfit_scene: document.getElementById("outfit_scene").value,
-          season: document.getElementById("outfit_season").value,
-          style_direction: document.getElementById("outfit_style_direction").value,
-          design_constraints: document.getElementById("outfit_design_constraints").value,
-          reference_notes: document.getElementById("outfit_reference_notes").value,
-          target_profile: document.getElementById("outfit_target_profile").value
+    $("btnLoraHelp").addEventListener("click", () => {
+      const card = $("loraHelpCard");
+      const showing = card.style.display !== "none";
+      card.style.display = showing ? "none" : "";
+      if (!showing) $("loraHelpBody").textContent = LORA_HELP_TEXT;
+    });
+
+    $("taskRunBtn").addEventListener("click", runTask);
+    $("btnRefreshModels").addEventListener("click", refreshProfiles);
+    $("btnLoadStyle").addEventListener("click", () => { $("positiveBox").focus(); });
+    $("btnMatrix").addEventListener("click", () => { $("outputBox").textContent = "X/Y/Z 矩阵：待接入 workflow json"; });
+    $("btnPresets").addEventListener("click", () => { $("outputBox").textContent = "提示词预设：待接入 tag 库"; });
+
+    // ── Tag Editor：每框一编辑器（Prompt Studio / newbieXmlWizard 范本拖拽）──
+    let tagData = [];
+    const tagUnits = [];
+
+    function escapeHtml(s) {
+      return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    function tokensOf(value) {
+      return value.split(",").map((s) => s.trim()).filter(Boolean);
+    }
+
+    function parseGroupTags(text) {
+      const mains = [];
+      let curMain = null, curSub = null, tagsIndent = -1;
+      for (const raw of String(text || "").split("\n")) {
+        const line = raw.replace(/\r$/, "");
+        if (!line.trim()) continue;
+        const indent = line.match(/^\s*/)[0].length;
+        const content = line.trim();
+        if (indent === 0 && content.startsWith("- name:")) {
+          curMain = { name: content.slice(7).trim(), groups: [] };
+          mains.push(curMain);
+          curSub = null; tagsIndent = -1;
+        } else if (indent === 2 && content.startsWith("- name:")) {
+          if (curMain) { curSub = { name: content.slice(7).trim(), color: "", tags: {} }; curMain.groups.push(curSub); }
+          tagsIndent = -1;
+        } else if (indent === 4 && content.startsWith("color:") && curSub) {
+          curSub.color = content.slice(6).trim();
+        } else if (indent === 4 && content === "tags:" && curSub) {
+          tagsIndent = indent;
+        } else if (tagsIndent >= 0 && indent > tagsIndent && curSub && content.includes(":")) {
+          const idx = content.indexOf(":");
+          const en = content.slice(0, idx).trim();
+          const zh = content.slice(idx + 1).trim();
+          if (en) curSub.tags[en] = zh;
+        } else if (tagsIndent >= 0 && indent <= tagsIndent) {
+          tagsIndent = -1;
         }
-      };
+      }
+      return mains;
+    }
 
+    async function loadTagData() {
       try {
-        const data = await requestJson("/run_task", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
-        });
-        document.getElementById("positiveBox").textContent = data.json_result?.formatted_prompt || "";
-        document.getElementById("negativeBox").textContent = data.json_result?.formatted_negative_prompt || "";
-        document.getElementById("jsonBox").textContent = JSON.stringify(data.json_result, null, 2);
-        document.getElementById("rawBox").textContent = data.raw_text || "";
-        await refreshStatus();
+        const resp = await fetch("/api/tag-groups");
+        const data = await resp.json();
+        tagData = parseGroupTags(data.tags || "");
+        if (tagData.length) {
+          tagUnits.forEach((u) => {
+            u.main = tagData[0].name;
+            u.sub = tagData[0].groups[0]?.name || "";
+            u.renderMainCats();
+          });
+        }
       } catch (err) {
-        document.getElementById("positiveBox").textContent = "";
-        document.getElementById("negativeBox").textContent = "";
-        document.getElementById("jsonBox").textContent = String(err);
-        document.getElementById("rawBox").textContent = "";
+        tagUnits.forEach((u) => {
+          u.grid.innerHTML = "<div class='tag-empty'>加载失败: " + escapeHtml(String(err).slice(0, 100)) + "</div>";
+        });
       }
     }
 
-    document.getElementById("statusBtn").addEventListener("click", refreshStatus);
-    document.getElementById("loadBtn").addEventListener("click", loadBackend);
-    document.getElementById("unloadBtn").addEventListener("click", unloadBackend);
-    document.getElementById("runBtn").addEventListener("click", runTask);
-    document.getElementById("expandTagsBtn").addEventListener("click", () => runMiniTask("expand_anime_tags"));
-    document.getElementById("translateTagsBtn").addEventListener("click", () => runMiniTask("translate_anime_tags"));
-    document.getElementById("normalizeTagsBtn").addEventListener("click", () => runMiniTask("normalize_anime_tags"));
-    document.getElementById("runOutfitBtn").addEventListener("click", runOutfitTask);
+    function findTagColor(en) {
+      for (const m of tagData) {
+        for (const g of m.groups) {
+          if (g.tags[en] !== undefined) return g.color || "";
+        }
+      }
+      return "";
+    }
+
+    function findTagZh(en) {
+      for (const m of tagData) {
+        for (const g of m.groups) {
+          if (g.tags[en] !== undefined) return g.tags[en];
+        }
+      }
+      return "";
+    }
+
+    // 每框一编辑器工厂：任何需要 tag 输入的文本框调用 createPromptUnit 即获得贴装编辑器
+    // （未来 Parameter 注入更多文本框时直接复用）
+    function createPromptUnit(config) {
+      const unit = {
+        id: config.id,
+        box: $(config.textareaId),
+        chips: $(config.chipsId),
+        grid: $(config.gridId),
+        mainCatsId: config.mainCatsId,
+        subCatsId: config.subCatsId,
+        main: "",
+        sub: "",
+        dragState: null,
+      };
+
+      unit.currentSubTags = function () {
+        const main = tagData.find((m) => m.name === unit.main);
+        if (!main) return {};
+        if (!unit.sub) {
+          const merged = {};
+          main.groups.forEach((g) => Object.assign(merged, g.tags));
+          return merged;
+        }
+        const sub = main.groups.find((g) => g.name === unit.sub);
+        return sub ? sub.tags : {};
+      };
+
+      unit.renderMainCats = function () {
+        const box = $(unit.mainCatsId);
+        box.innerHTML = "";
+        tagData.forEach((m) => {
+          const b = document.createElement("button");
+          b.className = "cat-tab" + (m.name === unit.main ? " active" : "");
+          b.textContent = m.name;
+          b.addEventListener("click", () => {
+            unit.main = m.name;
+            unit.sub = m.groups[0]?.name || "";
+            unit.renderMainCats();
+            unit.renderSubCats();
+            unit.renderTagGrid("");
+          });
+          box.appendChild(b);
+        });
+        unit.renderSubCats();
+        unit.renderTagGrid("");
+      };
+
+      unit.renderSubCats = function () {
+        const box = $(unit.subCatsId);
+        box.innerHTML = "";
+        const main = tagData.find((m) => m.name === unit.main);
+        if (!main) return;
+        main.groups.forEach((g) => {
+          const b = document.createElement("button");
+          b.className = "cat-tab" + (g.name === unit.sub ? " sub-active" : "");
+          b.textContent = g.name;
+          b.addEventListener("click", () => {
+            unit.sub = g.name;
+            unit.renderSubCats();
+            unit.renderTagGrid("");
+          });
+          box.appendChild(b);
+        });
+      };
+
+      unit.renderTagGrid = function (search) {
+        const grid = unit.grid;
+        grid.innerHTML = "";
+        const tags = unit.currentSubTags();
+        const q = (search || "").toLowerCase();
+        const entries = Object.entries(tags);
+        const filtered = q
+          ? entries.filter(([en, zh]) => en.toLowerCase().includes(q) || String(zh).toLowerCase().includes(q))
+          : entries;
+        if (!filtered.length) {
+          grid.innerHTML = "<div class='tag-empty'>无 tag</div>";
+          return;
+        }
+        filtered.forEach(([en, zh]) => {
+          const cell = document.createElement("button");
+          cell.className = "tag-cell";
+          cell.title = en;
+          cell.innerHTML = "<span class='en'>" + escapeHtml(en) + "</span><span class='zh'>" + escapeHtml(String(zh)) + "</span>";
+          cell.addEventListener("click", () => unit.addTag(en));
+          grid.appendChild(cell);
+        });
+      };
+
+      unit.addTag = function (en) {
+        const cur = unit.box.value.trim();
+        unit.box.value = cur ? cur + ", " + en : en;
+        updateCounters();
+        unit.renderChips();
+      };
+
+      unit.markDropTarget = function (el) {
+        unit.chips.querySelectorAll(".is-drop-target, .is-dragging").forEach((n) => n.classList.remove("is-drop-target", "is-dragging"));
+        if (el) el.classList.add("is-drop-target");
+      };
+
+      unit.reorderChips = function (srcIdx, dstIdx) {
+        const toks = tokensOf(unit.box.value);
+        if (srcIdx === dstIdx || srcIdx < 0 || dstIdx < 0 || srcIdx >= toks.length || dstIdx >= toks.length) return;
+        const [moved] = toks.splice(srcIdx, 1);
+        toks.splice(dstIdx, 0, moved);
+        unit.box.value = toks.join(", ");
+        updateCounters();
+        unit.renderChips();
+      };
+
+      unit.renderChips = function () {
+        const chips = unit.chips;
+        chips.innerHTML = "";
+        tokensOf(unit.box.value).forEach((tok, idx) => {
+          const color = findTagColor(tok);
+          const chip = document.createElement("span");
+          chip.className = "chip";
+          chip.draggable = true;
+          chip.setAttribute("data-reorder-key", idx);
+          chip.setAttribute("data-reorder-group", unit.id);
+          if (color) chip.style.borderColor = color;
+
+          const handle = document.createElement("span");
+          handle.className = "drag-handle";
+          handle.textContent = "✥";
+          handle.title = "拖拽排序";
+          chip.appendChild(handle);
+
+          const enSpan = document.createElement("span");
+          enSpan.className = "chip-en";
+          enSpan.textContent = tok;
+          chip.appendChild(enSpan);
+
+          const zhSpan = document.createElement("span");
+          zhSpan.className = "chip-zh";
+          zhSpan.textContent = findTagZh(tok);
+          chip.appendChild(zhSpan);
+
+          const del = document.createElement("button");
+          del.className = "chip-del";
+          del.textContent = "×";
+          del.addEventListener("click", () => {
+            const toks = tokensOf(unit.box.value);
+            toks.splice(idx, 1);
+            unit.box.value = toks.join(", ");
+            updateCounters();
+            unit.renderChips();
+          });
+          chip.appendChild(del);
+
+          chips.appendChild(chip);
+        });
+      };
+
+      // 拖拽排序（范本：newbieXmlWizard.js handleDragStart/handleDragOver/handleDrop）
+      unit.chips.addEventListener("dragstart", function (e) {
+        const card = e.target.closest("[data-reorder-key]");
+        if (!card) return;
+        unit.dragState = { key: card.getAttribute("data-reorder-key") };
+        card.classList.add("is-dragging");
+        if (e.dataTransfer) {
+          e.dataTransfer.effectAllowed = "move";
+          e.dataTransfer.setData("text/plain", unit.dragState.key);
+        }
+      });
+
+      unit.chips.addEventListener("dragover", function (e) {
+        if (!unit.dragState) return;
+        const card = e.target.closest("[data-reorder-key]");
+        if (card && card.getAttribute("data-reorder-group") === unit.id) {
+          e.preventDefault();
+          unit.markDropTarget(card);
+          if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+        }
+      });
+
+      unit.chips.addEventListener("drop", function (e) {
+        if (!unit.dragState) return;
+        const card = e.target.closest("[data-reorder-key]");
+        const sourceKey = unit.dragState.key;
+        if (card && card.getAttribute("data-reorder-group") === unit.id) {
+          e.preventDefault();
+          unit.reorderChips(parseInt(sourceKey, 10), parseInt(card.getAttribute("data-reorder-key"), 10));
+        }
+        unit.markDropTarget(null);
+        unit.dragState = null;
+      });
+
+      unit.chips.addEventListener("dragend", function () {
+        unit.markDropTarget(null);
+        unit.dragState = null;
+      });
+
+      // 搜索 / 自定义新增
+      $(config.searchId).addEventListener("input", (e) => unit.renderTagGrid(e.target.value));
+      $(config.addId).addEventListener("click", () => {
+        const v = $(config.customId).value.trim();
+        if (v) { unit.addTag(v); $(config.customId).value = ""; }
+      });
+      $(config.customId).addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          const v = e.target.value.trim();
+          if (v) unit.addTag(v);
+          e.target.value = "";
+        }
+      });
+
+      tagUnits.push(unit);
+      return unit;
+    }
+
+    function renderAllChips() {
+      tagUnits.forEach((u) => u.renderChips());
+    }
+
+    // 初始化：正/负各一个独立编辑器（未来 Parameter 注入更多文本框 → createPromptUnit 再来一个）
+    createPromptUnit({
+      id: "pos",
+      textareaId: "positiveBox",
+      chipsId: "posChips",
+      gridId: "posGrid",
+      mainCatsId: "posMainCats",
+      subCatsId: "posSubCats",
+      searchId: "posSearch",
+      customId: "posCustom",
+      addId: "posAdd",
+    });
+    createPromptUnit({
+      id: "neg",
+      textareaId: "negativeBox",
+      chipsId: "negChips",
+      gridId: "negGrid",
+      mainCatsId: "negMainCats",
+      subCatsId: "negSubCats",
+      searchId: "negSearch",
+      customId: "negCustom",
+      addId: "negAdd",
+    });
+
+    // ── 工作流参数：自动扫描 ETN_Parameter（统一逻辑）──
+    let wfCurrent = null;   // 当前工作流 json
+    let wfControls = {};    // nodeId -> 控件元素
+    let wfPromptTargets = {}; // nodeId -> positiveBox|negativeBox（prompt 类参数贴附的框）
+    let wfMode = "api";       // "api" = ETN_Parameter 工作流；"graph" = 图工作流（组开关）
+    let wfGraphName = "";     // 当前图工作流名
+    let wfDisabledGroups = new Set(); // 已关闭的组名
+    let wfDisabledSubgraphs = new Set(); // 已关闭的子图名
+    let wfImageTargets = {};  // nodeId -> {mode:"base64"|"upload", field:"image"|"mask", label}
+    let wfImageInputs = {};   // nodeId -> {dataUrl, filename, uploadedName, maskCanvas}
+    let objInfo = {};       // object_info 缓存
+    let objInfoLoading = {};
+
+    async function fetchObjectInfo(classType) {
+      if (classType && objInfo[classType] !== undefined) return objInfo[classType];
+      if (classType && objInfoLoading[classType]) return null;
+      if (classType) objInfoLoading[classType] = true;
+      try {
+        const d = await requestJson("/object_info/" + encodeURIComponent(classType || ""));
+        const info = d[classType] || null;
+        if (classType) objInfo[classType] = info;
+        return info;
+      } catch (e) {
+        if (classType) objInfo[classType] = null;
+        return null;
+      } finally {
+        if (classType) delete objInfoLoading[classType];
+      }
+    }
+
+    async function loadWorkflowList() {
+      const sel = $("wfSelect");
+      sel.innerHTML = "";
+      try {
+        const d = await requestJson("/api/workflow");
+        const apiNames = d.workflows || [];
+        if (apiNames.length) {
+          const og = document.createElement("optgroup");
+          og.label = "参数工作流（ETN_Parameter）";
+          for (const name of apiNames) {
+            const opt = document.createElement("option");
+            opt.value = "api:" + name;
+            opt.textContent = name;
+            og.appendChild(opt);
+          }
+          sel.appendChild(og);
+        }
+      } catch (err) { /* ignore */ }
+      try {
+        const g = await requestJson("/api/graph-workflow");
+        const gNames = g.workflows || [];
+        if (gNames.length) {
+          const og = document.createElement("optgroup");
+          og.label = "图工作流（组开关）";
+          for (const name of gNames) {
+            const opt = document.createElement("option");
+            opt.value = "graph:" + name;
+            opt.textContent = name;
+            og.appendChild(opt);
+          }
+          sel.appendChild(og);
+        }
+      } catch (err) { /* ignore */ }
+      if (sel.options.length) {
+        await loadWorkflow(sel.options[0].value);
+      }
+    }
+
+    async function loadWorkflow(value) {
+      const raw = String(value || "");
+      const idx = raw.indexOf(":");
+      const mode = idx >= 0 ? raw.slice(0, idx) : "api";
+      const name = idx >= 0 ? raw.slice(idx + 1) : raw;
+      if (mode === "graph") {
+        await loadGraphWorkflow(name);
+        return;
+      }
+      wfMode = "api";
+      $("wfGroupCard").style.display = "none";
+      $("wfGroupPanel").innerHTML = "";
+      try {
+        wfCurrent = await requestJson("/api/workflow/" + encodeURIComponent(name));
+        wfControls = {};
+        renderWfParams();
+      } catch (err) {
+        $("wfModelRow").innerHTML = "<div class='muted'>工作流加载失败: " + escapeHtml(String(err)) + "</div>";
+      }
+    }
+
+    async function loadGraphWorkflow(name) {
+      wfMode = "graph";
+      wfGraphName = name;
+      wfDisabledGroups = new Set();
+      wfCurrent = null;
+      wfControls = {};
+      wfPromptTargets = {};
+      $("wfModelRow").innerHTML = "";
+      $("wfParamGrid").innerHTML = "";
+      $("wfGroupCard").style.display = "";
+      try {
+        const d = await requestJson("/api/graph-workflow/" + encodeURIComponent(name) + "/groups");
+        renderGroupSwitches(d.groups || [], d.subgraphs || []);
+      } catch (err) {
+        $("wfGroupPanel").innerHTML = "<div class='muted'>组加载失败: " + escapeHtml(String(err)) + "</div>";
+      }
+      // 图工作流同样按 ETN_Parameter 识别渲染（prompt 类 → tag 编辑器贴附）
+      try {
+        const pv = await requestJson("/api/graph-workflow/" + encodeURIComponent(name) + "/param-view");
+        wfCurrent = pv.nodes || {};
+        await renderWfParams();
+      } catch (err) {
+        wfCurrent = null;
+      }
+    }
+
+    function wfGroupsStorageKey() {
+      return "wfgroups:" + (wfGraphName || "");
+    }
+    function loadSavedGroupState() {
+      try {
+        const raw = localStorage.getItem(wfGroupsStorageKey());
+        return raw ? JSON.parse(raw) : null;
+      } catch (e) { return null; }
+    }
+    function saveGroupState() {
+      try {
+        localStorage.setItem(wfGroupsStorageKey(), JSON.stringify({
+          disabled: Array.from(wfDisabledGroups || []),
+          disabled_subgraphs: Array.from(wfDisabledSubgraphs || []),
+        }));
+      } catch (e) { /* ignore */ }
+    }
+
+    // 组开关面板：默认态来自工作流自身(bypass 状态) + 本地记忆 + 过滤 + 全开/全关 + 子图
+    function renderGroupSwitches(groups, subgraphs) {
+      const box = $("wfGroupPanel");
+      box.innerHTML = "";
+      const saved = loadSavedGroupState();
+      const savedDisabled = new Set((saved && saved.disabled) || []);
+      const savedSubDisabled = new Set((saved && saved.disabled_subgraphs) || []);
+      wfDisabledGroups = new Set();
+      wfDisabledSubgraphs = new Set();
+      const subs = subgraphs || [];
+
+      const head = document.createElement("div");
+      head.style.cssText = "display:flex;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap;";
+      const filter = document.createElement("input");
+      filter.placeholder = "过滤组名…";
+      filter.style.cssText = "flex:1;min-width:100px;";
+      head.appendChild(filter);
+      const btnAll = document.createElement("button");
+      btnAll.className = "small ghost"; btnAll.textContent = "全开";
+      const btnNone = document.createElement("button");
+      btnNone.className = "small ghost"; btnNone.textContent = "全关";
+      head.appendChild(btnAll); head.appendChild(btnNone);
+      box.appendChild(head);
+
+      const list = document.createElement("div");
+      box.appendChild(list);
+      const summary = document.createElement("div");
+      summary.className = "muted";
+      summary.style.cssText = "font-size:11px;margin-top:6px;";
+      box.appendChild(summary);
+
+      const allCbs = [];
+      const allSubCbs = [];
+      const updateSummary = () => {
+        const off = wfDisabledGroups.size + wfDisabledSubgraphs.size;
+        summary.textContent = "共 " + (groups.length + subs.length) + " 项；已关闭 " + off + " 项。取消勾选 = 关闭该功能（含子组）。";
+      };
+
+      if (!groups.length) {
+        const d = document.createElement("div");
+        d.className = "muted"; d.textContent = "该工作流没有分组框";
+        list.appendChild(d);
+      }
+      const byTitle = {};
+      for (const g of groups) byTitle[g.title] = g;
+      const children = {};
+      const roots = [];
+      for (const g of groups) {
+        const p = g.parent;
+        if (p && byTitle[p]) (children[p] = children[p] || []).push(g);
+        else roots.push(g);
+      }
+      const make = (g, depth) => {
+        const wrap = document.createElement("div");
+        wrap.style.cssText = "margin:3px 0; padding-left:" + (depth * 14) + "px;";
+        const label = document.createElement("label");
+        label.className = "inline";
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        const enabled = saved ? !savedDisabled.has(g.title) : (g.default_enabled !== false);
+        cb.checked = enabled;
+        if (!enabled) wfDisabledGroups.add(g.title);
+        cb.dataset.group = g.title;
+        cb.dataset.search = String(g.title || "").toLowerCase();
+        cb.addEventListener("change", () => {
+          if (cb.checked) wfDisabledGroups.delete(g.title);
+          else wfDisabledGroups.add(g.title);
+          saveGroupState(); updateSummary();
+        });
+        label.appendChild(cb);
+        if (g.color) {
+          const dot = document.createElement("span");
+          dot.style.cssText = "display:inline-block;width:8px;height:8px;border-radius:50%;margin:0 4px;background:" + g.color + ";";
+          label.appendChild(dot);
+        }
+        const span = document.createElement("span");
+        const n = (g.node_ids || []).length;
+        span.textContent = " " + g.title + "  (" + n + " 节点" + (g.bypassed_count ? "，默认绕过 " + g.bypassed_count : "") + ")";
+        span.style.fontSize = "12px";
+        if (g.default_enabled === false) span.style.opacity = "0.6";
+        label.appendChild(span);
+        wrap.appendChild(label);
+        list.appendChild(wrap);
+        allCbs.push(cb);
+        for (const child of (children[g.title] || [])) make(child, depth + 1);
+      };
+      for (const r of roots) make(r, 0);
+
+      if (subs.length) {
+        const h = document.createElement("div");
+        h.style.cssText = "margin-top:8px;font-size:12px;font-weight:600;";
+        h.textContent = "子图（Subgraph）";
+        list.appendChild(h);
+        for (const sg of subs) {
+          const wrap = document.createElement("div");
+          wrap.style.cssText = "margin:3px 0;";
+          const label = document.createElement("label");
+          label.className = "inline";
+          const cb = document.createElement("input");
+          cb.type = "checkbox";
+          const enabled = saved ? !savedSubDisabled.has(sg.title) : true;
+          cb.checked = enabled;
+          if (!enabled) wfDisabledSubgraphs.add(sg.title);
+          cb.dataset.sub = sg.title;
+          cb.addEventListener("change", () => {
+            if (cb.checked) wfDisabledSubgraphs.delete(sg.title);
+            else wfDisabledSubgraphs.add(sg.title);
+            saveGroupState(); updateSummary();
+          });
+          label.appendChild(cb);
+          const span = document.createElement("span");
+          span.textContent = " " + sg.title + "  (" + (sg.node_count || 0) + " 节点)";
+          span.style.fontSize = "12px";
+          label.appendChild(span);
+          wrap.appendChild(label);
+          list.appendChild(wrap);
+          allSubCbs.push(cb);
+        }
+      }
+
+      filter.addEventListener("input", () => {
+        const q = filter.value.trim().toLowerCase();
+        for (const cb of allCbs) {
+          const row = cb.closest("div");
+          if (row) row.style.display = (!q || String(cb.dataset.search || "").indexOf(q) >= 0) ? "" : "none";
+        }
+      });
+      btnAll.addEventListener("click", () => {
+        for (const cb of allCbs) { cb.checked = true; wfDisabledGroups.delete(cb.dataset.group); }
+        for (const cb of allSubCbs) { cb.checked = true; wfDisabledSubgraphs.delete(cb.dataset.sub); }
+        saveGroupState(); updateSummary();
+      });
+      btnNone.addEventListener("click", () => {
+        for (const cb of allCbs) { cb.checked = false; wfDisabledGroups.add(cb.dataset.group); }
+        for (const cb of allSubCbs) { cb.checked = false; wfDisabledSubgraphs.add(cb.dataset.sub); }
+        saveGroupState(); updateSummary();
+      });
+      updateSummary();
+    }
+
+    function paramInputType(node) {
+      const t = String((node.inputs || {}).type || "auto");
+      if (t.indexOf("integer") >= 0) return "integer";
+      if (t === "number") return "number";
+      if (t === "toggle") return "toggle";
+      if (t === "choice" || t === "combo") return "choice";
+      return "text";
+    }
+
+    // 反向推导：该 Parameter 节点的输出接进了哪个节点的哪个输入（用来自动生成下拉选项）
+    function findParamTarget(nodeId) {
+      for (const [nid, node] of Object.entries(wfCurrent || {})) {
+        if (nid === nodeId) continue;
+        const inputs = node.inputs || {};
+        for (const [field, val] of Object.entries(inputs)) {
+          if (Array.isArray(val) && val[0] === nodeId) {
+            return { nodeId: nid, classType: node.class_type, field };
+          }
+        }
+      }
+      return null;
+    }
+
+    async function buildChoiceOptions(nodeId) {
+      const target = findParamTarget(nodeId);
+      if (!target) return null;
+      const info = await fetchObjectInfo(target.classType);
+      if (!info) return null;
+      const required = info.input?.required || {};
+      const spec = required[target.field] || {};
+      if (Array.isArray(spec) && spec[0] && Array.isArray(spec[0]) && spec[0].length) {
+        return { options: spec[0], target };
+      }
+      // 也可能是 { default: ... } 字符串型文件列表
+      return null;
+    }
+
+    // 数值规格（min/max/step）直接从 ComfyUI object_info 的下游输入定义读 —— 与 ComfyUI 严格一致
+    async function buildNumberSpec(nodeId) {
+      const target = findParamTarget(nodeId);
+      if (!target) return {};
+      const info = await fetchObjectInfo(target.classType);
+      const req = info?.input?.required?.[target.field];
+      if (Array.isArray(req) && req[1] && typeof req[1] === "object") return req[1];
+      if (Array.isArray(req) && req[0] && typeof req[0] === "object") return req[0];
+      return {};
+    }
+
+    // 分区渲染：模型横条（wfModelRow） / 数值参数（wfParamGrid） / prompt 类贴附正负编辑器
+    // ===== 网页图片输入：ETN_LoadImageBase64 / ETN_LoadMaskBase64 / LoadImage =====
+    function registerImageTarget(nodeId, node, mode, field, label) {
+      wfImageTargets[nodeId] = { mode: mode, field: field, label: label };
+      renderImageCard(nodeId, wfImageTargets[nodeId]);
+    }
+
+    function renderImageCard(nodeId, target) {
+      const host = $("wfImageRow") || $("wfParamGrid");
+      const prev = wfImageInputs[nodeId] || {};
+      const card = document.createElement("div");
+      card.style.cssText = "flex:0 0 240px; border:1px dashed #555; border-radius:6px; padding:8px;";
+      card.tabIndex = 0;
+      const head = document.createElement("div");
+      head.style.cssText = "font-size:12px; font-weight:600; margin-bottom:4px;";
+      head.textContent = target.label;
+      card.appendChild(head);
+
+      const file = document.createElement("input");
+      file.type = "file";
+      file.accept = "image/*";
+      file.style.cssText = "font-size:11px; width:100%;";
+      card.appendChild(file);
+
+      const thumbWrap = document.createElement("div");
+      thumbWrap.style.cssText = "margin-top:6px; position:relative;";
+      const base = document.createElement("img");
+      base.style.cssText = "max-width:100%; display:block; border-radius:4px;";
+      thumbWrap.appendChild(base);
+      let cv = null;
+      if ((target.field || "").indexOf("mask") >= 0) {
+        cv = document.createElement("canvas");
+        cv.style.cssText = "position:absolute; left:0; top:0; max-width:100%; cursor:crosshair; touch-action:none;";
+        thumbWrap.appendChild(cv);
+      }
+      card.appendChild(thumbWrap);
+
+      const status = document.createElement("div");
+      status.className = "muted";
+      status.style.cssText = "font-size:11px; margin-top:4px;";
+      status.textContent = "未选择（将沿用工作流里的原值）";
+      card.appendChild(status);
+
+      const info = { dataUrl: prev.dataUrl || "", filename: prev.filename || "", uploadedName: "", maskCanvas: cv };
+      wfImageInputs[nodeId] = info;
+
+      function syncCanvas() {
+        if (!cv) return;
+        const w = base.naturalWidth || 512, h = base.naturalHeight || 512;
+        cv.width = w; cv.height = h;
+        cv.getContext("2d").clearRect(0, 0, w, h);
+      }
+      base.addEventListener("load", syncCanvas);
+      if (info.dataUrl) { base.src = info.dataUrl; status.textContent = "已选择：" + (info.filename || "图片"); }
+
+      function loadFile(f) {
+        if (!f) return;
+        const rd = new FileReader();
+        rd.onload = () => {
+          info.dataUrl = rd.result;
+          info.filename = f.name || "paste.png";
+          info.uploadedName = "";
+          base.src = rd.result;
+          status.textContent = "已选择：" + info.filename;
+        };
+        rd.readAsDataURL(f);
+      }
+      file.addEventListener("change", () => loadFile(file.files && file.files[0]));
+      card.addEventListener("paste", (e) => {
+        const items = (e.clipboardData || {}).items || [];
+        for (const it of items) {
+          if (it.type && it.type.indexOf("image/") === 0) { loadFile(it.getAsFile()); e.preventDefault(); break; }
+        }
+      });
+      card.addEventListener("dragover", (e) => e.preventDefault());
+      card.addEventListener("drop", (e) => {
+        e.preventDefault();
+        const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+        loadFile(f);
+      });
+
+      if (cv) {
+        const bar = document.createElement("div");
+        bar.style.cssText = "display:flex; gap:6px; align-items:center; margin-top:6px; flex-wrap:wrap;";
+        const size = document.createElement("input");
+        size.type = "range"; size.min = "2"; size.max = "200"; size.value = "48";
+        size.style.cssText = "flex:1; min-width:60px;";
+        const eraseLab = document.createElement("label");
+        eraseLab.className = "inline";
+        const erase = document.createElement("input");
+        erase.type = "checkbox";
+        eraseLab.appendChild(erase);
+        const et = document.createElement("span");
+        et.textContent = " 橡皮"; et.style.fontSize = "11px";
+        eraseLab.appendChild(et);
+        const clearBtn = document.createElement("button");
+        clearBtn.className = "small ghost"; clearBtn.textContent = "清空";
+        bar.appendChild(size); bar.appendChild(eraseLab); bar.appendChild(clearBtn);
+        card.appendChild(bar);
+        const note = document.createElement("div");
+        note.className = "muted";
+        note.style.cssText = "font-size:11px; margin-top:2px;";
+        note.textContent = "在图上涂抹要重绘的区域（提交时导出为蒙版 PNG）";
+        card.appendChild(note);
+        clearBtn.addEventListener("click", () => cv.getContext("2d").clearRect(0, 0, cv.width, cv.height));
+        let painting = false;
+        const paint = (e) => {
+          const r = cv.getBoundingClientRect();
+          if (!r.width || !r.height) return;
+          const kx = cv.width / r.width;
+          const x = (e.clientX - r.left) * kx, y = (e.clientY - r.top) * (cv.height / r.height);
+          const ctx = cv.getContext("2d");
+          ctx.globalCompositeOperation = erase.checked ? "destination-out" : "source-over";
+          ctx.fillStyle = "#ffffff";
+          ctx.beginPath();
+          ctx.arc(x, y, Math.max(1, (Number(size.value) / 2) * kx), 0, Math.PI * 2);
+          ctx.fill();
+        };
+        cv.addEventListener("pointerdown", (e) => { painting = true; if (cv.setPointerCapture) cv.setPointerCapture(e.pointerId); paint(e); });
+        cv.addEventListener("pointermove", (e) => { if (painting) paint(e); });
+        cv.addEventListener("pointerup", () => { painting = false; });
+        cv.addEventListener("pointerleave", () => { painting = false; });
+        if (!info.dataUrl) syncCanvas();
+      }
+
+      host.appendChild(card);
+    }
+
+    async function uploadPendingImages() {
+      for (const [nodeId, tgt] of Object.entries(wfImageTargets || {})) {
+        if (tgt.mode !== "upload") continue;
+        const info = wfImageInputs[nodeId];
+        if (!info || !info.dataUrl || info.uploadedName) continue;
+        try {
+          const blob = await (await fetch(info.dataUrl)).blob();
+          const fd = new FormData();
+          fd.append("image", blob, info.filename || ("webui_" + nodeId + ".png"));
+          fd.append("type", "input");
+          fd.append("overwrite", "true");
+          const resp = await fetch("/upload/image", { method: "POST", body: fd });
+          const data = await resp.json();
+          if (data && data.name) info.uploadedName = data.subfolder ? (data.subfolder + "/" + data.name) : data.name;
+        } catch (err) {
+          console.warn("upload failed for node", nodeId, err);
+        }
+      }
+    }
+
+    async function renderWfParams() {
+      $("wfModelRow").innerHTML = "";
+      $("wfParamGrid").innerHTML = "";
+      if ($("wfImageRow")) $("wfImageRow").innerHTML = "";
+      wfControls = {};
+      wfPromptTargets = {};
+      wfImageTargets = {};
+      if (!wfCurrent) return;
+      const entries = Object.entries(wfCurrent);
+      for (const [nodeId, node] of entries) {
+        if (node.class_type === "ETN_LoadImageBase64") {
+          registerImageTarget(nodeId, node, "base64", "image", "网页图片 → IMAGE");
+          continue;
+        }
+        if (node.class_type === "WNT_ImageInput") {
+          registerImageTarget(nodeId, node, "base64", "image+mask", "网页图片/蒙版 → IMAGE+MASK");
+          continue;
+        }
+        if (node.class_type === "ETN_LoadMaskBase64") {
+          registerImageTarget(nodeId, node, "base64", "mask", "网页蒙版 → MASK");
+          continue;
+        }
+        if (node.class_type === "LoadImage") {
+          const ttl = String((node._meta || {}).title || "加载图像");
+          registerImageTarget(nodeId, node, "upload", "image", "网页图片（上传后写入：" + ttl + "）");
+          continue;
+        }
+        if (node.class_type === "ETN_Parameter") {
+          const inputs = node.inputs || {};
+          const typ = String(inputs.type || "text");
+          // prompt 类 → 不渲染控件，贴附到正/负 tag 编辑器（buildWorkflow 时取框值）
+          if (typ.indexOf("prompt") >= 0) {
+            if (typ.indexOf("negative") >= 0) wfPromptTargets[nodeId] = "negativeBox";
+            else wfPromptTargets[nodeId] = "positiveBox";
+            continue;
+          }
+          const pname = String(inputs.name || nodeId);
+          const ptype = paramInputType(node);
+          // 模型类判定：下游目标是 Loader / Checkpoint 类节点
+          const target = findParamTarget(nodeId);
+          const isModel = target && /Loader|Checkpoint/.test(target.classType);
+          const wrap = document.createElement("div");
+          if (isModel) wrap.style.cssText = "flex:1 1 190px; min-width:190px;";
+          const lab = document.createElement("label");
+          lab.textContent = pname;
+          let el;
+          if (ptype === "choice") {
+            const derived = await buildChoiceOptions(nodeId);
+            el = document.createElement("select");
+            const opts = (derived && derived.options) ? derived.options : [];
+            if (opts.length) {
+              el.innerHTML = "";
+              for (const c of opts) {
+                const o = document.createElement("option");
+                o.value = c;
+                o.textContent = c;
+                el.appendChild(o);
+              }
+              const cur = inputs.default;
+              if (cur && el.options.length) {
+                let matched = false;
+                for (let i = 0; i < el.options.length; i++) {
+                  if (el.options[i].value === cur) { el.selectedIndex = i; matched = true; break; }
+                }
+                if (!matched) {
+                  for (let i = 0; i < el.options.length; i++) {
+                    if (String(el.options[i].value).indexOf(String(cur).split("\\").pop()) >= 0) { el.selectedIndex = i; matched = true; break; }
+                  }
+                }
+              }
+            } else {
+              el = document.createElement("input");
+              el.type = "text";
+              el.value = inputs.default !== undefined ? inputs.default : "";
+            }
+          } else if (ptype === "integer" || ptype === "number") {
+            // webui 风格：滑块 + 数字框联动；步进/min/max 取自 ComfyUI object_info（与 ComfyUI 一致）
+            const spec = await buildNumberSpec(nodeId);
+            const isInt = ptype === "integer";
+            let nmin = inputs.min !== undefined ? Number(inputs.min) : (spec.min !== undefined ? Number(spec.min) : 0);
+            let nmax = inputs.max !== undefined ? Number(inputs.max) : (spec.max !== undefined ? Number(spec.max) : (isInt ? 150 : 1));
+            let nstep = isInt ? 1 : (spec.step !== undefined ? Number(spec.step) : 0.01);
+            if (!isFinite(nmin)) nmin = 0;
+            if (!isFinite(nmax) || nmax <= nmin) nmax = nmin + 100;
+            if (!isFinite(nstep) || nstep <= 0) nstep = isInt ? 1 : 0.01;
+            const hardMax = nmax;
+            if (nmax - nmin > 2000) nmax = nmin + 2000;   // 滑块可用范围压缩，数字框仍可输入更大值
+            const curVal = inputs.default !== undefined && inputs.default !== "" ? Number(inputs.default) : nmin;
+            const range = document.createElement("input");
+            range.type = "range";
+            range.min = nmin; range.max = nmax; range.step = nstep;
+            range.value = Math.min(Math.max(curVal, nmin), nmax);
+            range.style.cssText = "flex:1; min-width:60px; padding:0; accent-color:var(--accent);";
+            const num = document.createElement("input");
+            num.type = "number";
+            num.step = nstep; num.min = nmin; num.max = hardMax;
+            num.value = inputs.default !== undefined ? inputs.default : "";
+            num.style.cssText = "width:82px; flex:0 0 82px;";
+            range.addEventListener("input", () => { num.value = range.value; });
+            num.addEventListener("input", () => {
+              const v = Number(num.value);
+              if (isFinite(v)) range.value = Math.min(Math.max(v, nmin), nmax);
+            });
+            const combo = document.createElement("div");
+            combo.style.cssText = "display:flex; gap:6px; align-items:center;";
+            combo.appendChild(range);
+            combo.appendChild(num);
+            combo._num = num;   // 值源（buildWorkflow 取这个）
+            el = combo;
+          } else if (ptype === "toggle") {
+            el = document.createElement("input");
+            el.type = "checkbox";
+            el.checked = inputs.default === "true" || inputs.default === "1" || inputs.default === true;
+          } else {
+            el = document.createElement("input");
+            el.type = "text";
+            el.value = inputs.default !== undefined ? inputs.default : "";
+          }
+          wrap.appendChild(lab);
+          wrap.appendChild(el);
+          (isModel ? $("wfModelRow") : $("wfParamGrid")).appendChild(wrap);
+          wfControls[nodeId] = el._num || el;
+        } else if (node.class_type === "CheckpointLoaderSimple") {
+          // 当前位置未被 Parameter 驱动的硬编码 checkpoint（兜底也放模型横条）
+          const infos = await fetchObjectInfo(node.class_type);
+          const opts = infos?.input?.required?.ckpt_name?.[0] || [];
+          const wrap = document.createElement("div");
+          wrap.style.cssText = "flex:1 1 190px; min-width:190px;";
+          const lab = document.createElement("label");
+          lab.textContent = "模型 Checkpoint";
+          const sel = document.createElement("select");
+          sel.innerHTML = "";
+          for (const c of opts) {
+            const o = document.createElement("option");
+            o.value = c;
+            o.textContent = c;
+            sel.appendChild(o);
+          }
+          const cur = node.inputs.ckpt_name || "";
+          if (cur && sel.options.length) sel.value = cur;
+          wrap.appendChild(lab);
+          wrap.appendChild(sel);
+          $("wfModelRow").appendChild(wrap);
+          wfControls[nodeId] = sel;
+        }
+      }
+    }
+
+    // 动态构建：扫描控件值 → 写回工作流 ETN_Parameter 节点 → 返回可提交的 prompt
+    function buildWorkflow() {
+      const wf = JSON.parse(JSON.stringify(wfCurrent));
+      if (!wf) return wf;
+      const pos = $("positiveBox").value.trim();
+      const neg = $("negativeBox").value.trim();
+      for (const [nodeId, node] of Object.entries(wf)) {
+        const ct = node.class_type || "";
+        if (ct === "CheckpointLoaderSimple") {
+          const ctl = wfControls[nodeId];
+          if (ctl && ctl.value) node.inputs.ckpt_name = ctl.value;
+        } else if (ct === "ETN_Parameter") {
+          const ctl = wfControls[nodeId];
+          const pname = String((node.inputs || {}).name || "");
+          const ptype = paramInputType(node);
+          if (wfPromptTargets[nodeId]) {
+            // 贴附到正/负编辑器的 prompt 类参数：取对应输入框当前值
+            node.inputs.default = wfPromptTargets[nodeId] === "negativeBox" ? neg : pos;
+            continue;
+          }
+          if (!ctl) continue;
+          let val;
+          if (ptype === "toggle") val = ctl.checked ? "true" : "false";
+          else if (ptype === "integer") val = String(parseInt(ctl.value || "0", 10));
+          else if (ptype === "number") val = String(parseFloat(ctl.value || "0"));
+          else val = String(ctl.value || "");
+          if (/seed/i.test(pname) && (val === "-1" || ctl.value === "-1")) {
+            val = String(Math.floor(Math.random() * 1e12));
+          }
+          node.inputs.default = val;
+        }
+      }
+      // 网页图片输入注入（base64 / 上传文件名 / 蒙版 PNG）
+      for (const [nodeId, tgt] of Object.entries(wfImageTargets || {})) {
+        const node = wf[nodeId];
+        if (!node || !node.inputs) continue;
+        const info = wfImageInputs[nodeId] || {};
+        if (tgt.field === "mask") {
+          const cv = info.maskCanvas;
+          const dataUrl = cv ? cv.toDataURL("image/png") : "";
+          if (dataUrl && dataUrl.indexOf(",") > 0) node.inputs.mask = dataUrl.split(",")[1];
+        } else if (tgt.mode === "base64") {
+          if (info.dataUrl && info.dataUrl.indexOf(",") > 0) node.inputs.image = info.dataUrl.split(",")[1];
+          if ((tgt.field || "").indexOf("mask") >= 0) {
+            const mcv = info.maskCanvas;
+            const mdu = mcv ? mcv.toDataURL("image/png") : "";
+            if (mdu && mdu.indexOf(",") > 0) node.inputs.mask = mdu.split(",")[1];
+          }
+        } else if (tgt.mode === "upload") {
+          if (info.uploadedName) node.inputs.image = info.uploadedName;
+        }
+      }
+      // 正/负 prompt 注入兼容：CLIPTextEncode.text 若是字符串（老工作流直接接）则注入；
+      // 若是数组引用（prompt 类 Parameter 驱动，如 ["38",0]）则不动 —— Parameter 的 default 已注入。
+      for (const [nodeId, node] of Object.entries(wf)) {
+        if ((node.class_type || "").indexOf("KSampler") >= 0) {
+          const posRef = node.inputs && node.inputs.positive;
+          const negRef = node.inputs && node.inputs.negative;
+          if (Array.isArray(posRef) && wf[posRef[0]] && typeof wf[posRef[0]].inputs.text === "string") {
+            wf[posRef[0]].inputs.text = pos;
+          }
+          if (Array.isArray(negRef) && wf[negRef[0]] && typeof wf[negRef[0]].inputs.text === "string") {
+            wf[negRef[0]].inputs.text = neg;
+          }
+        }
+      }
+      return wf;
+    }
+
+    async function wfGen() {
+      const st = $("wfStatus");
+      st.style.display = "block";
+      st.textContent = "构建工作流 + 提交…";
+      $("wfResult").innerHTML = "";
+      await uploadPendingImages();
+      if (wfMode === "graph") {
+        st.textContent = "提交图工作流（组开关：关闭 " + (wfDisabledGroups || []).size + " 组）…";
+        try {
+          const overrides = {};
+          for (const [nid, ctl] of Object.entries(wfControls || {})) {
+            if (!ctl || wfPromptTargets[nid]) continue;
+            overrides[nid] = ctl.type === "checkbox" ? !!ctl.checked : String(ctl.value === undefined || ctl.value === null ? "" : ctl.value);
+          }
+          const resp = await fetch("/api/generate-graph", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              name: wfGraphName,
+              disabled_groups: Array.from(wfDisabledGroups || []).concat(Array.from(wfDisabledSubgraphs || [])),
+              positive: $("positiveBox").value.trim(),
+              negative: $("negativeBox").value.trim(),
+              overrides: overrides,
+            }),
+          });
+          const data = await resp.json();
+          if (!resp.ok) {
+            st.textContent = "提交失败: " + JSON.stringify(data).slice(0, 400);
+            return;
+          }
+          st.textContent = "已提交 prompt_id=" + data.prompt_id + "（节点 " + data.node_count + "）"
+            + (data.injected ? "  注入 正" + data.injected.positive + "/负" + data.injected.negative : "")
+            + (data.warnings && data.warnings.length ? "  | 警告 " + data.warnings.length : "");
+          pollHistory(data.prompt_id, st);
+        } catch (err) {
+          st.textContent = "错误: " + String(err);
+        }
+        return;
+      }
+      try {
+        const resp = await fetch("/prompt", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt: buildWorkflow(), client_id: "webui-ntr" }),
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+          st.textContent = "提交失败: " + JSON.stringify(data).slice(0, 300);
+          return;
+        }
+        st.textContent = "已提交 prompt_id=" + data.prompt_id + "，执行中…";
+        pollHistory(data.prompt_id, st);
+      } catch (err) {
+        st.textContent = "错误: " + String(err);
+      }
+    }
+
+    async function pollHistory(promptId, st, tries) {
+      tries = tries || 0;
+      try {
+        const resp = await fetch("/history/" + promptId);
+        const data = await resp.json();
+        const entry = data[promptId];
+        if (entry && entry.status && entry.status.completed) {
+          const outputs = entry.outputs || {};
+          let img = null;
+          let msk = null;
+          for (const k in outputs) {
+            const o = outputs[k];
+            if (o && o.images && o.images.length && !img) img = o.images[0];
+            if (o && o.masks && o.masks.length && !msk) msk = o.masks[0];
+          }
+          if (img) {
+            st.textContent = "完成 ✅ " + img.filename;
+            const url = "/view?filename=" + encodeURIComponent(img.filename)
+              + (img.subfolder ? "&subfolder=" + encodeURIComponent(img.subfolder) : "")
+              + "&type=" + (img.type || "output");
+            let html = '<img src="' + url + '" style="max-width:100%;border-radius:6px;">';
+            if (msk) {
+              const murl = "/view?filename=" + encodeURIComponent(msk.filename)
+                + (msk.subfolder ? "&subfolder=" + encodeURIComponent(msk.subfolder) : "")
+                + "&type=" + (msk.type || "output");
+              html += '<div style="font-size:11px;margin-top:4px;">蒙版</div><img src="' + murl + '" style="max-width:100%;border-radius:6px;opacity:.85;">';
+            }
+            $("wfResult").innerHTML = html;
+          } else {
+            st.textContent = "完成但无图像输出";
+          }
+          return;
+        }
+        if (entry && entry.status && entry.status.status_str === "error") {
+          st.textContent = "执行失败: " + JSON.stringify(entry.status).slice(0, 300);
+          return;
+        }
+        if (tries > 300) { st.textContent = "超时（5 分钟）"; return; }
+        setTimeout(() => pollHistory(promptId, st, tries + 1), 1000);
+      } catch (err) {
+        st.textContent = "轮询错误: " + String(err);
+      }
+    }
+
+    $("runBtn").addEventListener("click", wfGen);
+    $("wfSelect").addEventListener("change", (e) => loadWorkflow(e.target.value));
+    loadWorkflowList();
+
+    loadTagData();
+    refreshProfiles();
     refreshStatus();
+    updateCounters();
+    renderAllChips();
   </script>
 </body>
 </html>

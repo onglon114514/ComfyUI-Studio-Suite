@@ -42,6 +42,23 @@ SOURCES = (
     ("artists", "resources/danbooru_artist_wildcard-D\u7ad9\u753b\u5e08\u5217\u8868.txt", True),
     ("manual_aliases", "resources/danbooru_character_aliases.json", False),
     ("cooccurrence", "resources/danbooru_tags_cooccurrence.csv", True),
+    ("classified_attire", "resources/danbooru_tags_classified/attire.csv", False),
+    ("classified_action", "resources/danbooru_tags_classified/action.csv", False),
+    ("classified_expression", "resources/danbooru_tags_classified/expression.csv", False),
+    ("classified_object", "resources/danbooru_tags_classified/object.csv", False),
+    ("classified_other", "resources/danbooru_tags_classified/other.csv", False),
+    ("classified_count", "resources/danbooru_tags_classified/count.csv", False),
+    ("zh_general", "resources/danbooru_tags_data_zh/general.csv", False),
+    ("zh_character", "resources/danbooru_tags_data_zh/character.csv", False),
+    ("zh_copyright", "resources/danbooru_tags_data_zh/copyright.csv", False),
+    ("zh_artist", "resources/danbooru_tags_data_zh/artist.csv", False),
+    ("zh_meta", "resources/danbooru_tags_data_zh/meta.csv", False),
+    ("zh_hy_mt", "resources/danbooru_tags_data_zh/hy_mt.csv", False),
+    ("tag_counts", "resources/tag_count_tags_统计.jsonl", True),
+    ("character_aliases_generated", "resources/danbooru_character_aliases.generated.json", True),
+    ("implications", "resources/danbooru_tag_implications.csv", False),
+    ("danbooru_snapshot_qdlabs", "resources/qdlabs_tags.jsonl", True),
+    ("danbooru_snapshot_baton4ik", "resources/danbooru_snapshot_baton4ik.sqlite", True),
 )
 
 QUICK_GROUP_SEMANTIC_MAP = {
@@ -62,6 +79,17 @@ POSE_QUICK_GROUPS = {
 
 COUNT_QUICK_GROUPS = {"对象", "人数", "数量"}
 DANBOORU_CATEGORIES = {0: "general", 1: "artist", 3: "copyright", 4: "character", 5: "meta"}
+
+CLASSIFIED_GROUPS = {
+    "classified_attire": ("group:attire:classified", "服装（开源分类）", "group:attire"),
+    "classified_action": ("studio:pose:classified", "动作（开源分类）", "studio:pose"),
+    "classified_expression": ("studio:expression:classified", "表情（开源分类）", "studio:expression"),
+    "classified_object": ("studio:objects:classified", "物品（开源分类）", "studio:objects"),
+    "classified_other": ("studio:other:classified", "其他（开源分类）", None),
+    "classified_count": ("studio:count", "人数与数量", None),
+}
+CLASSIFIED_SOURCE_NAME = "Jio7/danbooru-tags-classified"
+CLASSIFIED_REVIEW_STATUS = "imported_unreviewed"
 
 SCHEMA = """
 CREATE TABLE metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL) WITHOUT ROWID;
@@ -119,6 +147,30 @@ ON CONFLICT(canonical) DO UPDATE SET
            WHEN excluded.kind='unknown' OR tags.kind=excluded.kind THEN tags.kind ELSE 'unknown' END,
  kind_conflict=CASE WHEN tags.kind!='unknown' AND excluded.kind!='unknown' AND tags.kind!=excluded.kind
                     THEN 1 ELSE tags.kind_conflict END
+"""
+
+# terms PK is (term,canonical,source,role); the same (term,canonical,role) written by
+# several sources yields duplicate rows. Fold to one row per (term,canonical,role),
+# keeping the lexicographically-first source id.
+#
+# Performance: the old NOT IN (SELECT ... GROUP BY ...) form materializes a
+# multi-million-row RHS with no index and degenerates to roughly O(n^2) on the
+# full build (billions of comparisons, hours). The indexed keepers table turns
+# it into O(n log n): one GROUP BY pass, one b-tree lookup per row.
+_TERMS_FOLD_SQL = """
+BEGIN;
+CREATE TEMP TABLE folded_keepers AS
+SELECT term, canonical, role, MIN(source) AS source
+FROM terms
+GROUP BY term, canonical, role;
+CREATE INDEX folded_keepers_idx ON folded_keepers(term, canonical, role, source);
+DELETE FROM terms WHERE NOT EXISTS (
+    SELECT 1 FROM folded_keepers k
+    WHERE k.term = terms.term AND k.canonical = terms.canonical
+      AND k.role = terms.role AND k.source = terms.source
+);
+DROP TABLE folded_keepers;
+COMMIT;
 """
 
 
@@ -337,6 +389,183 @@ class _Importer:
             else:
                 source["rejected"] += 1
 
+    # SOURCES entries are dispatched with getattr(importer, source_id), so every
+    # source id needs a same-named method. These wrappers share one implementation
+    # per file shape (the previous revision shipped `_classified_csv` without them,
+    # which made every classified_* source raise AttributeError during a build).
+    def classified_attire(self, lines, source):
+        return self._classified_csv(lines, source)
+
+    def classified_action(self, lines, source):
+        return self._classified_csv(lines, source)
+
+    def classified_expression(self, lines, source):
+        return self._classified_csv(lines, source)
+
+    def classified_object(self, lines, source):
+        return self._classified_csv(lines, source)
+
+    def classified_other(self, lines, source):
+        return self._classified_csv(lines, source)
+
+    def classified_count(self, lines, source):
+        return self._classified_csv(lines, source)
+
+    def _zh_csv(self, lines, source):
+        """ame-la/danbooru-tags-data-zh rows: tag,category,aliases,zh,count,notes.
+
+        Fills Chinese gaps only. Priority 40 sits below the curated sources
+        (clothing 90 / characters 80 / bilingual 50), so the merge keeps an
+        existing curated label and only fills blanks. Chinese aliases become
+        `terms`, and the Chinese note fills an empty description.
+        """
+        for row in _csv_rows(lines, source):
+            canonical = _text(row[0]).lstrip("\ufeff") if row else ""
+            if len(row) < 4 or not canonical or canonical.lower() in {"tag", "canonical", "name"}:
+                source["rejected"] += 1
+                continue
+            label = _text(row[3])
+            if not label:
+                source["rejected"] += 1
+                continue
+            aliases = [_label(part) for part in re.split(r"[|/;；]", row[2]) if _text(part)]
+            count = _count(row[4]) if len(row) > 4 else None
+            notes = _text(row[5]) if len(row) > 5 else ""
+            if not self.tag(canonical, source["id"], label=label, priority=40, count=count,
+                            description=notes, aliases=aliases):
+                source["rejected"] += 1
+                continue
+            self.accepted(source)
+
+    def zh_general(self, lines, source):
+        return self._zh_csv(lines, source)
+
+    def zh_character(self, lines, source):
+        return self._zh_csv(lines, source)
+
+    def zh_copyright(self, lines, source):
+        return self._zh_csv(lines, source)
+
+    def zh_artist(self, lines, source):
+        return self._zh_csv(lines, source)
+
+    def zh_meta(self, lines, source):
+        return self._zh_csv(lines, source)
+
+    def zh_hy_mt(self, lines, source):
+        return self._zh_csv(lines, source)
+
+    def tag_counts(self, lines, source):
+        """Danbooru-adjacent tag corpus: {"Tag Name": "concept art", "Count": 278094}.
+
+        Brings the full tag inventory (search/autocomplete breadth). Its counts are
+        NOT Danbooru post counts (the file rates 1girl at 121 while rating noai at
+        433806), so they are stored as evidence only and never become the popularity
+        `count` — a wrong count would mis-sort every "popular tags" list.
+        """
+        for row in _json_rows(lines, source):
+            name = _text(row.get("Tag Name"))
+            if not name:
+                source["rejected"] += 1
+                continue
+            if not self.tag(name, source["id"],
+                            payload={"corpus": source["id"],
+                                     "corpus_count": _count(row.get("Count")),
+                                     "count_note": "foreign_corpus_not_danbooru"}):
+                source["rejected"] += 1
+                continue
+            self.accepted(source)
+
+    def implications(self, lines, source):
+        """child,parent CSV: child implies parent (specific -> general).
+
+        Staged into the temporary `implications` table; `_propagate_implications`
+        later pulls each child into its parent's groups (first hop only).
+        """
+        for row in _csv_rows(lines, source):
+            if len(row) < 2:
+                source["rejected"] += 1
+                continue
+            child, parent = _text(row[0]), _text(row[1])
+            if not child or not parent or child == parent:
+                source["rejected"] += 1
+                continue
+            if child.strip().casefold() in {"child", "tag"} and parent.strip().casefold() in {"parent", "implies"}:
+                continue
+            self.db.execute("INSERT OR IGNORE INTO implications VALUES(?,?)", (child, parent))
+            self.accepted(source)
+
+    def character_aliases_generated(self, lines, source):
+        """canonical -> {aliases: [...], metadata: {display_name_zh: ...}} (119 MB object).
+
+        The aliases are the Chinese reverse-lookup surface (typing 初音未来 must find
+        hatsune_miku), so they matter more than the label here; priority 60 sits below
+        the curated character source (80) so it never overrides a reviewed name.
+        """
+        collection = "".join(lines)
+        if len(collection) > 400 * 1024 * 1024:
+            LOG.warning("character_aliases_generated: payload too big (%s bytes); skipped", len(collection))
+            source["rejected"] += 1
+            return
+        try:
+            payload = json.loads(collection)
+        except Exception as error:  # noqa: BLE001
+            LOG.warning("character_aliases_generated: unparsable (%s)", error)
+            source["rejected"] += 1
+            return
+        if not isinstance(payload, dict):
+            source["rejected"] += 1
+            return
+        for canonical, entry in payload.items():
+            if not isinstance(entry, dict):
+                source["rejected"] += 1
+                continue
+            aliases = [a for a in (entry.get("aliases") or []) if isinstance(a, str) and a.strip()]
+            metadata = entry.get("metadata") if isinstance(entry.get("metadata"), dict) else {}
+            label = _text(metadata.get("display_name_zh")) if metadata else ""
+            if not self.tag(_text(canonical), source["id"], label=label or None, priority=60,
+                            aliases=aliases, payload={"source": source["id"]}):
+                source["rejected"] += 1
+                continue
+            self.accepted(source)
+
+    def _classified_csv(self, lines, source):
+        group_id, label, parent = CLASSIFIED_GROUPS[source["id"]]
+        self.group(group_id, label, parent, CLASSIFIED_SOURCE_NAME, CLASSIFIED_REVIEW_STATUS)
+        for row in _csv_rows(lines, source):
+            if not row:
+                continue
+            if len(row) >= 2 and row[0].strip().lower() == "tag" and row[1].strip().lower() == "count":
+                continue
+            canonical = _text(row[0])
+            if not canonical:
+                source["rejected"] += 1
+                continue
+            count = _count(row[1]) if len(row) > 1 else None
+            if not self.tag(canonical, source["id"], count=count):
+                source["rejected"] += 1
+                continue
+            self.db.execute("INSERT OR IGNORE INTO tag_groups VALUES(?,?)", (group_id, canonical))
+            self.accepted(source)
+
+    def classified_attire(self, lines, source):
+        self._classified_csv(lines, source)
+
+    def classified_action(self, lines, source):
+        self._classified_csv(lines, source)
+
+    def classified_expression(self, lines, source):
+        self._classified_csv(lines, source)
+
+    def classified_object(self, lines, source):
+        self._classified_csv(lines, source)
+
+    def classified_other(self, lines, source):
+        self._classified_csv(lines, source)
+
+    def classified_count(self, lines, source):
+        self._classified_csv(lines, source)
+
     def characters(self, lines, source):
         for row in _json_rows(lines, source):
             canonical = row.get("canonical", row.get("character\u89d2\u8272"))
@@ -409,6 +638,116 @@ class _Importer:
             if kind == "copyright":
                 self.work(canonical, canonical, post_count=count)
             self.accepted(source)
+
+    def danbooru_snapshot_qdlabs(self, lines, source):
+        """qdlabs/danbooru-tags tags.jsonl: full Danbooru tag inventory snapshot.
+
+        Rows carry {id,name,post_count,category,created_at,updated_at,
+        is_deprecated,words}. `name` is already the underscore canonical;
+        `category` maps through DANBOORU_CATEGORIES; `post_count` is the real
+        Danbooru post count and becomes the popularity `count`. No Chinese label
+        is written here, so curated translations from other sources are never
+        overwritten.
+        """
+        for row in _json_rows(lines, source):
+            canonical = _text(row.get("name"))
+            category = row.get("category")
+            count = _count(row.get("post_count"))
+            if (not canonical or isinstance(category, bool) or category not in DANBOORU_CATEGORIES
+                    or count is None or row.get("is_deprecated") is not False):
+                source["rejected"] += 1
+                continue
+            kind = DANBOORU_CATEGORIES[category]
+            payload = {
+                "id": row.get("id"),
+                "created_at": _text(row.get("created_at")),
+                "updated_at": _text(row.get("updated_at")),
+                "is_deprecated": False,
+                "dataset_revision": source.get("revision", ""),
+                "review_status": "third_party_snapshot_of_danbooru_api",
+            }
+            if not self.tag(
+                canonical,
+                source["id"],
+                kind=kind,
+                count=count,
+                count_priority=120,
+                count_scope="qdlabs_filtered_danbooru_snapshot",
+                official_category=category,
+                payload=payload,
+            ):
+                source["rejected"] += 1
+                continue
+            # The snapshot carries Danbooru's authoritative category and resolves
+            # older source-inference conflicts without replacing curated labels.
+            self.db.execute(
+                "UPDATE tags SET kind=?,kind_conflict=0 WHERE canonical=?",
+                (kind, canonical),
+            )
+            if kind == "copyright":
+                self.work(canonical, canonical, post_count=count)
+            self.accepted(source)
+
+    def danbooru_snapshot_baton4ik(self, lines, source):
+        """baton4ik/danbooru-tag-metadata-snapshot booru_snapshot.sqlite (full truth).
+
+        This source is a SQLite snapshot (~1.7M tags), not a line-delimited file,
+        so it is opened read-only here and streamed with a cursor; `lines` is
+        ignored. `name` is the underscore canonical, `category` maps through
+        DANBOORU_CATEGORIES, and `post_count` is the real Danbooru count. Counts
+        win at priority 200 (above qdlabs' 120), and no Chinese label is written
+        so curated translations are never overwritten.
+        """
+        db_path = Path(source["path"])
+        if not db_path.is_absolute():
+            db_path = ROOT / db_path
+        if not db_path.is_file():
+            raise ValueError(f"baton4ik snapshot missing or unreachable: {db_path}")
+        con = sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True)
+        try:
+            con.row_factory = sqlite3.Row
+            for row in con.execute(
+                "SELECT id, name, category, post_count, is_deprecated FROM tags"
+            ):
+                canonical = _text(row["name"])
+                category = row["category"]
+                count = _count(row["post_count"])
+                if (not canonical or isinstance(category, bool)
+                        or category not in DANBOORU_CATEGORIES
+                        or count is None or row["is_deprecated"] != 0):
+                    source["rejected"] += 1
+                    continue
+                kind = DANBOORU_CATEGORIES[category]
+                payload = {
+                    "id": row["id"],
+                    "is_deprecated": False,
+                    "dataset_revision": source.get("revision", ""),
+                    "review_status": "third_party_snapshot_of_danbooru_api",
+                }
+                if not self.tag(
+                    canonical,
+                    source["id"],
+                    kind=kind,
+                    count=count,
+                    count_priority=200,
+                    count_scope="baton4ik_full_danbooru_snapshot",
+                    official_category=category,
+                    payload=payload,
+                ):
+                    source["rejected"] += 1
+                    continue
+                # The snapshot carries Danbooru's authoritative category and
+                # resolves older source-inference conflicts without replacing
+                # curated labels.
+                self.db.execute(
+                    "UPDATE tags SET kind=?,kind_conflict=0 WHERE canonical=?",
+                    (kind, canonical),
+                )
+                if kind == "copyright":
+                    self.work(canonical, canonical, post_count=count)
+                self.accepted(source)
+        finally:
+            con.close()
 
     def manual_aliases(self, lines, source):
         # Only the explicitly bounded small, curated JSON is materialized.
@@ -582,6 +921,28 @@ def _import_quick_group_semantics(importer, path, root):
     return source
 
 
+def _propagate_implications(db):
+    """Pull implied children into every group their direct parent already has.
+
+    Implication pairs live in the temporary `implications` table as
+    (child, parent): child is the more specific tag and implies parent. A single
+    statement keeps this to the first hop only — a child joins the group(s) of
+    its direct parent, but implications are never chained transitively here.
+    Children and parents are ensured as tags first so `tag_groups` stays valid
+    under the final foreign-key check. Returns memberships added.
+    """
+    before = db.execute("SELECT count(*) FROM tag_groups").fetchone()[0]
+    db.execute("INSERT OR IGNORE INTO tags(canonical) SELECT DISTINCT child FROM implications")
+    db.execute("INSERT OR IGNORE INTO tags(canonical) SELECT DISTINCT parent FROM implications")
+    db.execute(
+        "INSERT OR IGNORE INTO tag_groups(group_id,canonical) "
+        "SELECT DISTINCT g.group_id,i.child FROM implications i "
+        "JOIN tag_groups g ON g.canonical=i.parent"
+    )
+    after = db.execute("SELECT count(*) FROM tag_groups").fetchone()[0]
+    return after - before
+
+
 def _finish_groups(db):
     db.execute("INSERT OR IGNORE INTO groups(id,label_zh,source,review_status) "
                "SELECT DISTINCT group_id,group_id,'clothing','missing_group_definition' FROM tag_groups")
@@ -708,6 +1069,10 @@ def _build(source_package, output_dir, include_large, allow_coverage_regression=
         db.create_function("normalize", 1, normalize, deterministic=True)
         db.executescript(SCHEMA)
         db.execute("INSERT INTO metadata VALUES('version',?)", (version,))
+        db.execute(
+            "CREATE TEMP TABLE implications("
+            "child TEXT NOT NULL,parent TEXT NOT NULL,PRIMARY KEY(child,parent)) WITHOUT ROWID"
+        )
         importer = _Importer(db)
         category_path = output_dir / "categories.v1.json"
         category_root, category_location = output_dir, "output_dir"
@@ -728,15 +1093,27 @@ def _build(source_package, output_dir, include_large, allow_coverage_regression=
                 source.update(status="skipped", reason="exceeds_small_json_limit")
                 continue
             LOG.info("Importing %s (%s bytes)", source_id, source["size"])
-            with _lines(path, source) as lines:
-                getattr(importer, source_id)(lines, source)
+            if source_id == "danbooru_snapshot_baton4ik":
+                # SQLite snapshot: the loader opens the file read-only itself and
+                # bypasses the line-stream reader; hash the file directly so the
+                # manifest records the real snapshot checksum.
+                importer.danbooru_snapshot_baton4ik(None, source)
+                source.update(sha256=_file_sha256(path), status="imported")
+            else:
+                with _lines(path, source) as lines:
+                    getattr(importer, source_id)(lines, source)
             db.commit()
             LOG.info("Imported %s: accepted=%s rejected=%s", source_id, source["imported"], source["rejected"])
         quick_group_path = source_package / "prompt_studio/storage/group_tags/zh_CN.yaml"
         quick_group_source = _import_quick_group_semantics(importer, quick_group_path, source_package)
         sources.append(quick_group_source)
         db.commit()
+        implied_memberships = _propagate_implications(db)
+        db.commit()
+        LOG.info("Implication propagation added %s group memberships", implied_memberships)
         LOG.info("Building group memberships and query indexes")
+        db.executescript(_TERMS_FOLD_SQL)
+        db.commit()
         _finish_groups(db)
         _finish_works(db)
         db.executescript("""
@@ -787,7 +1164,8 @@ def _build(source_package, output_dir, include_large, allow_coverage_regression=
                                  "tag_count_resources": "not_imported: corpus provenance unverified",
                                  "copyright": "source metadata only; not split into inferred canonical tags",
                                  "counts": "source_snapshot_unverified; never summed across sources",
-                                 "cooccurrence": "undirected max per pair; both endpoints indexed"},
+                                 "cooccurrence": "undirected max per pair; both endpoints indexed",
+                    "classified_groups": "imported_unreviewed groups from Jio7/danbooru-tags-classified (attire/action/expression/object); tag,count CSV, unreviewed"},
                     "search_order": "canonical_ascending", "max_limit": 100,
                     "update_policy": "atomic_manifest_pointer; old_versions_retained",
                     "scratch_policy": "output_directory_only; allow space for new database and sort scratch plus old versions"}
