@@ -30,6 +30,10 @@
 |---|---|---|
 | webui-ntr | `checkpoint-20261008-initial` | `69cbea3`（根提交，6 文件） |
 | studio-suite | `checkpoint-20261008-pre-webui-ntr-split` | `cf69508`（34 文件） |
+| studio-suite | `wnt-workflow-live-20261008` | `1cfe2c9` WNT 工作流接线 |
+| studio-suite | `handoff-doc-20261009` | `32f012b` 交接文档入库 |
+| studio-suite | `tag-editor-leakfix-20261010` | `e69ee91` 阶段一：tippy / 监听 / 防抖 |
+| studio-suite | `rerender-fix-20261011` | 阶段二：稳定 id（本次，见第 7 节） |
 
 回退方式（**只回文件、不动历史**）：
 
@@ -96,49 +100,44 @@ git checkout <tag> -- .        # 把工作区文件恢复到该回退点
 4. **大资源不入库**：`*.sqlite` / `*.parquet` / 大 jsonl / `danbooru_tags_*` 已在 `.gitignore`
 5. **临时脚本**放仓库 `tools/`（webui-ntr）或工作区 `game-project/tools/`（分析类）
 
-## 7. ~~待办（HIGH）：studio-suite tag 编辑器导致**浏览器崩溃**~~ 【2026-10-10 已定位并修复】
+## 7. 已修复：tag 编辑器导致浏览器崩溃（2026-10-10 / 10-11）
 
-**结论**：根因在 `prompt_studio/bundle/main.entry.js`（weilin/physton 上游代码）——
-`tooltip` Vue 指令**没有 `unmounted` 钩子**，每次全量重解析标签都会把新 tippy 实例
-永久塞进全局 `$tippyList`，旧实例永不销毁。实测（600 tag，无头 Chrome 驱动真实代码路径）：
-`$tippyList` 初始 7312 → **每次全量重解析 +7212**，JS 堆 **每次重解析 +85MB 且无释放**，
-25 次编辑后 2.2GB → 渲染进程 OOM。这是"编辑标签时浏览器崩溃（跨浏览器）"的真凶；
-与浏览器品牌无关的推断正确，但"无限重渲染/DOM 增长"的具体机制是 **tippy 实例泄漏**，不是 DOM 节点增长（DOM 节点数实测全程持平）。
+**现象**：在 tag 编辑器里编辑标签，浏览器不止一次直接崩（Chrome 与 Edge 均可复现）。
+**定性**：与浏览器品牌无关，是上游 weilin / physton 前端的真 bug。
 
-**排除的假设**：`__autosizeInputGhost` 的 `style.cssText += 761字符` 看似无界增长，
-实测 CSSOM 对同名属性去重，cssText 恒为 581 字节——不是泄漏源（但监听器堆积是真的，已一并修）。
+### 阶段一 · 泄漏（2026-10-10，commit e69ee91）
 
-**修复**（`tools/ss-crash-repro/patch_bundle.cjs`，字符串级补丁，3 处）：
-1. tooltip 指令补 `unmounted`：销毁 tippy 实例并从 `$tippyList` 摘除（主修复）；
-2. autosize `Jk` 的 `input` 监听器去重（`e.__ssGhostR` 簿记），防止编辑框监听器乘法；
-3. textarea→tags 重解析防抖 100ms → 400ms（打字时全量重绘频率降 10 倍，trailing-edge 行为不变）。
+- tooltip 指令只有挂载、没有 `unmounted`，每次 tag 重渲染都把 tippy 实例永久堆进全局 `$tippyList`（600 tag 时 +7212/次），堆 +85MB/次，渲染进程 OOM。
+- Jk autosize 每次调用加一个永久 `input` 监听、清理被丢弃，监听器累乘。
+- textarea 到 tags 的防抖 100ms 改为 400ms（打字时不再每秒重解析十次）。
+- 补丁脚本：`tools/patch_bundle.cjs` 与 `check_anchors.cjs`（锚点计数不等于 1 就拒绝打）。
 
-**验证**：补丁后同场景 `$tippyList` 持平（7312→7324 后不再涨），JS 堆 118–283MB 正常GC波动。
-已同步实装（SHA256 `4ac09daf…66b991` 两边一致），**需重启 ComfyUI 生效**
-（api.py 的 `_read_text_cached` 会缓存 bundle 文本）。
+### 阶段二 · O(N) 全量重绘（2026-10-10，本次）
 
-**残留风险**：每次编辑仍是 O(N) 全量重绘（上游架构）；tippy 已不泄漏但重建有 CPU 开销，
-超大 prompt（万级 tag）编辑时仍可能卡顿（不再恶化、不再 OOM）。
-若再升级/替换 bundle，三个锚点串需重新对齐；复现工具在 `game-project/tools/ss-crash-repro/`。
+- 根因：`_onTextareaChange` 对每个 tag 调 `_appendTag` 生成**全新随机 id**，Vue 按 `:key` diff 时所有 key 变化，于是每次击键全量销毁重建、全部 tippy 重建。
+- 修复：`patch_stable_ids.cjs` 两处锚点（`match-map-build` / `stable-id-reuse`），复用稳定 id，未变化的 tag 复用对象，Vue 随之复用 DOM。
+- 实测：新建节点 3005 降到 2(+1)；同一 prompt 连打 settle 10ms / 4ms。
 
-**原排查记录（存档）**：
+### 验收（真实 ComfyUI 8188）
 
-**现象**：在 tag 编辑器里编辑标签时，浏览器**不止一次直接崩溃**（2026-10-08 / 10-09 均复现）。
+- `probe_hydrate.cjs`：水合稳定后 20~26 tick，`dom` / `svg` / `tippy` / **强制 GC 后 heap** 全部持平（dom 47200 恒定、tippy 7330 恒定、heapPostGC 123~125MB 无增长）。
+- `perf_probe.cjs`：MutationObserver 事件 3005 降到 1005，其中 **1000 次是节点移动（复用后重排）**，真正新建约 2+1。
+- 仓库与实装 bundle SHA256 一致：`603b724d53f1eb5c2334b6801d5122a30b732f36da2a8cf9057156726a6a61f2`。
 
-**关键观察（推翻了先前假设）**：
-- 一开始在 **Chrome** 里崩 -> 换成 **Edge**，前端稳定下来；
-- 但**再用编辑器时同样出问题**。
+### 残留（已知、不阻塞）
 
--> **与浏览器品牌无关**，此前怀疑 Chrome 属**误判**。这是 studio-suite 前端的真 bug。
+1. **O(N) 的 DOM 移动仍在**：新增一个 tag 时，N=1000/3000 下 settle 约 6~13 秒，可感知卡顿（非泄漏、非崩溃源），需改架构才根治。
+2. **缓存键规则**：以后改 bundle **必须同时 bump** `prompt_studio/frontend/index.html` 里的 `?v=`，否则浏览器跑旧缓存（本次已改为 `?v=studio-suite-20261010-rerender-fix`）。
+3. **两份 index.html 曾长期不同步**，本次已对齐（实装 63161 升到 63899，与仓库一致）。以后改动务必两边同步。
+4. 对齐后**实装实例会同时启用 loraGrid 模块**（`js/loraGrid.js` 两边均已存在，不产生 404）。
 
-**归口**：按会话切分决定，**归 studio-suite 交接会话处理**（不在 webui-ntr 会话里做）。
+### 复现 / 验收工具
 
-**排查起点建议**：
-1. 定位 tag 编辑路径：`frontend/index.html`、`prompt_studio/frontend/index.html`
-2. 优先怀疑**无限重渲染 / 无界 DOM 增长**（编辑一次追加一次节点、全量重排大列表）
-3. 次查 **事件监听器泄漏**（每次编辑重复 addEventListener 未移除）
-4. 次查 **定时器泄漏**（`setInterval`/`rAF` 未清理，编辑后仍在跑）
-5. 次查 **localStorage 写入爆炸**（大 payload 同步写、每键一击）
-6. 复现要点：**换浏览器仍复现** -> 与品牌无关，与编辑器交互路径强相关
+位于工作区 `tools/ss-crash-repro/`：
+`probe_hydrate.cjs`（滞留与水合）、`probe_heap.cjs`（强制 GC 后堆）、`perf_probe.cjs`（churn 与 settle）、
+`perf_steady.cjs` / `perf_who.cjs` / `perf_reuse.cjs` / `perf_moves.cjs`（根因级）、`func_check.cjs`、`patch_stable_ids.cjs`。
 
-**注意**：前端是**单文件原生 HTML/CSS/JS、零外部 CDN 依赖**，无第三方库干扰，定位范围相对可控。
+### 教训（写进规程）
+
+> 量「是否泄漏」必须等**异步水合稳定**，并用**不变的输入**做 tick；只看节点数上涨会把水合延迟误判成泄漏。
+> 量内存必须**强制 GC 后**再比，否则 GC 噪声会被误读成线性增长。
