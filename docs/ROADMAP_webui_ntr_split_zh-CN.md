@@ -96,7 +96,32 @@ git checkout <tag> -- .        # 把工作区文件恢复到该回退点
 4. **大资源不入库**：`*.sqlite` / `*.parquet` / 大 jsonl / `danbooru_tags_*` 已在 `.gitignore`
 5. **临时脚本**放仓库 `tools/`（webui-ntr）或工作区 `game-project/tools/`（分析类）
 
-## 7. 待办（HIGH）：studio-suite tag 编辑器导致**浏览器崩溃**
+## 7. ~~待办（HIGH）：studio-suite tag 编辑器导致**浏览器崩溃**~~ 【2026-10-10 已定位并修复】
+
+**结论**：根因在 `prompt_studio/bundle/main.entry.js`（weilin/physton 上游代码）——
+`tooltip` Vue 指令**没有 `unmounted` 钩子**，每次全量重解析标签都会把新 tippy 实例
+永久塞进全局 `$tippyList`，旧实例永不销毁。实测（600 tag，无头 Chrome 驱动真实代码路径）：
+`$tippyList` 初始 7312 → **每次全量重解析 +7212**，JS 堆 **每次重解析 +85MB 且无释放**，
+25 次编辑后 2.2GB → 渲染进程 OOM。这是"编辑标签时浏览器崩溃（跨浏览器）"的真凶；
+与浏览器品牌无关的推断正确，但"无限重渲染/DOM 增长"的具体机制是 **tippy 实例泄漏**，不是 DOM 节点增长（DOM 节点数实测全程持平）。
+
+**排除的假设**：`__autosizeInputGhost` 的 `style.cssText += 761字符` 看似无界增长，
+实测 CSSOM 对同名属性去重，cssText 恒为 581 字节——不是泄漏源（但监听器堆积是真的，已一并修）。
+
+**修复**（`tools/ss-crash-repro/patch_bundle.cjs`，字符串级补丁，3 处）：
+1. tooltip 指令补 `unmounted`：销毁 tippy 实例并从 `$tippyList` 摘除（主修复）；
+2. autosize `Jk` 的 `input` 监听器去重（`e.__ssGhostR` 簿记），防止编辑框监听器乘法；
+3. textarea→tags 重解析防抖 100ms → 400ms（打字时全量重绘频率降 10 倍，trailing-edge 行为不变）。
+
+**验证**：补丁后同场景 `$tippyList` 持平（7312→7324 后不再涨），JS 堆 118–283MB 正常GC波动。
+已同步实装（SHA256 `4ac09daf…66b991` 两边一致），**需重启 ComfyUI 生效**
+（api.py 的 `_read_text_cached` 会缓存 bundle 文本）。
+
+**残留风险**：每次编辑仍是 O(N) 全量重绘（上游架构）；tippy 已不泄漏但重建有 CPU 开销，
+超大 prompt（万级 tag）编辑时仍可能卡顿（不再恶化、不再 OOM）。
+若再升级/替换 bundle，三个锚点串需重新对齐；复现工具在 `game-project/tools/ss-crash-repro/`。
+
+**原排查记录（存档）**：
 
 **现象**：在 tag 编辑器里编辑标签时，浏览器**不止一次直接崩溃**（2026-10-08 / 10-09 均复现）。
 
