@@ -55,6 +55,12 @@ ASPECT_DISPLAY_NAME = (
     else "Bucket Size Integers"
 )
 
+AUTO_BUCKET_DISPLAY_NAME = (
+    "自动分桶裁剪缩放"
+    if LOCALE == "zh"
+    else "Auto Bucket Crop Resize"
+)
+
 CATEGORY_NAME = (
     "Studio Suite/图像预处理"
     if LOCALE == "zh"
@@ -162,6 +168,67 @@ def _nearest_bucket(width: int, height: int, buckets: list[tuple[int, int, str]]
             best_index = idx
     bucket_width, bucket_height, label = buckets[best_index]
     return bucket_width, bucket_height, label, best_index
+
+
+MAX_BUCKET_SIDE = 8192
+
+
+def _auto_bucket_size(width: int, height: int, target_mp: float, multiple, crop_excess: bool) -> tuple[int, int]:
+    """Pick a (width, height) aligned to the bucket grid near target megapixels.
+
+    crop_excess=True: search grid-aligned sizes up to target_mp (allowing +5%
+    pixels) scoring minimal crop plus half the pixel deficit, so a size far
+    below target_mp never wins just because its crop is zero.
+    crop_excess=False: round each side to the grid independently (no crop,
+    tiny aspect drift allowed).
+    """
+    grid = int(multiple)
+    if grid < 8:
+        raise ValueError("bucket_multiple must be >= 8")
+    target_pixels = max(0.05, float(target_mp)) * 1_000_000.0
+    base_scale = math.sqrt(target_pixels / float(width * height))
+    cap_scale = (MAX_BUCKET_SIDE - grid) / float(max(width, height))
+    base_scale = min(base_scale, cap_scale)
+    ideal_w = width * base_scale
+    ideal_h = height * base_scale
+
+    if not crop_excess:
+        w_units = max(1, int(round(ideal_w / grid)))
+        h_units = max(1, int(round(ideal_h / grid)))
+        return w_units * grid, h_units * grid
+
+    ratio = width / float(height)
+    base_kw = max(1, int(round(ideal_w / grid)))
+    base_kh = max(1, int(round(ideal_h / grid)))
+    best = None
+    for dw in range(-6, 7):
+        kw = base_kw + dw
+        if kw < 1:
+            continue
+        cand_w = kw * grid
+        if cand_w > MAX_BUCKET_SIDE:
+            continue
+        for dh in range(-6, 7):
+            kh = base_kh + dh
+            if kh < 1:
+                continue
+            cand_h = kh * grid
+            if cand_h > MAX_BUCKET_SIDE:
+                continue
+            pixels = cand_w * cand_h
+            if pixels > target_pixels * 1.05:
+                continue
+            cand_ratio = cand_w / float(cand_h)
+            crop_ratio = 1.0 - min(cand_ratio / ratio, ratio / cand_ratio)
+            deficit = max(0.0, (target_pixels - pixels) / target_pixels)
+            score = crop_ratio + 0.5 * deficit
+            if best is None or score < best[0]:
+                best = (score, cand_w, cand_h)
+    if best is None:
+        w_units = max(1, min(int(round(ideal_w / grid)), MAX_BUCKET_SIDE // grid))
+        h_units = max(1, min(int(round(ideal_h / grid)), MAX_BUCKET_SIDE // grid))
+        return w_units * grid, h_units * grid
+    return best[1], best[2]
 
 
 class SmartFillCropResize:
@@ -336,6 +403,44 @@ class StudioSuiteBucketCropResize:
         return (output, target_width, target_height, bucket_label, bucket_index)
 
 
+class StudioSuiteAutoBucketCropResize:
+    upscale_methods = SmartFillCropResize.upscale_methods
+    crop_modes = ["center", "top", "bottom", "left", "right"]
+    bucket_multiples = ["32", "64", "128"]
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "image": ("IMAGE",),
+                "target_mp": ("FLOAT", {"default": 1.0, "min": 0.05, "max": 64.0, "step": 0.05}),
+                "bucket_multiple": (cls.bucket_multiples, {"default": "64"}),
+                "crop_excess": ("BOOLEAN", {"default": True}),
+                "upscale_method": (cls.upscale_methods,),
+                "crop_mode": (cls.crop_modes, {"default": "center"}),
+            },
+        }
+
+    RETURN_TYPES = ("IMAGE", "INT", "INT", "STRING", "FLOAT")
+    RETURN_NAMES = ("image", "width", "height", "bucket", "crop_loss_percent")
+    FUNCTION = "process"
+    CATEGORY = CATEGORY_NAME
+
+    def process(self, image, target_mp, bucket_multiple, crop_excess, upscale_method, crop_mode="center"):
+        height, width = _image_hw(image)
+        target_width, target_height = _auto_bucket_size(width, height, target_mp, bucket_multiple, crop_excess)
+        source_pixels = width * height
+        if crop_excess:
+            cropped = _crop_to_aspect(image, target_width, target_height, crop_mode)
+            cropped_pixels = _image_hw(cropped)[0] * _image_hw(cropped)[1]
+            crop_loss = max(0.0, 100.0 * (1.0 - cropped_pixels / float(source_pixels)))
+        else:
+            cropped = image
+            crop_loss = 0.0
+        output = _resize_image(cropped, target_width, target_height, upscale_method)
+        return (output, target_width, target_height, f"{target_width}x{target_height}", round(crop_loss, 2))
+
+
 class StudioSuiteImageAspectRatioIntegers:
     @classmethod
     def INPUT_TYPES(cls):
@@ -388,11 +493,13 @@ class StudioSuiteImageAspectRatioIntegers:
 NODE_CLASS_MAPPINGS = {
     "SmartFillCropResize": SmartFillCropResize,
     "StudioSuiteBucketCropResize": StudioSuiteBucketCropResize,
+    "StudioSuiteAutoBucketCropResize": StudioSuiteAutoBucketCropResize,
     "StudioSuiteImageAspectRatioIntegers": StudioSuiteImageAspectRatioIntegers,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "SmartFillCropResize": DISPLAY_NAME,
     "StudioSuiteBucketCropResize": BUCKET_DISPLAY_NAME,
+    "StudioSuiteAutoBucketCropResize": AUTO_BUCKET_DISPLAY_NAME,
     "StudioSuiteImageAspectRatioIntegers": ASPECT_DISPLAY_NAME,
 }
