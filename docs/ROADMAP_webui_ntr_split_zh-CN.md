@@ -144,6 +144,32 @@ prompt_outputs_failed_validation
 
 `tools/check_g2p_wnt.py`（本工作区）：加载实装的工作流 → `graph_to_prompt` → 逐节点打印 `widgets_values` 与 `prompt.inputs` 对照。
 
+### 已修复（2026-10-16，本会话）
+
+`graph_to_prompt.py` 共修 **4 处**，均属「静默产出错误 prompt（警告数为 0）」：
+
+| # | 缺陷 | 修法 |
+|---|---|---|
+| 1 | 只有 `*` / `ANY` 被当作 link slot，于是 `MODEL` / `CLIP` / `IMAGE` / `MASK` / `LATENT` / `CONDITIONING` 全被当成 widget，整表按「前导 socket 个数」右移 | 按类型分类：仅 `INT`/`FLOAT`/`STRING`/`BOOLEAN`/combo 列表/`*COMBO*`（含 `COMFY_DYNAMICCOMBO_V3`）算 widget，并尊重 `forceInput` / `hidden` |
+| 2 | `control_after_generate` 会多写一个值，但没有对应槽位 | 计划里插一个 `None` 占位槽（消费一个值、不赋给任何输入名） |
+| 3 | 动态下拉**物化出的子 widget**（如 `resize_type.scale`）不在 object_info 里，却占一个值槽 | 从节点 `inputs` 的 `widget.name` 识别 `parent.child`，插到 parent 之后 |
+| 4 | `widgets_values` 并不总覆盖所有 widget，而 ComfyUI **不会**为缺失的 required 输入补默认值 | 缺失项用 object_info 的 `default`（combo 取首选项）显式补齐 |
+
+**端到端验证（真实 8188，经 webui 前端）**：
+
+```
+点「生成图像」 -> 已提交 prompt_id=897de1fa…（节点 49）
+205 秒 -> 完成 ✅ ComfyUI_0002.png
+ComfyUI /history: node 44 images=1 (ComfyUI_0002.png, 12.6 MB)
+                   node 98 images=1 (wnt_20261016-002938-870251_00.png, 4.1 MB)
+```
+
+**连带结论**：`#44 Image Save`（WAS）修好后**本身是合法的** —— 原先打算「删掉这个冗余节点」（修法 B）**不再需要**，工作流原样即可跑通。
+
+**残留（本计划未覆盖）**：`fanben` 里仍有若干节点「plan 槽位数 ≠ widgets_values 长度」
+（如 `PromptStudioPositiveOutput` 1 vs 2、`TIPO` 15 vs 16、`TextGenerate` 4 vs 12）——
+属另一类（自定义节点的序列化形态不同），需要时再单独排。
+
 ## 6. 防打架规则
 
 1. **一文件一归属**：`frontend/index.html`、`prompt_studio/frontend/**` 归 studio-suite；webui-ntr 不碰
