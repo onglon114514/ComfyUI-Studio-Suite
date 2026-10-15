@@ -53,20 +53,98 @@ def _fetch_object_info(url: str = "http://127.0.0.1:8188/object_info") -> Dict[s
         return json.loads(resp.read().decode("utf-8"))
 
 
-def _is_link_slot(type_spec: Any) -> bool:
-    """Return True if the type spec represents a connection slot (not a widget)."""
-    if isinstance(type_spec, str):
-        return type_spec.upper() in _LINK_TYPE_NAMES
-    if isinstance(type_spec, (list, tuple)):
-        if len(type_spec) == 1 and isinstance(type_spec[0], str):
-            return type_spec[0].upper() in _LINK_TYPE_NAMES
+# Type names that always render as widgets (never as connection sockets).
+_WIDGET_PRIMITIVE_TYPES = {"INT", "FLOAT", "STRING", "BOOLEAN", "NUMBER", "COMBO", "SEED"}
+
+# Option keys that mark a widget-ish input even when its type name is custom
+# (node-local combos/enums that are not declared as a plain choice list).
+_WIDGET_OPTION_HINTS = ("default", "control_after_generate", "multiline", "step")
+
+
+def _is_widget_input(spec: Any) -> bool:
+    """Return True if an /object_info input spec renders as a widget.
+
+    ComfyUI only turns INT / FLOAT / STRING / BOOLEAN / combo inputs into widgets
+    (and only when the node does not mark them ``forceInput``). Everything else --
+    MODEL, CLIP, VAE, IMAGE, MASK, LATENT, CONDITIONING or any custom socket type --
+    stays a connection slot. Counting those as widgets shifts ``widgets_values``
+    onto the wrong inputs.
+    """
+    if not isinstance(spec, (list, tuple)) or not spec:
         return False
+    type_spec = spec[0]
+    opts = spec[1] if len(spec) >= 2 and isinstance(spec[1], dict) else {}
+    if opts.get("forceInput") or opts.get("hidden"):
+        return False
+    if isinstance(type_spec, (list, tuple)):
+        return True  # combo choice list
+    if isinstance(type_spec, str):
+        name = type_spec.strip().upper()
+        if not name:
+            return False
+        if name in _WIDGET_PRIMITIVE_TYPES:
+            return True
+        if "COMBO" in name:  # e.g. COMFY_DYNAMICCOMBO_V3
+            return True
+        return any(k in opts for k in _WIDGET_OPTION_HINTS)
     return False
 
 
+def _has_control_after_generate(spec: Any) -> bool:
+    """True if the widget also serialises a ``control_after_generate`` companion value."""
+    if not isinstance(spec, (list, tuple)) or len(spec) < 2:
+        return False
+    opts = spec[1]
+    return isinstance(opts, dict) and bool(opts.get("control_after_generate"))
+
+
+def _is_widget_type_value(type_value: Any) -> bool:
+    """True if a frontend-style ``type`` value denotes a widget (handles combo lists)."""
+    if isinstance(type_value, (list, tuple)):
+        return True
+    if isinstance(type_value, str):
+        return type_value.strip().upper() in _WIDGET_PRIMITIVE_TYPES
+    return False
+
+
+def _widget_defaults_from_cls_info(cls_info: Dict[str, Any]) -> Dict[str, Any]:
+    """Map widget input name -> declared default (falling back to the first choice)."""
+    out: Dict[str, Any] = {}
+    inputs = (cls_info or {}).get("input") or {}
+    for section in ("required", "optional"):
+        for name, spec in (inputs.get(section) or {}).items():
+            if not _is_widget_input(spec):
+                continue
+            opts = spec[1] if isinstance(spec, (list, tuple)) and len(spec) >= 2 and isinstance(spec[1], dict) else {}
+            if "default" in opts:
+                out[name] = opts["default"]
+            elif isinstance(spec, (list, tuple)) and spec and isinstance(spec[0], (list, tuple)) and spec[0]:
+                out[name] = spec[0][0]  # first combo choice
+    return out
+
+
 @lru_cache(maxsize=None)
-def _widget_names_for_class(class_type: str, object_info_url: str) -> List[str]:
-    """Return ordered list of widget input names for a class_type."""
+def _widget_defaults_for_class(class_type: str, object_info_url: str) -> Dict[str, Any]:
+    try:
+        info = _fetch_object_info(object_info_url)
+    except Exception:
+        return {}
+    return _widget_defaults_from_cls_info(info.get(class_type))
+
+
+def _is_link_slot(type_spec: Any) -> bool:
+    """Return True if the type spec represents a connection slot (not a widget)."""
+    return not _is_widget_input(type_spec)
+
+
+@lru_cache(maxsize=None)
+def _widget_names_for_class(class_type: str, object_info_url: str) -> List[Optional[str]]:
+    """Return the ordered widget slots for a class_type.
+
+    ``None`` marks a slot that consumes a ``widgets_values`` entry but maps to no
+    input name: ComfyUI serialises an extra ``control_after_generate`` value right
+    after such widgets.
+    """
     try:
         info = _fetch_object_info(object_info_url)
     except Exception:
@@ -75,17 +153,15 @@ def _widget_names_for_class(class_type: str, object_info_url: str) -> List[str]:
     if not cls_info:
         return []
     inputs = cls_info.get("input") or {}
-    names: List[str] = []
+    names: List[Optional[str]] = []
     for section in ("required", "optional"):
         section_data = inputs.get(section) or {}
         for name, spec in section_data.items():
-            if _is_link_slot(spec):
+            if not _is_widget_input(spec):
                 continue
-            if isinstance(spec, (list, tuple)) and len(spec) >= 2:
-                opts = spec[1]
-                if isinstance(opts, dict) and opts.get("hidden"):
-                    continue
             names.append(name)
+            if _has_control_after_generate(spec):
+                names.append(None)
     return names
 
 
@@ -535,25 +611,49 @@ class _GraphToPrompt:
 
     # -- object_info access -------------------------------------------------
 
-    def _widget_names(self, class_type: str) -> List[str]:
+    def _widget_names(self, class_type: str) -> List[Optional[str]]:
         if self._object_info_override is not None:
             info = self._object_info_override
             cls_info = info.get(class_type)
             if not cls_info:
                 return []
             inputs = cls_info.get("input") or {}
-            names: List[str] = []
+            names: List[Optional[str]] = []
             for section in ("required", "optional"):
                 for name, spec in (inputs.get(section) or {}).items():
-                    if _is_link_slot(spec):
+                    if not _is_widget_input(spec):
                         continue
-                    if isinstance(spec, (list, tuple)) and len(spec) >= 2:
-                        opts = spec[1]
-                        if isinstance(opts, dict) and opts.get("hidden"):
-                            continue
                     names.append(name)
+                    if _has_control_after_generate(spec):
+                        names.append(None)
             return names
         return _widget_names_for_class(class_type, self.object_info_url)
+
+    def _widget_defaults(self, class_type: str) -> Dict[str, Any]:
+        if self._object_info_override is not None:
+            return _widget_defaults_from_cls_info(self._object_info_override.get(class_type))
+        return _widget_defaults_for_class(class_type, self.object_info_url)
+
+    def _widget_plan_for_node(self, class_type: str, node: Dict[str, Any]) -> List[Optional[str]]:
+        """Widget slots for *node*, including materialised dependent widgets.
+
+        Dynamic combos (ComfyUI V3) materialise extra widgets the server-side
+        ``/object_info`` does not list, e.g. ``resize_type`` -> ``resize_type.scale``.
+        They occupy a ``widgets_values`` slot right after their parent, so insert
+        them here to keep the positional mapping aligned.
+        """
+        plan = list(self._widget_names(class_type))
+        for inp in node.get("inputs") or []:
+            w = inp.get("widget")
+            if not (isinstance(w, dict) and w.get("name")):
+                continue
+            name = str(w["name"])
+            if name in plan or "." not in name:
+                continue
+            parent = name.split(".")[0]
+            if parent in plan:
+                plan.insert(plan.index(parent) + 1, name)
+        return plan
 
     def _class_type_exists(self, class_type: str) -> bool:
         """Check if a class_type exists in object_info."""
@@ -702,9 +802,9 @@ class _GraphToPrompt:
         # The widgets_values array contains values for all widget-type inputs in order.
         widget_idx = 0
         for slot_idx, sg_input in enumerate(sg.get("inputs") or []):
-            input_type = str(sg_input.get("type", "")).upper()
-            # Check if this is a widget-type input (INT, FLOAT, STRING, COMBO, BOOLEAN, NUMBER)
-            is_widget_type = input_type in _WIDGET_TYPE_NAMES
+            # Check if this is a widget-type input (INT, FLOAT, STRING, COMBO, BOOLEAN, NUMBER).
+            # NOTE: here a combo's declared type is a *list*, so normalise through the helper.
+            is_widget_type = _is_widget_type_value(sg_input.get("type"))
             if not is_widget_type:
                 continue
             if widget_idx < len(instance_widgets):
@@ -761,8 +861,9 @@ class _GraphToPrompt:
                 )
                 continue
 
-            widget_names = self._widget_names(class_type)
+            widget_names = self._widget_plan_for_node(class_type, internal_node)
             widget_values = list(internal_node.get("widgets_values") or [])
+            widget_defaults = self._widget_defaults(class_type)
 
             inputs: Dict[str, Any] = {}
 
@@ -773,11 +874,22 @@ class _GraphToPrompt:
                 if w and isinstance(w, dict) and w.get("name"):
                     linked_widget_names.add(str(w["name"]))
 
+            # Assign widget values by index. Converted widgets are overwritten by their
+            # links further below, so a declared-but-unlinked widget still receives its
+            # serialized value instead of being dropped.
             for idx, wname in enumerate(widget_names):
-                if wname in linked_widget_names:
-                    continue
+                if wname is None:
+                    continue  # control_after_generate companion slot
                 if idx < len(widget_values):
                     inputs[wname] = widget_values[idx]
+            # ComfyUI refuses a prompt with a missing required input, so backfill the
+            # declared default for any widget the serialized array does not cover
+            # (ComfyUI itself would use exactly this value).
+            for wname in widget_names:
+                if not wname or wname in inputs:
+                    continue
+                if wname in widget_defaults:
+                    inputs[wname] = widget_defaults[wname]
 
             # 2. Process internal links ( remap IDs )
             for inp in internal_node.get("inputs") or []:
@@ -902,8 +1014,9 @@ class _GraphToPrompt:
                 self._resolved[key] = None
                 return None
 
-            widget_names = self._widget_names(class_type)
+            widget_names = self._widget_plan_for_node(class_type, node)
             widget_values = node.get("widgets_values") or []
+            widget_defaults = self._widget_defaults(class_type)
 
             inputs: Dict[str, Any] = {}
 
@@ -913,11 +1026,22 @@ class _GraphToPrompt:
                 if w and isinstance(w, dict) and w.get("name"):
                     linked_widget_names.add(str(w["name"]))
 
+            # Assign widget values by index. Converted widgets are overwritten by their
+            # links further below, so a declared-but-unlinked widget still receives its
+            # serialized value instead of being dropped.
             for idx, wname in enumerate(widget_names):
-                if wname in linked_widget_names:
-                    continue
+                if wname is None:
+                    continue  # control_after_generate companion slot
                 if idx < len(widget_values):
                     inputs[wname] = widget_values[idx]
+            # ComfyUI refuses a prompt with a missing required input, so backfill the
+            # declared default for any widget the serialized array does not cover
+            # (ComfyUI itself would use exactly this value).
+            for wname in widget_names:
+                if not wname or wname in inputs:
+                    continue
+                if wname in widget_defaults:
+                    inputs[wname] = widget_defaults[wname]
 
             for inp in node.get("inputs") or []:
                 if inp.get("link") is None:
