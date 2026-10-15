@@ -21,6 +21,9 @@
   - 中文描述 -> 英文 tag -> 扩写 -> 规格化 -> Illustrious XL prompt。
 - `chain_wd14_to_anima_train_caption.json`
   - WD14 标签 -> 标签校正 -> 自然语言训练 caption。
+- `chain_wd14_to_anima_train_caption_plain.json`
+  - 上一条的纯自然语言变体：`generate_natural_caption` 的 `fixed_inputs.caption_output_format = "plain"`，第二行改为 3-6 句英文 prose（不输出 JSON），生成上限读 `caption_max_tokens`（默认 1200，见 `task_agent_core/nodes.py`）。
+  - 禁词与启动词来自 `config/tagging_terms.json`；可用 `fixed_inputs.trigger_prefix` 覆盖启动词，行格式为 `trigger_prefix, caption`。
 - `chain_qwen_vision_to_caption.json`
   - 视觉模型读图 -> 视觉打标 -> 自然语言 caption（不依赖 WD14；需视觉档案，见 `docs/QWEN_BACKEND_zh-CN.md`）。
 

@@ -995,6 +995,142 @@ def load_character_alias_safety():
 CHARACTER_ALIAS_SAFETY = load_character_alias_safety()
 
 
+TAGGING_TERMS_PATH = PROJECT_DIR / "config" / "tagging_terms.json"
+
+TAGGING_TERMS_DEFAULT = {
+    "banned_exact_tags": [
+        "masterpiece",
+        "best quality",
+        "detailed",
+        "ultra-detailed",
+        "highres",
+    ],
+    "banned_substrings": [
+        "azur lane",
+        "arknights",
+        "genshin impact",
+        "honkai: star rail",
+        "honkai impact 3rd",
+        "fate/grand order",
+        "kantai collection",
+        "touhou project",
+    ],
+    "banned_artifact_tags": [
+        "artist name",
+        "signature",
+        "character name",
+        "copyright name",
+        "character signature",
+        "twitter username",
+        "username",
+        "watermark",
+        "english text",
+        "copyright notice",
+        "cover page",
+        "doujin cover",
+        "magazine cover",
+        "cover art",
+    ],
+    "trigger_prefix": "",
+}
+
+
+def load_tagging_terms():
+    default = {
+        key: (list(value) if isinstance(value, list) else value)
+        for key, value in TAGGING_TERMS_DEFAULT.items()
+    }
+    if not TAGGING_TERMS_PATH.exists():
+        return default
+    try:
+        loaded = load_json_file(TAGGING_TERMS_PATH)
+    except Exception:
+        return default
+    merged = dict(default)
+    if isinstance(loaded, dict):
+        merged.update(loaded)
+    return merged
+
+
+TAGGING_TERMS = load_tagging_terms()
+
+
+def tagging_terms_list(name):
+    value = TAGGING_TERMS.get(name)
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def build_banned_terms_constraint_text(limit=30):
+    terms = dedupe_tags(tagging_terms_list("banned_exact_tags") + tagging_terms_list("banned_artifact_tags"))
+    if not terms:
+        return ""
+    return ", ".join(terms[:limit])
+
+
+def filter_user_banned_terms(tags):
+    """User banned terms apply to LLM-produced tag fields only; WD14 baseline rows stay untouched."""
+    banned_keys = set()
+    for name in ("banned_exact_tags", "banned_artifact_tags"):
+        for item in tagging_terms_list(name):
+            banned_keys.add(item.lower())
+            banned_keys.add(normalize_alias_key(item))
+    banned_substrings = [item.lower() for item in tagging_terms_list("banned_substrings")]
+    if not banned_keys and not banned_substrings:
+        return list(tags or [])
+    result = []
+    for tag in tags or []:
+        text = str(tag).strip()
+        if not text:
+            continue
+        lowered = text.lower()
+        if lowered in banned_keys or normalize_alias_key(text) in banned_keys:
+            continue
+        if any(fragment in lowered for fragment in banned_substrings):
+            continue
+        result.append(tag)
+    return result
+
+
+def build_banned_term_pattern(term):
+    escaped = re.escape(str(term).strip())
+    escaped = escaped.replace("\\ ", "[\\s_-]+")
+    return re.compile(r"(?<![A-Za-z0-9])" + escaped + r"(?![A-Za-z0-9])", re.IGNORECASE)
+
+
+def sanitize_caption_banned_terms(caption):
+    """Strip banned words/artist-artifact words from a natural-language caption, then tidy punctuation."""
+    cleaned = str(caption or "")
+    if not cleaned.strip():
+        return cleaned
+    terms = dedupe_tags(
+        tagging_terms_list("banned_artifact_tags")
+        + tagging_terms_list("banned_substrings")
+        + tagging_terms_list("banned_exact_tags")
+    )
+    for term in sorted(terms, key=len, reverse=True):
+        cleaned = build_banned_term_pattern(term).sub(" ", cleaned)
+    cleaned = re.sub(r"\(\s*\)", " ", cleaned)
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    cleaned = re.sub(r"\s+([,.!?;:])", r"\1", cleaned)
+    cleaned = re.sub(r"([,.!?;:])\s*(?=[,.!?;:])", r"\1", cleaned)
+    cleaned = re.sub(r",\s*,", ",", cleaned)
+    cleaned = re.sub(r"^[\s,]+", "", cleaned)
+    cleaned = re.sub(r"[\s,]+$", "", cleaned)
+    cleaned = re.sub(r",\s*([.!?])", r"\1", cleaned)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned)
+    return cleaned.strip()
+
+
+def resolve_training_trigger_prefix(inputs=None):
+    resolved = inputs if isinstance(inputs, dict) else {}
+    value = str(resolved.get("trigger_prefix", "")).strip()
+    if not value:
+        value = str(TAGGING_TERMS.get("trigger_prefix", "") or "").strip()
+    return value.strip().strip(",").strip()
+
+
 def is_single_ascii_word(text):
     normalized = normalize_alias_key(text)
     return bool(normalized) and normalized.isascii() and len(normalized.split()) == 1
@@ -2116,6 +2252,133 @@ def extract_jsonish_string_field(text, field_name, limit=320):
         return ""
     value = match.group(1).replace('\\"', '"').replace("\\n", " ")
     return compact_text(value, limit)
+
+
+def _jsonish_normalize_quotes(text):
+    value = str(text or "")
+    for source, target in (
+        ("\u201c", '"'),
+        ("\u201d", '"'),
+        ("\uff02", '"'),
+        ("\u300c", '"'),
+        ("\u300d", '"'),
+        ("\u2018", "'"),
+        ("\u2019", "'"),
+    ):
+        value = value.replace(source, target)
+    if "'" not in value:
+        return value
+    converted = re.sub(r"(?<![0-9A-Za-z_])'((?:[^'\\\n]|\\.)*)'(?![0-9A-Za-z_])", r'"\1"', value)
+    if converted != value:
+        return converted
+    if '"' not in value:
+        return value.replace("'", '"')
+    return value
+
+
+def _jsonish_strip_trailing_commas(text):
+    value = str(text or "")
+    for _ in range(6):
+        updated = re.sub(r",(\s*[}\]])", r"\1", value)
+        if updated == value:
+            break
+        value = updated
+    return value
+
+
+def _jsonish_truncation_candidates(text):
+    """Close an object truncated mid-way, using the bracket stack (max 3 missing closers)."""
+    body = str(text or "").strip()
+    start = body.find("{")
+    if start < 0:
+        return []
+    body = body[start:]
+    stack = []
+    in_string = False
+    escape = False
+    last_boundary = None
+    for index, char in enumerate(body):
+        if in_string:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char in "{[":
+            stack.append(char)
+        elif char in "}]":
+            if not stack:
+                return []
+            stack.pop()
+            if not stack:
+                return []
+            last_boundary = index + 1
+        elif char == ",":
+            if stack:
+                last_boundary = index + 1
+    if not stack or len(stack) > 3:
+        return []
+    closers = "".join("}" if char == "{" else "]" for char in reversed(stack))
+    trimmed = re.sub(r",\s*$", "", body.rstrip())
+    if not trimmed:
+        return []
+    candidates = [trimmed + closers]
+    if in_string:
+        candidates.append(trimmed + '"' + closers)
+        if last_boundary is not None:
+            cut = re.sub(r",\s*$", "", body[:last_boundary].rstrip())
+            if cut:
+                candidates.append(cut + closers)
+    return candidates
+
+
+def _jsonish_repair_candidates(text):
+    base = strip_markdown_fences(str(text or "")).strip()
+    base = re.sub(r"^```[A-Za-z0-9_-]*\s*", "", base).strip()
+    if not base:
+        return []
+    stages = [base]
+    normalized = _jsonish_normalize_quotes(base)
+    if normalized != base:
+        stages.append(normalized)
+    candidates = []
+    for stage in stages:
+        candidates.append(stage)
+        trimmed = _jsonish_strip_trailing_commas(stage)
+        if trimmed != stage:
+            candidates.append(trimmed)
+        start = trimmed.find("{")
+        if start > 0:
+            candidates.append(trimmed[start:])
+        for completed in _jsonish_truncation_candidates(trimmed):
+            candidates.append(completed)
+            candidates.append(_jsonish_strip_trailing_commas(completed))
+    return candidates
+
+
+def _repair_jsonish_output(text):
+    """Best-effort salvage for truncated / quote-mangled JSON-ish model output. Returns (obj, ok)."""
+    raw = str(text or "")
+    if not raw.strip():
+        return None, False
+    try:
+        parsed = extract_first_json_object(raw)
+    except Exception:
+        parsed = None
+    if isinstance(parsed, dict):
+        return parsed, True
+    for candidate in _jsonish_repair_candidates(raw):
+        try:
+            parsed = json.loads(candidate)
+        except Exception:
+            continue
+        if isinstance(parsed, dict):
+            return parsed, True
+    return None, False
 
 
 def extract_first_json_object(text):
@@ -3344,12 +3607,15 @@ def build_newbie_xml_prompt(json_result):
     return "\n".join(lines)
 
 
-def build_training_two_line_text(tag_items, caption_text):
+def build_training_two_line_text(tag_items, caption_text, trigger_prefix=""):
     if isinstance(tag_items, str):
         first_line = tag_items.strip()
     else:
         first_line = ", ".join([str(item).strip() for item in tag_items if str(item).strip()]).strip()
     second_line = str(caption_text or "").strip()
+    prefix = str(trigger_prefix or "").strip().strip(",").strip()
+    if prefix and second_line:
+        second_line = f"{prefix}, {second_line}"
     if first_line and second_line:
         return first_line + "\n\n" + second_line
     return first_line or second_line
@@ -3538,14 +3804,20 @@ def build_training_caption_from_sections(json_result, fallback_tags):
 
 
 def select_training_caption(json_result, training_tags):
+    if isinstance(json_result, dict):
+        for field in ("caption_long_en", "natural_language_en"):
+            value = str(json_result.get(field, "")).strip()
+            if value:
+                json_result[field] = sanitize_caption_banned_terms(value)
     caption = (
         str(json_result.get("caption_long_en", "")).strip()
         or str(json_result.get("natural_language_en", "")).strip()
         or str(json_result.get("caption_short_en", "")).strip()
     )
-    if len(caption) >= 180:
+    caption = sanitize_caption_banned_terms(caption)
+    if len(caption) >= 80:
         return caption
-    fallback_caption = build_training_caption_from_sections(json_result, training_tags)
+    fallback_caption = sanitize_caption_banned_terms(build_training_caption_from_sections(json_result, training_tags))
     if not caption:
         return fallback_caption
     if fallback_caption and len(fallback_caption) > len(caption):
@@ -3553,9 +3825,9 @@ def select_training_caption(json_result, training_tags):
     return caption
 
 
-def profile_format_prompt(profile_name, json_result):
-    normalized_tags = filter_globally_blocked_tags(strip_quality_control_tags(json_result.get("normalized_tags_en", [])))
-    expanded_tags = filter_globally_blocked_tags(strip_quality_control_tags(json_result.get("expanded_tags_en", [])))
+def profile_format_prompt(profile_name, json_result, trigger_prefix=""):
+    normalized_tags = filter_user_banned_terms(filter_globally_blocked_tags(strip_quality_control_tags(json_result.get("normalized_tags_en", []))))
+    expanded_tags = filter_user_banned_terms(filter_globally_blocked_tags(strip_quality_control_tags(json_result.get("expanded_tags_en", []))))
     quality_tags = dedupe_tags(json_result.get("quality_tags_en", []))
     negative_tags = filter_globally_blocked_tags(dedupe_tags(json_result.get("negative_tags_en", [])))
     translated_tags = filter_globally_blocked_tags(strip_quality_control_tags(json_result.get("tag_list", [])))
@@ -3710,7 +3982,7 @@ def profile_format_prompt(profile_name, json_result):
         training_tag_text = str(json_result.get("wd14_raw_tags_text", "")).strip() or training_tags
         training_caption = select_training_caption(json_result, training_tags)
         training_caption = sanitize_training_caption_character_pollution(training_caption, json_result)
-        training_text = build_training_two_line_text(training_tag_text, training_caption)
+        training_text = build_training_two_line_text(training_tag_text, training_caption, trigger_prefix)
         return {
             "target_profile": "anima_train_v1",
             "formatted_prompt": training_text,
@@ -3728,7 +4000,7 @@ def profile_format_prompt(profile_name, json_result):
         training_tag_text = str(json_result.get("wd14_raw_tags_text", "")).strip() or training_tags
         training_caption = select_training_caption(json_result, training_tags)
         training_caption = sanitize_training_caption_character_pollution(training_caption, json_result)
-        training_text = build_training_two_line_text(training_tag_text, training_caption)
+        training_text = build_training_two_line_text(training_tag_text, training_caption, trigger_prefix)
         return {
             "target_profile": "illustrious_train_v1",
             "formatted_prompt": training_text,
@@ -3746,7 +4018,7 @@ def profile_format_prompt(profile_name, json_result):
         training_tag_text = str(json_result.get("wd14_raw_tags_text", "")).strip() or training_tags
         training_caption = select_training_caption(json_result, training_tags)
         training_caption = sanitize_training_caption_character_pollution(training_caption, json_result)
-        training_text = build_training_two_line_text(training_tag_text, training_caption)
+        training_text = build_training_two_line_text(training_tag_text, training_caption, trigger_prefix)
         return {
             "target_profile": "noobai_train_v1",
             "formatted_prompt": training_text,
@@ -3864,7 +4136,7 @@ def enrich_json_result(task_type, json_result, inputs):
     if str(inputs.get("wd14_raw_tags_text", "")).strip():
         enriched["wd14_raw_tags_text"] = str(inputs.get("wd14_raw_tags_text", "")).strip()
     target_profile = inputs.get("target_profile", "generic_tag_model")
-    enriched.update(profile_format_prompt(target_profile, enriched))
+    enriched.update(profile_format_prompt(target_profile, enriched, resolve_training_trigger_prefix(inputs)))
     return enriched
 
 
@@ -3926,7 +4198,37 @@ def merge_outfit_expansion_result(base_result, expansion_result, inputs):
     return apply_character_aliases_to_result("generate_outfit_tags", merged, inputs)
 
 
+def salvage_jsonish_prose(text):
+    """Recover model-authored prose from a JSON-ish output that could not be parsed."""
+    value = strip_markdown_fences(str(text or ""))
+    value = re.sub(r'"[A-Za-z_][A-Za-z0-9_ ]*"\s*:\s*', " ", value)
+    value = re.sub(r"[{}\[\]]", " ", value)
+    value = value.replace('"', " ").replace("\u201c", " ").replace("\u201d", " ")
+    value = re.sub(r"\s{2,}", " ", value)
+    return value.strip().strip(",").strip()
+
+
+def build_fallback_caption(raw_text, extracted_caption, template_caption):
+    """Keep the model's own wording when JSON fields cannot be recovered; template only as last resort."""
+    if extracted_caption:
+        return extracted_caption
+    if looks_like_jsonish_output(raw_text):
+        prose = salvage_jsonish_prose(raw_text)
+    else:
+        prose = str(raw_text or "").strip()
+    if len(prose) >= 16:
+        return compact_text(prose, 320)
+    return template_caption
+
+
 def fallback_json_result(task_type, raw_text, inputs, parse_error):
+    result = _build_fallback_json_result(task_type, raw_text, inputs, parse_error)
+    if isinstance(result, dict):
+        result["_parse_status"] = "fallback"
+    return result
+
+
+def _build_fallback_json_result(task_type, raw_text, inputs, parse_error):
     note = f"模型未按 JSON 输出，已使用纯文本回退解析。parse_error={parse_error}"
     if task_type == "expand_anime_tags":
         source_tags = split_tag_like_text(inputs.get("raw_tags", ""))
@@ -4028,9 +4330,10 @@ def fallback_json_result(task_type, raw_text, inputs, parse_error):
         else:
             merged_tags = dedupe_tags(source_tags + split_tag_like_text(raw_text))
         caption = (
-            extract_jsonish_string_field(raw_text, "caption_short_en", 160)
-            or extract_jsonish_string_field(raw_text, "natural_language_en", 220)
-            or compact_text(", ".join(merged_tags[:18]), 220)
+            extract_jsonish_string_field(raw_text, "caption_long_en", 320)
+            or extract_jsonish_string_field(raw_text, "natural_language_en", 320)
+            or extract_jsonish_string_field(raw_text, "caption_short_en", 160)
+            or build_fallback_caption(raw_text, "", compact_text(", ".join(merged_tags[:18]), 320))
         )
         return {
             "normalized_tags_en": source_tags[:32],
@@ -4042,7 +4345,7 @@ def fallback_json_result(task_type, raw_text, inputs, parse_error):
             "pose_tags_en": [],
             "camera_tags_en": [],
             "style_tags_en": [],
-            "quality_tags_en": ["masterpiece", "best quality"],
+            "quality_tags_en": [],
             "negative_tags_en": ["low quality", "blurry", "bad anatomy"],
             "caption_short_en": caption,
             "caption_long_en": caption,
@@ -4052,10 +4355,14 @@ def fallback_json_result(task_type, raw_text, inputs, parse_error):
     if task_type == "generate_natural_caption":
         source_tags = split_tag_like_text(inputs.get("raw_tags", "") or inputs.get("raw_text", ""))
         if looks_like_jsonish_output(raw_text):
-            base_subject = ", ".join(source_tags[:12])
-            caption = compact_text(f"anime illustration featuring {base_subject}", 220) if base_subject else ""
+            caption = (
+                extract_jsonish_string_field(raw_text, "caption_long_en", 320)
+                or extract_jsonish_string_field(raw_text, "natural_language_en", 320)
+                or extract_jsonish_string_field(raw_text, "caption_short_en", 320)
+                or build_fallback_caption(raw_text, "", compact_text(", ".join(source_tags[:20]), 320))
+            )
         else:
-            caption = raw_text.strip() or compact_text(", ".join(source_tags[:20]), 220)
+            caption = raw_text.strip() or compact_text(", ".join(source_tags[:20]), 320)
         return {
             "caption_short_en": compact_text(caption, 160),
             "caption_long_en": caption,
@@ -4473,6 +4780,8 @@ WD14 / 参考 tags：
 - natural_language_en / caption_long_en 要比 tag 更自然，但不要写成摄影散文
 - 如果角色规范 tag 参考不为空，涉及这些角色时优先使用 canonical Danbooru tag
 - 输出必须是一个 JSON 对象，首字符是 {{，尾字符是 }}
+- 不要输出 IP 角色名、作品名、画师名（artist）、signature、watermark、社交账号等元信息
+- 禁止输出以下词与字段（大小写不敏感、按整词匹配，caption 里也不要出现）：{build_banned_terms_constraint_text()}
 """.strip()
     return system_prompt, user_prompt
 
@@ -4517,6 +4826,8 @@ WD14 原始 tags：
 - caption_long_en / natural_language_en 写 2-4 句英文训练 caption，覆盖主体、外观、服装、表情、姿态、镜头/构图和显著细节
 - caption 不要加入 masterpiece、best quality、score、negative prompt 这类质量词
 - 如果图片能帮助判断，请优先依据图片修正 WD14
+- 不要输出 IP 角色名、作品名、画师名（artist）、signature、watermark、社交账号等元信息
+- 禁止输出以下词与字段（大小写不敏感、按整词匹配，caption 里也不要出现）：{build_banned_terms_constraint_text()}
 
 请输出一个 JSON 对象，字段至少包含：
 {{
@@ -4541,7 +4852,41 @@ WD14 原始 tags：
     return system_prompt, user_prompt
 
 
+def build_plain_natural_caption_prompts(inputs):
+    raw_tags = inputs.get("raw_tags", "").strip()
+    raw_text = inputs.get("raw_text", "").strip()
+    purpose = inputs.get("purpose", "").strip()
+    target_profile = inputs.get("target_profile", "flux_natural_language_v1").strip()
+    system_prompt = (
+        "You are an anime image caption writer for training-data labeling. "
+        "Answer with plain English prose only. "
+        "Never output JSON, markdown, field names or quotes around the whole answer."
+    )
+    user_prompt = f"""
+请为这张图写一段英文自然语言描述，纯文本输出，不要 JSON。
+
+参考 tags：
+{raw_tags or raw_text or "无"}
+
+用途：
+{purpose}
+
+目标输出范式：
+{target_profile}
+
+要求：
+- Write one English natural-language paragraph of 3-6 sentences covering subject, appearance, outfit, expression, pose, camera composition and notable details.
+- Plain prose only: no JSON, no markdown, no quality tags (masterpiece/best quality), no artist names, no character or IP names, no signature/watermark mentions.
+- 以现有 tags 为主要事实依据来写，不要重新发明与 tags 不一致的内容
+- 禁止输出以下词与字段（大小写不敏感、按整词匹配）：{build_banned_terms_constraint_text()}
+- 直接输出这段正文，不要输出字段名，不要用 JSON 或 markdown 包裹
+""".strip()
+    return system_prompt, user_prompt
+
+
 def build_natural_caption_prompts(inputs):
+    if str(inputs.get("caption_output_format", "json")).strip().lower() == "plain":
+        return build_plain_natural_caption_prompts(inputs)
     raw_tags = inputs.get("raw_tags", "").strip()
     raw_text = inputs.get("raw_text", "").strip()
     purpose = inputs.get("purpose", "").strip()
@@ -4582,6 +4927,8 @@ def build_natural_caption_prompts(inputs):
 - 如果目标是训练标注，不要猜测或写出现有版权角色名、作品名、IP 名；只描述图像中可见内容
 - 如果目标是训练标注，不要加入 masterpiece、best quality、score、negative prompt 这类质量词
 - 只输出一个很短的 JSON，不要在 JSON 之外添加任何内容
+- 不要输出画师名（artist）、signature、watermark、社交账号等元信息
+- 禁止输出以下词与字段（大小写不敏感、按整词匹配）：{build_banned_terms_constraint_text()}
 - 输出必须是 JSON
 """.strip()
     return system_prompt, user_prompt
@@ -5721,6 +6068,19 @@ class ManagedBackend:
         raw_text = self._complete_messages(payload, stream_callback=stream_callback)
         parse_error = None
         if (
+            task_type == "generate_natural_caption"
+            and str(inputs.get("caption_output_format", "json")).strip().lower() == "plain"
+        ):
+            plain_caption = str(raw_text or "").strip().strip('"').strip()
+            json_result = {
+                "caption_short_en": compact_text(plain_caption, 200),
+                "caption_long_en": plain_caption,
+                "natural_language_en": plain_caption,
+                "notes_cn": "纯自然语言打标模式，模型输出按整段正文直取。",
+                "_parse_status": "ok",
+            }
+            status = "success"
+        elif (
             task_type == "translate_anime_tags"
             and str(inputs.get("direction", "")).strip() in {"zh_to_en_text", "en_to_zh_text"}
             and str(inputs.get("translation_mode", "")).strip() == "sentence"
@@ -5743,11 +6103,18 @@ class ManagedBackend:
         else:
             try:
                 json_result = extract_first_json_object(raw_text)
+                if isinstance(json_result, dict):
+                    json_result["_parse_status"] = "ok"
                 status = "success"
             except Exception as error:
                 parse_error = str(error)
                 json_result = fallback_json_result(task_type, raw_text, inputs, parse_error)
-                status = "parse_fallback"
+                repaired_result, repair_ok = _repair_jsonish_output(raw_text)
+                if repair_ok:
+                    json_result = repaired_result
+                    json_result["_parse_status"] = "repaired"
+                    parse_error = None
+                status = "success" if repair_ok else "parse_fallback"
         json_result = enrich_json_result(task_type, json_result, inputs)
         if task_type == "generate_outfit_tags":
             json_result["retrieved_clothing_candidates"] = [
@@ -5785,7 +6152,7 @@ class ManagedBackend:
                 json_result["post_expand_status"] = "parse_fallback"
                 json_result["post_expand_error"] = str(expand_error)
                 json_result["post_expand_raw_text"] = expand_raw_text
-            json_result.update(profile_format_prompt(inputs.get("target_profile", "generic_tag_model"), json_result))
+            json_result.update(profile_format_prompt(inputs.get("target_profile", "generic_tag_model"), json_result, resolve_training_trigger_prefix(inputs)))
 
         result = {
             "status": status,
@@ -5808,6 +6175,11 @@ class ManagedBackend:
         }
         if parse_error is not None:
             result["parse_error"] = parse_error
+        parse_status = str(json_result.get("_parse_status", "")).strip() if isinstance(json_result, dict) else ""
+        if parse_status:
+            result["parse_status"] = parse_status
+            if parse_status != "ok":
+                result["status"] = "{}:{}".format(status, parse_status)
 
         effective_unload = bool(unload_after_run)
         if not effective_unload:

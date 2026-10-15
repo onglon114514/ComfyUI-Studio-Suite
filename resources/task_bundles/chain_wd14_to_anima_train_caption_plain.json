@@ -1,0 +1,20 @@
+{
+  "task_modules": [
+    {
+      "type": "generate_natural_caption",
+      "fixed_inputs": {
+        "caption_output_format": "plain"
+      }
+    }
+  ],
+  "format_module": {
+    "type": "anima_train_v1"
+  },
+  "task_defaults": {
+    "style_hint": "training caption, preserve WD14 tags exactly, add one English plain-prose description paragraph",
+    "purpose": "训练打标基线（纯自然语言版）：第一段完全保留 WD14 原始标签；LLM 只依据 WD14 写第二段 3-6 句纯英文 prose，不输出 JSON，不重写 tag，不添加质量词。"
+  },
+  "fixed_inputs": {
+    "caption_mode": "training_tag_plus_nl"
+  }
+}

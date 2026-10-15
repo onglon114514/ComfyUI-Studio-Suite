@@ -1,0 +1,36 @@
+{
+  "banned_exact_tags": [
+    "masterpiece",
+    "best quality",
+    "detailed",
+    "ultra-detailed",
+    "highres"
+  ],
+  "banned_substrings": [
+    "azur lane",
+    "arknights",
+    "genshin impact",
+    "honkai: star rail",
+    "honkai impact 3rd",
+    "fate/grand order",
+    "kantai collection",
+    "touhou project"
+  ],
+  "banned_artifact_tags": [
+    "artist name",
+    "signature",
+    "character name",
+    "copyright name",
+    "character signature",
+    "twitter username",
+    "username",
+    "watermark",
+    "english text",
+    "copyright notice",
+    "cover page",
+    "doujin cover",
+    "magazine cover",
+    "cover art"
+  ],
+  "trigger_prefix": ""
+}

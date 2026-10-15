@@ -1981,7 +1981,13 @@ def execute_tag_utility_internal(
             if task_name in {"extract_tags_from_image", "vision_tagging", "image_captioning", "refine_wd14_tags"}:
                 payload["max_tokens"] = 1400
             elif task_name == "generate_natural_caption":
-                payload["max_tokens"] = 520
+                caption_inputs = payload.get("inputs", {})
+                if not isinstance(caption_inputs, dict):
+                    caption_inputs = {}
+                try:
+                    payload["max_tokens"] = int(caption_inputs.get("caption_max_tokens") or 1200)
+                except (TypeError, ValueError):
+                    payload["max_tokens"] = 1200
             else:
                 payload["max_tokens"] = 900
 
