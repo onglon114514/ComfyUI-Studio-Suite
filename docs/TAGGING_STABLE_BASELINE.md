@@ -75,3 +75,12 @@ For the next preview release, describe this as the stable minimal path, not as a
 Recommended wording:
 
 > For local low-VRAM usage, start with WD14 tags plus Gemma 4 E4B Q4 in-process text captioning. Keep WD14 tags unchanged and let the LLM add only the natural-language caption line. Use external backends or larger models only after this baseline works on your machine.
+
+## 2026-10-15 Update: Robustness + Plain-NL Mode (zh notes)
+
+- 解析兼容：模型输出 JSON 残缺时自动修复（围栏/引号/尾逗号/截断补全，≤3 层闭合），修复路径带 `parse_status=repaired`；fallback 不再丢弃模型原文、不再硬塞 masterpiece/best quality。
+- 纯自然语言模式：任务模组 bundle `chain_wd14_to_anima_train_caption_plain.json`（`caption_output_format=plain`），LLM 输出 3-6 句 prose 直接作第二行，与 WD14 首行拼接的基线格式不变。
+- 长度：`caption_max_tokens` 可配（默认 1200）；caption <80 字符才回退模板句。
+- 禁词/启动词：`config/tagging_terms.json` 用户可编辑（banned exact/substrings/artifact + trigger_prefix）；过滤只作用 LLM 侧，WD14 首行默认不动；WD14 层过滤用其 `exclude_tags` 槽位（示例工作流已修正误接线）。
+- 推理（koboldcpp）：`gemma4_e4b_managed.kcpps` 开 `autofit` + `threads 16` + flash attention；35B-A3B 走"专家张量 CPU、其余全 GPU"分工（9/27 实测 33 T/s vs 20 层方案 11.5 T/s）。
+- 观测：节点 `status` 现含 `ok/repaired/fallback` 标记，可批量统计掉格式率。

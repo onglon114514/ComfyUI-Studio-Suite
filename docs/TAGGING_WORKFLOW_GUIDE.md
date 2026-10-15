@@ -128,6 +128,15 @@
 - `task_module_2 = generate_natural_caption`
 - `format_module = structured_json_v1`
 
+### 5. WD14 拼接纯自然语言（2026-10-15 新增）
+
+- 任务 bundle：`resources/task_bundles/chain_wd14_to_anima_train_caption_plain.json`
+- `fixed_inputs` 内置 `caption_output_format=plain`：LLM 输出 3-6 句英文 prose，跳过 JSON 解析
+- `caption_max_tokens` 可在 fixed_inputs 覆盖（默认 1200）
+- 产出仍是两行式：第一行 WD14 原文，空行，第二行纯自然语言（可加 `trigger_prefix` 启动词前缀）
+- 禁词（IP 角色/画师/signature 等）在 `config/tagging_terms.json` 配置，只过滤 LLM 侧；WD14 层过滤用其 `exclude_tags` 槽位
+- 掉格式观测：节点 `status` 带 `ok / repaired / fallback` 标记
+
 ## 推荐资源
 
 适合通过 `任务代理·资源加载器` 接入：

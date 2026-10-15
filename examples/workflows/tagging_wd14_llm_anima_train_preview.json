@@ -910,9 +910,7 @@
         {
           "name": "positive",
           "type": "STRING",
-          "links": [
-            25
-          ]
+          "links": []
         }
       ],
       "properties": {
@@ -996,7 +994,7 @@
           "widget": {
             "name": "exclude_tags"
           },
-          "link": 25
+          "link": null
         }
       ],
       "outputs": [
@@ -1186,14 +1184,6 @@
       18,
       0,
       "IMAGE"
-    ],
-    [
-      25,
-      22,
-      0,
-      15,
-      6,
-      "STRING"
     ]
   ],
   "groups": [],

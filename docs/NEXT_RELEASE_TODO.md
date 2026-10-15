@@ -9,7 +9,7 @@ This file tracks the items that should not be presented as finished in the next 
   `WD14 tags -> chain_wd14_to_anima_train_caption.json -> llama_cpp_python_inproc -> Gemma 4 E4B Q4`.
 - Re-test `llama_cpp_python_inproc` and external backend modes on a clean machine.
 - Document that current LLM-assisted image-generation helper workflows are suitable for small runs first, not unattended large production batches.
-- Investigate Prompt Studio editor open-time lag and remaining UI bugs.
+- [x] Investigate Prompt Studio editor open-time lag and remaining UI bugs. (Fixed 2026-10-10/11: tippy leak, stable tag ids; verified on real ComfyUI.)
 - [x] Prompt Studio bundled storage and frontend work without the old disabled `weilin` directory.
 
 ## XY / LoRA Testing
