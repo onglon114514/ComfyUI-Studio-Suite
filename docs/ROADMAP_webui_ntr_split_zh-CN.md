@@ -92,6 +92,58 @@ git checkout <tag> -- .        # 把工作区文件恢复到该回退点
 
 **修法建议**：索引时只对 `可做 widget 且非 forceInput` 的输入自增，而非对所有 required 输入自增。
 
+## 5.6 `graph_to_prompt` widget 越位 bug —— 端到端实证（2026-10-16 补充）
+
+### 现场（webui 前端提交图工作流）
+
+经 `/api/generate-graph` 提交 `graph:webui_ntr_img2img_wnt`，被 ComfyUI 拒绝：
+
+```
+提交失败: comfyui_submit_failed
+prompt_outputs_failed_validation
+  Required input is missing: filename_prefix
+  Required input is missing: overwrite_mode
+  Required input is missing: filename_prefix
+  Required input is missing: bit_depth
+  Value not in list: root: '[time(%Y-%m-%d)]/ComfyUI' not in ...
+```
+
+### 定位（用 graph_to_prompt 直接跑该工作流：49 节点 / **0 警告**）
+
+> ⚠️ 注意：**警告数为 0 恰恰是问题** —— 转换器不认为自己做错了什么，安静地产出错误 prompt。
+
+| 节点 | widgets_values | 转换后 prompt.inputs | 症状 |
+|---|---|---|---|
+| `#44 Image Save`（WAS） | 16 项 | `{images, root, dpi, optimize_image, show_history_by_prefix}` | **少 11 项必填**（filename_prefix / overwrite_mode / bit_depth / extension / quality …），且 `root` 取到错值 |
+| `#98 WNT_ImageOutput` | `[true, "wnt"]` | `{image, save_to_disk: "wnt"}` | **`filename_prefix` 缺失**；`save_to_disk` 应为 `true` 却拿到 `"wnt"` |
+| `#32` / `#80 KSampler` | `[0,"randomize",20,8,…]` | `seed: "randomize"` | 应为 `0`，越位一格 |
+| `#75 WNT_ImageInput` | `["","对齐图片",1024,1024,1024,""]` | 6 个全对 | **反证**：该节点所有输入都是 widget，故不越位 |
+
+**根因**：索引 `widgets_values` 时按 **required 输入的全排列位置**自增，
+而 ComfyUI 只对**可做 widget 的输入**（INT / FLOAT / STRING / BOOLEAN / combo 且非 forceInput）计数 -> 越位，
+**越位数 = 该节点中「非 widget 输入」的个数**。
+
+### 修法（一处即可根治）
+
+`graph_to_prompt.py`：遍历节点输入时，**只对「可做 widget 且非 forceInput」的输入自增索引**，
+不要对 socket 类输入（MODEL / CLIP / VAE / IMAGE / MASK / LATENT / CONDITIONING …）自增。
+更稳的做法：按 `object_info` 的 widget 列表顺序 + **名称绑定**，而不是按位置。
+
+### ⚠️ 重要：删掉 WAS 节点**不能**解决
+
+`#98 WNT_ImageOutput` 自身同样缺 `filename_prefix`。
+所以「删掉遗留的 WAS Image Save 节点」只算清理，**图工作流（graph 模式）整体仍不可用**，必须修 `graph_to_prompt`。
+
+### 影响面
+
+- 所有含「widget 之前还有 socket 输入」的节点的图工作流，经 webui 前端提交都会失败。
+- **api 模式工作流不受影响**：它走 `/prompt` 直发，不经该转换器。
+  已实测 `api:txt2img` 28 秒正常出图，`/history` + `/view` 预览链路成立（`<img src="/view?filename=…">` 渲染进 `#wfResult`）。
+
+### 复现脚本
+
+`tools/check_g2p_wnt.py`（本工作区）：加载实装的工作流 → `graph_to_prompt` → 逐节点打印 `widgets_values` 与 `prompt.inputs` 对照。
+
 ## 6. 防打架规则
 
 1. **一文件一归属**：`frontend/index.html`、`prompt_studio/frontend/**` 归 studio-suite；webui-ntr 不碰
@@ -141,3 +193,11 @@ git checkout <tag> -- .        # 把工作区文件恢复到该回退点
 
 > 量「是否泄漏」必须等**异步水合稳定**，并用**不变的输入**做 tick；只看节点数上涨会把水合延迟误判成泄漏。
 > 量内存必须**强制 GC 后**再比，否则 GC 噪声会被误读成线性增长。
+
+---
+
+## 8. 发布记录（2026-10-14）
+
+- **GitHub**：`main` 推到 `10978fc`（含崩溃修复 + 稳定 id + 自动分桶节点 `StudioSuiteAutoBucketCropResize`）；webui-ntr 两个未完成范例 workflow 已移除。
+- **Hugging Face**：`datasets/onglon114514/ComfyUI-Studio-Suite-Resources` 首次发布 `danbooru_library/`——catalog `af382bdb`（2,043,932 tags / 303,590 中译 / 1,125,936 别名 / 969 组，2.35GB LFS）。`install_tag_library.py --check` 已确认可发现新版本；旧 catalog `83002e24` 按规则保留在本机与 HF 并存。本地 clone：`E:\114514\New project\hf-Studio-Suite-Resources`。
+- 待办闭环：词典"部署超集/最终库"（9/24 队列项）完成。
