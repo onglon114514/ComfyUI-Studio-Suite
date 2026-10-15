@@ -5,7 +5,7 @@
   "port_param": 5001,
   "host": "",
   "launch": false,
-  "threads": 8,
+  "threads": 16,
   "usecuda": [
     "normal",
     "0",
@@ -16,7 +16,7 @@
   "contextsize": 8192,
   "gpulayers": 20,
   "tensor_split": null,
-  "autofit": false,
+  "autofit": true,
   "maingpu": -1,
   "batchsize": 256,
   "blasthreads": null,
@@ -151,6 +151,6 @@
   "sdnotile": false,
   "forceversion": false,
   "sdgendefaults": false,
-  "flashattention": false,
+  "flashattention": true,
   "istemplate": false
 }
