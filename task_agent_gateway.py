@@ -165,6 +165,18 @@ INPROCESS_BACKEND_PROVIDERS = {"llama_cpp_python_inproc", "transformers_inproc",
 LEGACY_PROJECT_ROOTS = [
 ]
 
+def _comfy_models_dir():
+    try:
+        import folder_paths
+        root = Path(str(getattr(folder_paths, "models_dir", "") or ""))
+    except Exception:
+        return None
+    try:
+        return root if root.is_dir() else None
+    except OSError:
+        return None
+
+
 COOCCURRENCE_GENERIC_SEED_KEYS = {
     "1girl",
     "1boy",
@@ -355,6 +367,19 @@ def iter_resolved_path_candidates(path_value, *, project_subdirs=None, fallback_
             relative_suffix = normalized_forward[len(legacy_prefix) :]
             if relative_suffix:
                 yield from push(PROJECT_DIR / relative_suffix)
+
+    comfy_root = _comfy_models_dir()
+    if comfy_root is not None:
+        yield from push(comfy_root / normalized)
+        base_name = raw_path.name
+        try:
+            comfy_subdirs = [p for p in comfy_root.iterdir() if p.is_dir()]
+        except OSError:
+            comfy_subdirs = []
+        for subdir in comfy_subdirs:
+            yield from push(subdir / normalized)
+            if base_name:
+                yield from push(subdir / base_name)
 
     basename = Path(normalized_forward).name
     if basename:
@@ -5171,7 +5196,7 @@ class ManagedBackend:
         custom_mmproj = normalize_optional_path(custom_mmproj_path)
         model_path = resolve_existing_path(
             custom_model or profile["model_path"],
-            purpose=f"model_path for backend profile {profile_name}",
+            purpose=("custom_model_path (标签工具自定义模型框)" if custom_model else f"model_path for backend profile {profile_name}"),
             project_subdirs=["runtime", "models"],
         )
         # A custom model path should not inherit the catalog profile's mmproj.
@@ -5180,7 +5205,7 @@ class ManagedBackend:
         mmproj_source = custom_mmproj if custom_model else (custom_mmproj or profile.get("mmproj_path"))
         mmproj_path = resolve_existing_path(
             mmproj_source,
-            purpose=f"mmproj_path for backend profile {profile_name}",
+            purpose=("custom_mmproj_path (标签工具自定义mmproj框)" if custom_mmproj else f"mmproj_path for backend profile {profile_name}"),
             required=False,
             project_subdirs=["runtime", "models"],
         )
