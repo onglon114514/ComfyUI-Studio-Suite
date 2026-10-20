@@ -204,6 +204,7 @@
   <!-- top tab bar -->
   <div class="tabs" id="tabbar">
     <div class="tab active" data-tab="txt2img">文生图</div>
+    <div class="tab" data-tab="region">区域布局</div>
     <div class="tab" data-tab="img2img">图生图</div>
     <div class="tab" data-tab="postprocess">后期处理</div>
     <div class="tab" data-tab="pnginfo">PNG 图片信息</div>
@@ -367,6 +368,120 @@
   <div class="placeholder" id="panel-settings" style="display:none;">设置（待接入：后端加载 / 卸载 / 端口 114514）</div>
   <div class="placeholder" id="panel-extensions" style="display:none;">扩展（待接入）</div>
 
+  <!-- 区域布局 panel -->
+  <div class="main" id="panel-region" style="display:none;">
+    <div class="col-left">
+      <div class="card">
+        <h3>参考图</h3>
+        <input type="file" id="regionFile" accept="image/*" style="font-size:11px;">
+        <div id="regionDropZone" tabindex="0" style="margin-top:8px; border:1px dashed var(--border); border-radius:6px; padding:10px; outline:none;">
+          <div class="muted" style="font-size:11px;">点击上方选择文件 · Ctrl+V 粘贴图片 · 也可把图片拖到此处或画布</div>
+          <div class="muted" id="regionImageStatus" style="font-size:11px; margin-top:4px;">未载入参考图（仍可在默认画布上画框）</div>
+        </div>
+        <div class="row" style="margin-top:8px;">
+          <button class="small ghost" id="regionClearImage">清除参考图</button>
+          <span class="muted" style="font-size:11px;">参考图只用于对准，不写入草稿；框与文本会保留</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>画框</h3>
+        <div class="row" style="margin-bottom:6px; flex-wrap:wrap;">
+          <button class="small ghost" id="regionUndo" title="Ctrl+Z">撤销</button>
+          <button class="small ghost" id="regionRedo" title="Ctrl+Y / Ctrl+Shift+Z">重做</button>
+          <button class="small ghost" id="regionDeleteAll">删除选中</button>
+          <span class="muted" style="font-size:11px;">空白拖拽建框 · 单击选中 · Ctrl+点击加选 · Delete 删除</span>
+        </div>
+        <div id="regionStage" style="position:relative; width:100%; max-width:820px;">
+          <canvas id="regionBase" style="display:block; width:100%; height:auto; border-radius:4px; background:#141416;"></canvas>
+          <canvas id="regionDraw" style="position:absolute; left:0; top:0; width:100%; height:100%; cursor:crosshair; touch-action:none;"></canvas>
+        </div>
+        <div class="muted" id="regionCanvasHint" style="font-size:11px; margin-top:6px;"></div>
+      </div>
+    </div>
+
+    <div class="col-right">
+      <div class="card" id="regionProps" style="display:none;">
+        <h3 id="regionSelTitle">选中框</h3>
+        <label>角色</label>
+        <select id="regionRole">
+          <option value="obj">object（物体/人物）</option>
+          <option value="text">text（画面文字）</option>
+        </select>
+        <div id="regionLiteralWrap" style="display:none;">
+          <label>literalText（逐字内容 · 永不翻译）</label>
+          <textarea id="regionLiteral" rows="2" placeholder="例如：HAPPY BIRTHDAY"></textarea>
+        </div>
+        <label>自然语言描述（中文）</label>
+        <textarea id="regionNlZh" rows="2" placeholder="例如：左侧戴红帽的人物"></textarea>
+        <label>自然语言描述（English）</label>
+        <textarea id="regionNlEn" rows="2" placeholder="e.g. a person with a red hood on the left"></textarea>
+        <label>Tag（插入时自动小写、空格转下划线）</label>
+        <div class="row" style="align-items:stretch;">
+          <input id="regionTagInput" placeholder="输入 tag 后回车">
+          <button class="small" id="regionTagAdd">+</button>
+        </div>
+        <div class="chips-row" id="regionChips" style="padding:8px 0; border-bottom:none; background:transparent;"></div>
+        <div class="muted" style="font-size:11px;">chips 可拖拽排序 · 导出时按此顺序</div>
+        <label class="inline" style="margin-top:8px;"><input type="checkbox" id="regionMuted"> 静音（导出时跳过此框）</label>
+        <div class="row" style="margin-top:8px;">
+          <button class="small" id="regionDeleteBtn">删除此框</button>
+          <span class="muted" id="regionBBoxInfo" style="font-size:11px;"></span>
+        </div>
+      </div>
+
+      <div id="regionGlobal">
+        <div class="card">
+          <h3>全局</h3>
+          <div class="grid2">
+            <div>
+              <label>画布宽（px）</label>
+              <input id="regionCanvasW" type="number" min="16" max="4096" step="16" value="1024">
+            </div>
+            <div>
+              <label>画布高（px）</label>
+              <input id="regionCanvasH" type="number" min="16" max="4096" step="16" value="1024">
+            </div>
+          </div>
+          <label>全局 caption（中文）</label>
+          <textarea id="regionCaptionZh" rows="2" placeholder="整张图的自然语言描述"></textarea>
+          <label>全局 caption（English）</label>
+          <textarea id="regionCaptionEn" rows="2" placeholder="High level description of the whole image"></textarea>
+          <div class="muted" style="font-size:11px; margin-top:6px;">导出时英文优先，英文为空回退中文；MOSS 要求宽高都是 16 的倍数。</div>
+        </div>
+
+        <div class="card">
+          <h3>导出</h3>
+          <div class="row" style="flex-wrap:wrap; margin-bottom:6px;">
+            <b style="font-size:11px; min-width:86px;">MOSS layout</b>
+            <button class="small" data-region-export="moss" data-region-action="copy">复制</button>
+            <button class="small ghost" data-region-export="moss" data-region-action="download">下载</button>
+            <button class="small ghost" data-region-export="moss" data-region-action="send">发送到正向框</button>
+          </div>
+          <div class="row" style="flex-wrap:wrap; margin-bottom:6px;">
+            <b style="font-size:11px; min-width:86px;">Ideogram 4</b>
+            <button class="small" data-region-export="ideogram" data-region-action="copy">复制</button>
+            <button class="small ghost" data-region-export="ideogram" data-region-action="download">下载</button>
+          </div>
+          <div class="row" style="flex-wrap:wrap; margin-bottom:6px;">
+            <b style="font-size:11px; min-width:86px;">通用 jsonl</b>
+            <button class="small" data-region-export="jsonl" data-region-action="copy">复制</button>
+            <button class="small ghost" data-region-export="jsonl" data-region-action="download">下载</button>
+          </div>
+          <label class="inline"><input type="checkbox" id="regionJsonlPerRegion"> jsonl 一行一 region</label>
+          <div class="row" style="flex-wrap:wrap; margin:6px 0;">
+            <b style="font-size:11px; min-width:86px;">Tag 行</b>
+            <button class="small" data-region-export="taglines" data-region-action="copy">复制</button>
+            <button class="small ghost" data-region-export="taglines" data-region-action="download">下载</button>
+            <button class="small ghost" data-region-export="taglines" data-region-action="send">发送到正向框</button>
+          </div>
+          <div class="muted" id="regionExportStatus" style="font-size:11px; min-height:16px;"></div>
+          <div class="muted" id="regionTokenInfo" style="font-size:11px; margin-top:6px;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script>
     const $ = (id) => document.getElementById(id);
 
@@ -384,7 +499,7 @@
         tab.classList.add("active");
         document.querySelectorAll(".main, .placeholder").forEach((p) => (p.style.display = "none"));
         const panel = $("panel-" + tab.dataset.tab);
-        if (panel) panel.style.display = tab.dataset.tab === "txt2img" ? "flex" : "block";
+        if (panel) panel.style.display = (tab.dataset.tab === "txt2img" || tab.dataset.tab === "region") ? "flex" : "block";
       });
     });
 
@@ -406,6 +521,1540 @@
         if (e.ctrlKey && e.key === "Enter") runTask();
       });
     });
+
+    // ── 区域布局：适配器（纯函数，node 测试抽取本块）────────────────
+    // == REGION_ADAPTERS_BEGIN ==
+    // 不依赖 DOM；全部坐标转换集中在这里。
+    window.RegionAdapters = (() => {
+      const SCHEMA = "prompt-studio/region-v1";
+
+      function rint(v) {
+        const n = Math.round(v);
+        return n === 0 ? 0 : n;
+      }
+
+      function asDoc(doc) {
+        if (!doc || typeof doc !== "object") throw new Error("doc 无效");
+        const canvas = doc.canvas || {};
+        const rawW = canvas.w !== undefined ? canvas.w : canvas.width;
+        const rawH = canvas.h !== undefined ? canvas.h : canvas.height;
+        const w = Math.round(Number(rawW));
+        const h = Math.round(Number(rawH));
+        return {
+          w: isFinite(w) ? w : 0,
+          h: isFinite(h) ? h : 0,
+          global: doc.global || {},
+          regions: Array.isArray(doc.regions) ? doc.regions : [],
+          image: typeof doc.image === "string" ? doc.image : "",
+        };
+      }
+
+      function bboxOf(region) {
+        const b = region && region.bbox;
+        if (!Array.isArray(b) || b.length !== 4) return null;
+        const n = b.map((v) => Number(v));
+        if (n.some((v) => !isFinite(v))) return null;
+        return [
+          Math.max(0, Math.min(1, Math.min(n[0], n[2]))),
+          Math.max(0, Math.min(1, Math.min(n[1], n[3]))),
+          Math.max(0, Math.min(1, Math.max(n[0], n[2]))),
+          Math.max(0, Math.min(1, Math.max(n[1], n[3]))),
+        ];
+      }
+
+      function hasArea(b) {
+        return !!b && b[2] - b[0] > 0 && b[3] - b[1] > 0;
+      }
+
+      function tagList(region) {
+        const raw = Array.isArray(region && region.tags) ? region.tags : [];
+        const out = [];
+        for (const t of raw) {
+          const s = typeof t === "string" ? t : (t && t.tag) || "";
+          const value = String(s).trim();
+          if (value) out.push(value);
+        }
+        return out;
+      }
+
+      function nlText(region, withTags) {
+        const nl = (region && region.nl) || {};
+        const en = String(nl.en || "").trim();
+        const zh = String(nl.zh || "").trim();
+        if (en) return en;
+        if (zh) return zh;
+        return withTags ? tagList(region).join(", ") : "";
+      }
+
+      function literalOf(region) {
+        return typeof (region && region.literalText) === "string" ? region.literalText : "";
+      }
+
+      function activeRegions(doc) {
+        const out = [];
+        for (const region of doc.regions) {
+          if (!region || region.muted) continue;
+          const b = bboxOf(region);
+          if (!hasArea(b)) continue;
+          out.push({ region: region, bbox: b });
+        }
+        return out;
+      }
+
+      function toMoss(doc) {
+        const d = asDoc(doc);
+        if (!d.w || d.w % 16 !== 0) {
+          throw new Error("MOSS 导出要求画布宽度是 16 的倍数（当前 " + (d.w || "未设置") + "），请在全局区调整画布尺寸");
+        }
+        if (!d.h || d.h % 16 !== 0) {
+          throw new Error("MOSS 导出要求画布高度是 16 的倍数（当前 " + (d.h || "未设置") + "），请在全局区调整画布尺寸");
+        }
+        const items = [];
+        for (const entry of activeRegions(d)) {
+          const region = entry.region;
+          const bbox = entry.bbox;
+          const item = {
+            label: region.role === "text" ? "text" : "object",
+            caption: nlText(region, true),
+            bbox: [
+              rint(bbox[1] * d.h - d.h / 2),
+              rint(bbox[0] * d.w - d.w / 2),
+              rint(bbox[3] * d.h - d.h / 2),
+              rint(bbox[2] * d.w - d.w / 2),
+            ],
+          };
+          if (region.role === "text") {
+            const literal = literalOf(region);
+            if (literal) item.text = literal;
+          }
+          items.push(item);
+        }
+        return {
+          summary: { meta: [], canvas: "single", caption: String(d.global.caption_en || d.global.caption_zh || "") },
+          items: items,
+          bbox_coord_space: "abs_centralized",
+          bbox_format: "yxyx",
+        };
+      }
+
+      function toIdeogram(doc) {
+        const d = asDoc(doc);
+        const elements = [];
+        for (const entry of activeRegions(d)) {
+          const region = entry.region;
+          const bbox = entry.bbox;
+          const box = [
+            rint(bbox[1] * 1000),
+            rint(bbox[0] * 1000),
+            rint(bbox[3] * 1000),
+            rint(bbox[2] * 1000),
+          ];
+          if (region.role === "text") {
+            elements.push({
+              type: "text",
+              bbox: box,
+              text: literalOf(region),
+              desc: nlText(region, false),
+            });
+          } else {
+            elements.push({ type: "obj", bbox: box, desc: nlText(region, true) });
+          }
+        }
+        return {
+          high_level_description: String(d.global.caption_en || d.global.caption_zh || ""),
+          style_description: { aesthetics: "", lighting: "", photo: "", medium: "", color_palette: [] },
+          compositional_deconstruction: { background: "", elements: elements },
+        };
+      }
+
+      function toGenericJsonl(doc, perRegion) {
+        const d = asDoc(doc);
+        const caption = String(d.global.caption_en || d.global.caption_zh || "");
+        const regions = activeRegions(d).map((entry) => ({
+          bbox: [entry.bbox[0], entry.bbox[1], entry.bbox[2], entry.bbox[3]].map((v) => Number(v.toFixed(4))),
+          prompt: nlText(entry.region, false),
+          tags: tagList(entry.region),
+        }));
+        if (perRegion) {
+          return regions
+            .map((r) => JSON.stringify({ image: d.image, bbox: r.bbox, prompt: r.prompt, tags: r.tags }))
+            .join("\n");
+        }
+        return JSON.stringify({
+          image: d.image,
+          width: d.w,
+          height: d.h,
+          caption: caption,
+          regions: regions,
+        });
+      }
+
+      function toTagLines(doc) {
+        const d = asDoc(doc);
+        const lines = [];
+        for (const entry of activeRegions(d)) {
+          const region = entry.region;
+          const parts = [];
+          const tags = tagList(region).join(", ");
+          if (tags) parts.push(tags);
+          const nl = nlText(region, false);
+          if (nl) parts.push(nl);
+          let line = parts.join(", ");
+          if (region.role === "text") {
+            const literal = literalOf(region);
+            if (literal) line = 'text: "' + literal.replace(/"/g, '\\"') + '" | ' + line;
+          }
+          lines.push(line);
+        }
+        return lines.join("\n");
+      }
+
+      function parseJson(input, label) {
+        if (typeof input === "string") {
+          try {
+            return JSON.parse(input);
+          } catch (err) {
+            throw new Error(label + " JSON 解析失败：" + err.message);
+          }
+        }
+        if (input && typeof input === "object") return input;
+        throw new Error(label + " 输入不是有效的 JSON");
+      }
+
+      function fromIdeogram(input) {
+        const json = parseJson(input, "Ideogram");
+        const elements = json && json.compositional_deconstruction && json.compositional_deconstruction.elements;
+        if (!Array.isArray(elements)) throw new Error("Ideogram JSON 缺少 compositional_deconstruction.elements 数组");
+        const regions = elements.map((element, index) => {
+          if (!element || !Array.isArray(element.bbox) || element.bbox.length !== 4) {
+            throw new Error("Ideogram elements[" + index + "] 缺少 4 项 bbox");
+          }
+          const n = element.bbox.map((v) => Number(v));
+          if (n.some((v) => !isFinite(v))) throw new Error("Ideogram elements[" + index + "] bbox 含非法数值");
+          const role = element.type === "text" ? "text" : "obj";
+          return {
+            id: "r" + (index + 1),
+            bbox: [
+              Math.max(0, Math.min(1, Math.min(n[1], n[3]) / 1000)),
+              Math.max(0, Math.min(1, Math.min(n[0], n[2]) / 1000)),
+              Math.max(0, Math.min(1, Math.max(n[1], n[3]) / 1000)),
+              Math.max(0, Math.min(1, Math.max(n[0], n[2]) / 1000)),
+            ],
+            role: role,
+            literalText: role === "text" && typeof element.text === "string" ? element.text : "",
+            nl: { zh: "", en: typeof element.desc === "string" ? element.desc : "" },
+            tags: [],
+            muted: false,
+            linkedTo: null,
+          };
+        });
+        return {
+          schema: SCHEMA,
+          canvas: { w: 1024, h: 1024 },
+          global: { caption_zh: "", caption_en: String(json.high_level_description || "") },
+          regions: regions,
+        };
+      }
+
+      function fromMoss(input, canvas) {
+        const json = parseJson(input, "MOSS");
+        if (!json || !Array.isArray(json.items)) throw new Error("MOSS JSON 缺少 items 数组");
+        if (json.bbox_format && json.bbox_format !== "yxyx") {
+          throw new Error("暂不支持 MOSS bbox_format=" + json.bbox_format + "（仅支持 yxyx）");
+        }
+        if (json.bbox_coord_space && json.bbox_coord_space !== "abs_centralized") {
+          throw new Error("暂不支持 MOSS bbox_coord_space=" + json.bbox_coord_space + "（仅支持 abs_centralized）");
+        }
+        const size = canvas || {};
+        const rawW = size.w !== undefined ? size.w : (size.width !== undefined ? size.width : (json.width || (json.canvas && json.canvas.w)));
+        const rawH = size.h !== undefined ? size.h : (size.height !== undefined ? size.height : (json.height || (json.canvas && json.canvas.h)));
+        const w = Math.round(Number(rawW));
+        const h = Math.round(Number(rawH));
+        if (!isFinite(w) || !isFinite(h) || !w || !h) {
+          throw new Error("MOSS JSON 不含画布宽高，无法反归一化；请传入 {w,h}");
+        }
+        const regions = json.items.map((item, index) => {
+          if (!item || !Array.isArray(item.bbox) || item.bbox.length !== 4) {
+            throw new Error("MOSS items[" + index + "] 缺少 4 项 bbox");
+          }
+          const n = item.bbox.map((v) => Number(v));
+          if (n.some((v) => !isFinite(v))) throw new Error("MOSS items[" + index + "] bbox 含非法数值");
+          const x1 = n[1] / w + 0.5;
+          const y1 = n[0] / h + 0.5;
+          const x2 = n[3] / w + 0.5;
+          const y2 = n[2] / h + 0.5;
+          const role = item.label === "text" ? "text" : "obj";
+          return {
+            id: "m" + (index + 1),
+            bbox: [
+              Math.max(0, Math.min(1, Math.min(x1, x2))),
+              Math.max(0, Math.min(1, Math.min(y1, y2))),
+              Math.max(0, Math.min(1, Math.max(x1, x2))),
+              Math.max(0, Math.min(1, Math.max(y1, y2))),
+            ],
+            role: role,
+            literalText: role === "text" && typeof item.text === "string" ? item.text : "",
+            nl: { zh: "", en: typeof item.caption === "string" ? item.caption : "" },
+            tags: [],
+            muted: false,
+            linkedTo: null,
+          };
+        });
+        return {
+          schema: SCHEMA,
+          canvas: { w: w, h: h },
+          global: {
+            caption_zh: "",
+            caption_en: String((json.summary && json.summary.caption) || ""),
+          },
+          regions: regions,
+        };
+      }
+
+      return {
+        toMoss: toMoss,
+        toIdeogram: toIdeogram,
+        toGenericJsonl: toGenericJsonl,
+        toTagLines: toTagLines,
+        fromIdeogram: fromIdeogram,
+        fromMoss: fromMoss,
+      };
+    })();
+    // == REGION_ADAPTERS_END ==
+
+    // ── 区域布局：编辑器状态 ──────────────────────────────────────
+    const REGION_DRAFT_KEY = "studio_suite_region_draft";
+    const REGION_SCHEMA = "prompt-studio/region-v1";
+    const REGION_HANDLES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
+    const REGION_CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳";
+    const REGION_MIN_SIZE = 0.01;
+    const REGION_MAX_CANVAS = 4096;
+
+    let regionDoc = {
+      schema: REGION_SCHEMA,
+      canvas: { w: 1024, h: 1024 },
+      global: { caption_zh: "", caption_en: "" },
+      regions: [],
+    };
+    let regionImage = null;
+    let regionImageName = "";
+    let regionSelection = new Set();
+    let regionPrimaryId = null;
+    let regionGesture = null;
+    let regionTempBox = null;
+    let regionUndoStack = [];
+    let regionRedoStack = [];
+    let regionSaveTimer = null;
+    let regionFieldBase = null;
+    let regionFieldGuard = false;
+    let regionChipDrag = null;
+
+    function regionClamp(v, lo, hi) {
+      return Math.min(hi, Math.max(lo, v));
+    }
+
+    function regionById(id) {
+      return regionDoc.regions.find((r) => r.id === id) || null;
+    }
+
+    function regionPrimaryRegion() {
+      return regionPrimaryId ? regionById(regionPrimaryId) : null;
+    }
+
+    function regionClampBox(raw) {
+      if (!Array.isArray(raw) || raw.length !== 4) return null;
+      const n = raw.map((v) => Number(v));
+      if (n.some((v) => !isFinite(v))) return null;
+      return [
+        regionClamp(Math.min(n[0], n[2]), 0, 1),
+        regionClamp(Math.min(n[1], n[3]), 0, 1),
+        regionClamp(Math.max(n[0], n[2]), 0, 1),
+        regionClamp(Math.max(n[1], n[3]), 0, 1),
+      ];
+    }
+
+    function regionNewId() {
+      return "r_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    }
+
+    function normalizeTag(raw) {
+      return String(raw || "")
+        .trim()
+        .toLowerCase()
+        .replace(/[\s,]+/g, "_")
+        .replace(/^_+|_+$/g, "");
+    }
+
+    function regionTagValue(tag) {
+      return typeof tag === "string" ? tag : (tag && tag.tag) || "";
+    }
+
+    function regionIndexLabel(index) {
+      return index >= 0 && index < REGION_CIRCLED.length ? REGION_CIRCLED[index] : "(" + (index + 1) + ")";
+    }
+
+    function regionSnapshot() {
+      return JSON.stringify({
+        canvas: regionDoc.canvas,
+        global: regionDoc.global,
+        regions: regionDoc.regions,
+      });
+    }
+
+    function regionSanitizeRegion(raw) {
+      if (!raw || typeof raw !== "object") return null;
+      const bbox = regionClampBox(raw.bbox);
+      if (!bbox) return null;
+      const nl = raw.nl || {};
+      const tags = [];
+      (Array.isArray(raw.tags) ? raw.tags : []).forEach((tag) => {
+        if (typeof tag === "string") {
+          const name = normalizeTag(tag);
+          if (name) tags.push({ tag: name, weight: 1, source: "draft" });
+        } else if (tag && tag.tag) {
+          const name = normalizeTag(tag.tag);
+          if (name) tags.push({ tag: name, weight: Number(tag.weight) || 1, source: String(tag.source || "draft") });
+        }
+      });
+      return {
+        id: typeof raw.id === "string" && raw.id ? raw.id : regionNewId(),
+        bbox: bbox,
+        role: raw.role === "text" ? "text" : "obj",
+        literalText: typeof raw.literalText === "string" ? raw.literalText : "",
+        nl: { zh: String(nl.zh || ""), en: String(nl.en || "") },
+        tags: tags,
+        muted: !!raw.muted,
+        linkedTo: raw.linkedTo ? String(raw.linkedTo) : null,
+      };
+    }
+
+    function regionLoadDraft() {
+      let text = null;
+      try {
+        text = localStorage.getItem(REGION_DRAFT_KEY);
+      } catch (err) {
+        return;
+      }
+      if (!text) return;
+      let data = null;
+      try {
+        data = JSON.parse(text);
+      } catch (err) {
+        return;
+      }
+      if (!data || !Array.isArray(data.regions)) return;
+      const canvas = data.canvas || {};
+      const global = data.global || {};
+      regionDoc = {
+        schema: REGION_SCHEMA,
+        canvas: {
+          w: regionClamp(Math.round(Number(canvas.w) || 1024), 16, REGION_MAX_CANVAS),
+          h: regionClamp(Math.round(Number(canvas.h) || 1024), 16, REGION_MAX_CANVAS),
+        },
+        global: {
+          caption_zh: String(global.caption_zh || ""),
+          caption_en: String(global.caption_en || ""),
+        },
+        regions: data.regions.map(regionSanitizeRegion).filter(Boolean),
+      };
+      regionImageName = "";
+      if (regionDoc.regions.length) {
+        const note = data.imageName ? "（上次参考图：" + data.imageName + "）" : "";
+        regionImageStatus("草稿已恢复：框与文本已保留；参考图不持久化，请重新载入" + note, false);
+      }
+    }
+
+    function regionSaveDraft() {
+      try {
+        localStorage.setItem(REGION_DRAFT_KEY, JSON.stringify({
+          schema: REGION_SCHEMA,
+          savedAt: new Date().toISOString(),
+          imageName: regionImageName,
+          canvas: regionDoc.canvas,
+          global: regionDoc.global,
+          regions: regionDoc.regions,
+        }));
+      } catch (err) {
+        // 隐私模式 / 配额不足时忽略
+      }
+    }
+
+    function regionScheduleSave() {
+      clearTimeout(regionSaveTimer);
+      regionSaveTimer = setTimeout(regionSaveDraft, 400);
+    }
+
+    function regionRefreshHint() {
+      const w = regionDoc.canvas.w;
+      const h = regionDoc.canvas.h;
+      let text = "画布 " + w + "×" + h;
+      if (regionImage && regionImage.naturalWidth) {
+        text += " · 参考图 " + regionImage.naturalWidth + "×" + regionImage.naturalHeight + "（按画布比例拉伸显示）";
+      }
+      if (w % 16 !== 0 || h % 16 !== 0) {
+        text += " · 注意：宽高不是 16 的倍数，MOSS 导出会被拒绝";
+      }
+      $("regionCanvasHint").textContent = text;
+    }
+
+    function regionDrawBase() {
+      const base = $("regionBase");
+      const ctx = base.getContext("2d");
+      const w = base.width;
+      const h = base.height;
+      ctx.clearRect(0, 0, w, h);
+      ctx.fillStyle = "#141416";
+      ctx.fillRect(0, 0, w, h);
+      if (regionImage && regionImage.complete && regionImage.naturalWidth) {
+        ctx.drawImage(regionImage, 0, 0, w, h);
+        return;
+      }
+      ctx.strokeStyle = "rgba(255,255,255,.055)";
+      ctx.lineWidth = 1;
+      const step = Math.max(32, Math.round(Math.max(w, h) / 16));
+      for (let x = step; x < w; x += step) {
+        ctx.beginPath();
+        ctx.moveTo(x + 0.5, 0);
+        ctx.lineTo(x + 0.5, h);
+        ctx.stroke();
+      }
+      for (let y = step; y < h; y += step) {
+        ctx.beginPath();
+        ctx.moveTo(0, y + 0.5);
+        ctx.lineTo(w, y + 0.5);
+        ctx.stroke();
+      }
+      ctx.strokeStyle = "rgba(255,255,255,.14)";
+      ctx.strokeRect(0.5, 0.5, w - 1, h - 1);
+    }
+
+    function regionHandlePoint(b, name, w, h) {
+      const x1 = b[0] * w;
+      const x2 = b[2] * w;
+      const y1 = b[1] * h;
+      const y2 = b[3] * h;
+      const cx = (x1 + x2) / 2;
+      const cy = (y1 + y2) / 2;
+      if (name === "nw") return { x: x1, y: y1 };
+      if (name === "n") return { x: cx, y: y1 };
+      if (name === "ne") return { x: x2, y: y1 };
+      if (name === "e") return { x: x2, y: cy };
+      if (name === "se") return { x: x2, y: y2 };
+      if (name === "s") return { x: cx, y: y2 };
+      if (name === "sw") return { x: x1, y: y2 };
+      return { x: x1, y: cy };
+    }
+
+    function regionHandleCursor(name) {
+      if (name === "n" || name === "s") return "ns-resize";
+      if (name === "e" || name === "w") return "ew-resize";
+      if (name === "nw" || name === "se") return "nwse-resize";
+      return "nesw-resize";
+    }
+
+    function regionRender() {
+      const draw = $("regionDraw");
+      if (!draw) return;
+      const ctx = draw.getContext("2d");
+      const w = draw.width || regionDoc.canvas.w;
+      const h = draw.height || regionDoc.canvas.h;
+      if (!w || !h) return;
+      ctx.clearRect(0, 0, w, h);
+      const rect = draw.getBoundingClientRect();
+      const sf = rect.width > 0 ? w / rect.width : 1;
+      const line = Math.max(1, 1.5 * sf);
+
+      regionDoc.regions.forEach((region, index) => {
+        const b = regionClampBox(region.bbox);
+        if (!b) return;
+        const x = b[0] * w;
+        const y = b[1] * h;
+        const bw = (b[2] - b[0]) * w;
+        const bh = (b[3] - b[1]) * h;
+        const selected = regionSelection.has(region.id);
+        ctx.save();
+        ctx.fillStyle = region.muted
+          ? "rgba(139,139,148,.06)"
+          : (selected ? "rgba(240,136,62,.16)" : "rgba(59,110,165,.12)");
+        ctx.fillRect(x, y, bw, bh);
+        ctx.lineWidth = selected ? line * 2 : line;
+        ctx.setLineDash(region.muted ? [4 * sf, 4 * sf] : []);
+        ctx.strokeStyle = region.muted
+          ? "#8b8b94"
+          : (selected ? "#f0883e" : (region.role === "text" ? "#4caf50" : "#7aa2f7"));
+        ctx.strokeRect(x, y, bw, bh);
+        ctx.setLineDash([]);
+
+        const label = regionIndexLabel(index);
+        const fontSize = Math.max(10 * sf, Math.min(18 * sf, Math.max(10 * sf, Math.min(bw, bh) * 0.35)));
+        ctx.font = "600 " + fontSize + 'px "Segoe UI", system-ui, sans-serif';
+        const textWidth = ctx.measureText(label).width;
+        const padX = fontSize * 0.28;
+        const padY = fontSize * 0.18;
+        const badgeX = Math.max(0, Math.min(w - textWidth - padX * 2, x + line));
+        const badgeY = Math.max(0, Math.min(h - fontSize - padY * 2, y + line));
+        ctx.fillStyle = "rgba(20,20,22,.82)";
+        ctx.fillRect(badgeX, badgeY, textWidth + padX * 2, fontSize + padY * 2);
+        ctx.fillStyle = region.muted ? "#8b8b94" : (selected ? "#f0883e" : "#e6e6ea");
+        ctx.textBaseline = "top";
+        ctx.fillText(label, badgeX + padX, badgeY + padY);
+        ctx.restore();
+      });
+
+      if (regionTempBox) {
+        const b = regionTempBox;
+        ctx.save();
+        ctx.strokeStyle = "#f0883e";
+        ctx.lineWidth = line * 1.5;
+        ctx.setLineDash([6 * sf, 4 * sf]);
+        ctx.strokeRect(b[0] * w, b[1] * h, (b[2] - b[0]) * w, (b[3] - b[1]) * h);
+        ctx.restore();
+      }
+
+      if (regionSelection.size === 1 && regionPrimaryId) {
+        const region = regionById(regionPrimaryId);
+        const b = region ? regionClampBox(region.bbox) : null;
+        if (b) {
+          const hs = 9 * sf;
+          ctx.save();
+          ctx.fillStyle = "#f0883e";
+          ctx.strokeStyle = "#141416";
+          ctx.lineWidth = line;
+          REGION_HANDLES.forEach((name) => {
+            const p = regionHandlePoint(b, name, w, h);
+            ctx.fillRect(p.x - hs / 2, p.y - hs / 2, hs, hs);
+            ctx.strokeRect(p.x - hs / 2, p.y - hs / 2, hs, hs);
+          });
+          ctx.restore();
+        }
+      }
+    }
+
+    function regionApplyCanvasSize() {
+      const w = regionClamp(Math.round(Number(regionDoc.canvas.w) || 1024), 16, REGION_MAX_CANVAS);
+      const h = regionClamp(Math.round(Number(regionDoc.canvas.h) || 1024), 16, REGION_MAX_CANVAS);
+      regionDoc.canvas = { w: w, h: h };
+      const base = $("regionBase");
+      const draw = $("regionDraw");
+      if (base.width !== w || base.height !== h) {
+        base.width = w;
+        base.height = h;
+      }
+      if (draw.width !== w || draw.height !== h) {
+        draw.width = w;
+        draw.height = h;
+      }
+      regionDrawBase();
+      regionRefreshHint();
+      regionRender();
+    }
+
+    function regionSyncGlobalInputs() {
+      $("regionCanvasW").value = regionDoc.canvas.w;
+      $("regionCanvasH").value = regionDoc.canvas.h;
+      $("regionCaptionZh").value = regionDoc.global.caption_zh || "";
+      $("regionCaptionEn").value = regionDoc.global.caption_en || "";
+    }
+
+    function regionSetCanvasDimension(key, raw, input) {
+      const parsed = Number(raw);
+      if (!isFinite(parsed)) {
+        if (input) input.value = regionDoc.canvas[key];
+        return;
+      }
+      const value = regionClamp(Math.round(parsed), 16, REGION_MAX_CANVAS);
+      if (regionDoc.canvas[key] === value) {
+        if (input) input.value = value;
+        return;
+      }
+      const before = regionSnapshot();
+      regionDoc.canvas[key] = value;
+      regionCommitHistory(before);
+      regionApplyCanvasSize();
+      if (input) input.value = value;
+      regionUpdateTokens();
+      regionScheduleSave();
+    }
+
+    function regionRefreshBBoxInfo(region) {
+      const target = region || regionPrimaryRegion();
+      if (!target) return;
+      const b = regionClampBox(target.bbox);
+      if (!b) return;
+      $("regionBBoxInfo").textContent = "bbox " + b.map((v) => v.toFixed(3)).join(", ");
+    }
+
+    function regionRenderChips() {
+      const host = $("regionChips");
+      host.innerHTML = "";
+      const region = regionPrimaryRegion();
+      if (!region) return;
+      const tags = Array.isArray(region.tags) ? region.tags : [];
+      tags.forEach((tag, index) => {
+        const chip = document.createElement("span");
+        chip.className = "chip";
+        chip.draggable = true;
+        chip.setAttribute("data-region-tag-index", String(index));
+        const handle = document.createElement("span");
+        handle.className = "drag-handle";
+        handle.textContent = "✥";
+        handle.title = "拖拽排序";
+        chip.appendChild(handle);
+        const label = document.createElement("span");
+        label.className = "chip-en";
+        label.textContent = regionTagValue(tag);
+        chip.appendChild(label);
+        const del = document.createElement("button");
+        del.className = "chip-del";
+        del.textContent = "×";
+        del.addEventListener("click", () => regionRemoveTag(index));
+        chip.appendChild(del);
+        host.appendChild(chip);
+      });
+    }
+
+    function regionRefreshSelectionFields() {
+      const region = regionPrimaryRegion();
+      if (!region) return;
+      regionFieldGuard = true;
+      $("regionRole").value = region.role === "text" ? "text" : "obj";
+      $("regionLiteral").value = region.literalText || "";
+      $("regionNlZh").value = (region.nl || {}).zh || "";
+      $("regionNlEn").value = (region.nl || {}).en || "";
+      $("regionMuted").checked = !!region.muted;
+      $("regionLiteralWrap").style.display = region.role === "text" ? "block" : "none";
+      regionRefreshBBoxInfo(region);
+      regionRenderChips();
+      regionFieldGuard = false;
+    }
+
+    function regionUpdateSelectionPanel() {
+      const region = regionPrimaryRegion();
+      const hasSelection = regionSelection.size > 0 && !!region;
+      $("regionProps").style.display = hasSelection ? "block" : "none";
+      $("regionGlobal").style.display = hasSelection ? "none" : "block";
+      if (!hasSelection) {
+        $("regionSelTitle").textContent = "选中框";
+        return;
+      }
+      const index = regionDoc.regions.indexOf(region);
+      $("regionSelTitle").textContent = regionSelection.size > 1
+        ? "已选 " + regionSelection.size + " 个 · 属性编辑 " + regionIndexLabel(index)
+        : "选中框 " + regionIndexLabel(index);
+      regionRefreshSelectionFields();
+    }
+
+    function regionUpdateUndoButtons() {
+      const undo = $("regionUndo");
+      const redo = $("regionRedo");
+      if (undo) undo.disabled = regionUndoStack.length === 0;
+      if (redo) redo.disabled = regionRedoStack.length === 0;
+    }
+
+    function regionPushUndo(snapshot) {
+      regionUndoStack.push(snapshot);
+      if (regionUndoStack.length > 50) regionUndoStack.shift();
+      regionRedoStack.length = 0;
+      regionUpdateUndoButtons();
+    }
+
+    function regionCommitHistory(before) {
+      if (typeof before !== "string" || before === regionSnapshot()) return false;
+      regionPushUndo(before);
+      return true;
+    }
+
+    function regionFieldBegin() {
+      if (regionFieldGuard) return;
+      if (regionFieldBase === null) regionFieldBase = regionSnapshot();
+    }
+
+    function regionFieldEnd() {
+      if (regionFieldGuard) return;
+      const before = regionFieldBase;
+      regionFieldBase = null;
+      if (before !== null) regionCommitHistory(before);
+    }
+
+    function regionRestore(snapshot) {
+      let data = null;
+      try {
+        data = JSON.parse(snapshot);
+      } catch (err) {
+        return;
+      }
+      const canvas = data.canvas || {};
+      const global = data.global || {};
+      regionDoc.canvas = {
+        w: regionClamp(Math.round(Number(canvas.w) || 1024), 16, REGION_MAX_CANVAS),
+        h: regionClamp(Math.round(Number(canvas.h) || 1024), 16, REGION_MAX_CANVAS),
+      };
+      regionDoc.global = {
+        caption_zh: String(global.caption_zh || ""),
+        caption_en: String(global.caption_en || ""),
+      };
+      regionDoc.regions = Array.isArray(data.regions) ? data.regions.map(regionSanitizeRegion).filter(Boolean) : [];
+      regionSelection = new Set(Array.from(regionSelection).filter((id) => regionDoc.regions.some((r) => r.id === id)));
+      if (!regionDoc.regions.some((r) => r.id === regionPrimaryId)) {
+        regionPrimaryId = regionSelection.size ? Array.from(regionSelection)[0] : null;
+      }
+      regionApplyCanvasSize();
+      regionSyncGlobalInputs();
+      regionUpdateSelectionPanel();
+      regionUpdateTokens();
+      regionScheduleSave();
+    }
+
+    function regionUndoAction() {
+      if (!regionUndoStack.length) return;
+      regionRedoStack.push(regionSnapshot());
+      if (regionRedoStack.length > 50) regionRedoStack.shift();
+      const snapshot = regionUndoStack.pop();
+      regionRestore(snapshot);
+      regionUpdateUndoButtons();
+    }
+
+    function regionRedoAction() {
+      if (!regionRedoStack.length) return;
+      regionUndoStack.push(regionSnapshot());
+      if (regionUndoStack.length > 50) regionUndoStack.shift();
+      const snapshot = regionRedoStack.pop();
+      regionRestore(snapshot);
+      regionUpdateUndoButtons();
+    }
+
+    function regionDeleteSelected() {
+      if (!regionSelection.size) return;
+      const before = regionSnapshot();
+      regionDoc.regions = regionDoc.regions.filter((r) => !regionSelection.has(r.id));
+      regionSelection.clear();
+      regionPrimaryId = null;
+      regionCommitHistory(before);
+      regionUpdateSelectionPanel();
+      regionRender();
+      regionUpdateTokens();
+      regionScheduleSave();
+    }
+
+    function regionAddTag(raw) {
+      const region = regionPrimaryRegion();
+      if (!region) return;
+      const tag = normalizeTag(raw);
+      if (!tag) return;
+      if (!Array.isArray(region.tags)) region.tags = [];
+      if (region.tags.some((t) => regionTagValue(t) === tag)) return;
+      const before = regionSnapshot();
+      region.tags.push({ tag: tag, weight: 1, source: "manual" });
+      regionCommitHistory(before);
+      regionRenderChips();
+      regionUpdateTokens();
+      regionScheduleSave();
+    }
+
+    function regionRemoveTag(index) {
+      const region = regionPrimaryRegion();
+      if (!region || !Array.isArray(region.tags)) return;
+      const before = regionSnapshot();
+      region.tags.splice(index, 1);
+      regionCommitHistory(before);
+      regionRenderChips();
+      regionUpdateTokens();
+      regionScheduleSave();
+    }
+
+    function regionReorderTag(from, to) {
+      const region = regionPrimaryRegion();
+      if (!region || !Array.isArray(region.tags)) return;
+      if (from === to || from < 0 || to < 0 || from >= region.tags.length || to >= region.tags.length) return;
+      const before = regionSnapshot();
+      const moved = region.tags.splice(from, 1)[0];
+      region.tags.splice(to, 0, moved);
+      regionCommitHistory(before);
+      regionRenderChips();
+      regionUpdateTokens();
+      regionScheduleSave();
+    }
+
+    function regionPoint(e) {
+      const draw = $("regionDraw");
+      const rect = draw.getBoundingClientRect();
+      if (!rect.width || !rect.height) return null;
+      return {
+        x: (e.clientX - rect.left) * draw.width / rect.width,
+        y: (e.clientY - rect.top) * draw.height / rect.height,
+      };
+    }
+
+    function regionNormPoint(point) {
+      return {
+        x: regionClamp(point.x / regionDoc.canvas.w, 0, 1),
+        y: regionClamp(point.y / regionDoc.canvas.h, 0, 1),
+      };
+    }
+
+    function regionHandleAt(point) {
+      if (regionSelection.size !== 1 || !regionPrimaryId) return null;
+      const region = regionById(regionPrimaryId);
+      const b = region ? regionClampBox(region.bbox) : null;
+      if (!b) return null;
+      const draw = $("regionDraw");
+      const rect = draw.getBoundingClientRect();
+      const sf = rect.width > 0 ? draw.width / rect.width : 1;
+      const tolerance = 7 * sf;
+      for (const name of REGION_HANDLES) {
+        const hp = regionHandlePoint(b, name, draw.width, draw.height);
+        if (Math.abs(point.x - hp.x) <= tolerance && Math.abs(point.y - hp.y) <= tolerance) return name;
+      }
+      return null;
+    }
+
+    function regionHitTest(normPoint) {
+      for (let i = regionDoc.regions.length - 1; i >= 0; i -= 1) {
+        const region = regionDoc.regions[i];
+        const b = regionClampBox(region.bbox);
+        if (b && normPoint.x >= b[0] && normPoint.x <= b[2] && normPoint.y >= b[1] && normPoint.y <= b[3]) {
+          return region;
+        }
+      }
+      return null;
+    }
+
+    function regionBoxFromPoints(a, b) {
+      return [
+        Math.min(a.x, b.x),
+        Math.min(a.y, b.y),
+        Math.max(a.x, b.x),
+        Math.max(a.y, b.y),
+      ];
+    }
+
+    function regionPointerDown(e) {
+      if (e.button !== 0) return;
+      const point = regionPoint(e);
+      if (!point) return;
+      e.preventDefault();
+      const draw = $("regionDraw");
+      if (draw.setPointerCapture) {
+        try {
+          draw.setPointerCapture(e.pointerId);
+        } catch (err) {
+          // ignore
+        }
+      }
+      const normPoint = regionNormPoint(point);
+
+      const handle = regionHandleAt(point);
+      if (handle) {
+        const region = regionPrimaryRegion();
+        const b = region ? regionClampBox(region.bbox) : null;
+        if (region && b) {
+          const before = regionSnapshot();
+          regionPushUndo(before);
+          regionGesture = { mode: "resize", handle: handle, id: region.id, start: normPoint, startBBox: b.slice(), snapshot: before };
+        }
+        return;
+      }
+
+      const hit = regionHitTest(normPoint);
+      if (hit) {
+        if (e.ctrlKey || e.metaKey) {
+          if (regionSelection.has(hit.id)) {
+            regionSelection.delete(hit.id);
+            if (regionPrimaryId === hit.id) {
+              regionPrimaryId = regionSelection.size ? Array.from(regionSelection)[regionSelection.size - 1] : null;
+            }
+          } else {
+            regionSelection.add(hit.id);
+            regionPrimaryId = hit.id;
+          }
+          regionUpdateSelectionPanel();
+          regionRender();
+          return;
+        }
+        if (!regionSelection.has(hit.id)) {
+          regionSelection = new Set([hit.id]);
+          regionPrimaryId = hit.id;
+          regionUpdateSelectionPanel();
+        }
+        const starts = {};
+        regionSelection.forEach((id) => {
+          const r = regionById(id);
+          const b = r ? regionClampBox(r.bbox) : null;
+          if (b) starts[id] = b.slice();
+        });
+        const before = regionSnapshot();
+        regionPushUndo(before);
+        regionGesture = { mode: "move", start: normPoint, starts: starts, snapshot: before };
+        return;
+      }
+
+      if (!(e.ctrlKey || e.metaKey)) {
+        regionSelection.clear();
+        regionPrimaryId = null;
+      }
+      regionUpdateSelectionPanel();
+      regionGesture = { mode: "create", start: normPoint };
+      regionTempBox = [normPoint.x, normPoint.y, normPoint.x, normPoint.y];
+      regionRender();
+    }
+
+    function regionPointerMove(e) {
+      const gesture = regionGesture;
+      const point = regionPoint(e);
+      if (!point) return;
+      const normPoint = regionNormPoint(point);
+      const draw = $("regionDraw");
+
+      if (!gesture) {
+        const handle = regionHandleAt(point);
+        if (handle) {
+          draw.style.cursor = regionHandleCursor(handle);
+        } else if (regionHitTest(normPoint)) {
+          draw.style.cursor = "move";
+        } else {
+          draw.style.cursor = "crosshair";
+        }
+        return;
+      }
+
+      e.preventDefault();
+      if (gesture.mode === "create") {
+        regionTempBox = regionBoxFromPoints(gesture.start, normPoint);
+        regionRender();
+        return;
+      }
+
+      if (gesture.mode === "move") {
+        let dx = normPoint.x - gesture.start.x;
+        let dy = normPoint.y - gesture.start.y;
+        let minDx = -1;
+        let maxDx = 1;
+        let minDy = -1;
+        let maxDy = 1;
+        Object.values(gesture.starts).forEach((b) => {
+          minDx = Math.max(minDx, -b[0]);
+          maxDx = Math.min(maxDx, 1 - b[2]);
+          minDy = Math.max(minDy, -b[1]);
+          maxDy = Math.min(maxDy, 1 - b[3]);
+        });
+        dx = regionClamp(dx, minDx, maxDx);
+        dy = regionClamp(dy, minDy, maxDy);
+        Object.entries(gesture.starts).forEach(([id, b]) => {
+          const region = regionById(id);
+          if (!region) return;
+          region.bbox = [b[0] + dx, b[1] + dy, b[2] + dx, b[3] + dy];
+        });
+        regionRefreshBBoxInfo();
+        regionRender();
+        regionScheduleSave();
+        return;
+      }
+
+      if (gesture.mode === "resize") {
+        const region = regionById(gesture.id);
+        if (!region) return;
+        const b = gesture.startBBox;
+        let x1 = b[0];
+        let y1 = b[1];
+        let x2 = b[2];
+        let y2 = b[3];
+        if (gesture.handle.indexOf("w") >= 0) x1 = normPoint.x;
+        if (gesture.handle.indexOf("e") >= 0) x2 = normPoint.x;
+        if (gesture.handle.indexOf("n") >= 0) y1 = normPoint.y;
+        if (gesture.handle.indexOf("s") >= 0) y2 = normPoint.y;
+        let nx1 = Math.min(x1, x2);
+        let nx2 = Math.max(x1, x2);
+        let ny1 = Math.min(y1, y2);
+        let ny2 = Math.max(y1, y2);
+        if (nx2 - nx1 < REGION_MIN_SIZE) {
+          if (gesture.handle.indexOf("w") >= 0) nx1 = nx2 - REGION_MIN_SIZE;
+          else nx2 = nx1 + REGION_MIN_SIZE;
+        }
+        if (ny2 - ny1 < REGION_MIN_SIZE) {
+          if (gesture.handle.indexOf("n") >= 0) ny1 = ny2 - REGION_MIN_SIZE;
+          else ny2 = ny1 + REGION_MIN_SIZE;
+        }
+        region.bbox = [
+          regionClamp(nx1, 0, 1),
+          regionClamp(ny1, 0, 1),
+          regionClamp(nx2, 0, 1),
+          regionClamp(ny2, 0, 1),
+        ];
+        regionRefreshBBoxInfo();
+        regionRender();
+        regionScheduleSave();
+      }
+    }
+
+    function regionPointerUp() {
+      const gesture = regionGesture;
+      if (!gesture) return;
+      regionGesture = null;
+      $("regionDraw").style.cursor = "crosshair";
+
+      if (gesture.mode === "create") {
+        const box = regionTempBox;
+        regionTempBox = null;
+        const bigEnough = box
+          && (box[2] - box[0]) * regionDoc.canvas.w >= 4
+          && (box[3] - box[1]) * regionDoc.canvas.h >= 4;
+        if (bigEnough) {
+          const before = regionSnapshot();
+          const region = {
+            id: regionNewId(),
+            bbox: regionClampBox(box),
+            role: "obj",
+            literalText: "",
+            nl: { zh: "", en: "" },
+            tags: [],
+            muted: false,
+            linkedTo: null,
+          };
+          regionDoc.regions.push(region);
+          regionSelection = new Set([region.id]);
+          regionPrimaryId = region.id;
+          regionCommitHistory(before);
+          regionUpdateSelectionPanel();
+        } else {
+          regionSelection.clear();
+          regionPrimaryId = null;
+          regionUpdateSelectionPanel();
+        }
+        regionRender();
+        regionUpdateTokens();
+        regionScheduleSave();
+        return;
+      }
+
+      if (gesture.snapshot && gesture.snapshot === regionSnapshot()
+        && regionUndoStack.length && regionUndoStack[regionUndoStack.length - 1] === gesture.snapshot) {
+        regionUndoStack.pop();
+        regionUpdateUndoButtons();
+      }
+      regionUpdateTokens();
+      regionScheduleSave();
+    }
+
+    function regionExportDoc() {
+      return {
+        schema: REGION_SCHEMA,
+        canvas: { w: regionDoc.canvas.w, h: regionDoc.canvas.h },
+        global: { caption_zh: regionDoc.global.caption_zh, caption_en: regionDoc.global.caption_en },
+        regions: regionDoc.regions.map((r) => ({
+          id: r.id,
+          bbox: (r.bbox || []).slice(),
+          role: r.role,
+          literalText: r.literalText,
+          nl: { zh: (r.nl || {}).zh || "", en: (r.nl || {}).en || "" },
+          tags: (r.tags || []).map((t) => (
+            typeof t === "string"
+              ? { tag: t, weight: 1, source: "manual" }
+              : { tag: t.tag, weight: t.weight, source: t.source }
+          )),
+          muted: !!r.muted,
+          linkedTo: r.linkedTo || null,
+        })),
+        image: regionImageName || "",
+      };
+    }
+
+    function regionExportStatus(message, isError) {
+      const el = $("regionExportStatus");
+      el.textContent = message;
+      el.style.color = isError ? "#f85149" : "";
+    }
+
+    function regionExportPayload(kind) {
+      const adapters = window.RegionAdapters;
+      const doc = regionExportDoc();
+      if (kind === "moss") {
+        return { text: JSON.stringify(adapters.toMoss(doc), null, 2), filename: "region-moss.json" };
+      }
+      if (kind === "ideogram") {
+        return { text: JSON.stringify(adapters.toIdeogram(doc), null, 2), filename: "region-ideogram.json" };
+      }
+      if (kind === "jsonl") {
+        const perRegion = $("regionJsonlPerRegion").checked;
+        return {
+          text: adapters.toGenericJsonl(doc, perRegion),
+          filename: perRegion ? "region-generic-per-region.jsonl" : "region-generic.jsonl",
+        };
+      }
+      return { text: adapters.toTagLines(doc), filename: "region-taglines.txt" };
+    }
+
+    function regionDownload(filename, text) {
+      const type = filename.endsWith(".json")
+        ? "application/json;charset=utf-8"
+        : (filename.endsWith(".jsonl") ? "application/x-ndjson;charset=utf-8" : "text/plain;charset=utf-8");
+      const blob = new Blob([text], { type: type });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    async function regionCopyText(text) {
+      try {
+        if (!navigator.clipboard || !navigator.clipboard.writeText) throw new Error("剪贴板不可用");
+        await navigator.clipboard.writeText(text);
+        regionExportStatus("已复制到剪贴板");
+      } catch (err) {
+        const area = document.createElement("textarea");
+        area.value = text;
+        area.style.cssText = "position:fixed; left:-9999px; top:0;";
+        document.body.appendChild(area);
+        area.select();
+        let ok = false;
+        try {
+          ok = document.execCommand("copy");
+        } catch (copyErr) {
+          ok = false;
+        }
+        area.remove();
+        regionExportStatus(ok ? "已复制到剪贴板" : "复制失败：" + String((err && err.message) || err), !ok);
+      }
+    }
+
+    async function regionRunExport(kind, action) {
+      let payload = null;
+      try {
+        payload = regionExportPayload(kind);
+      } catch (err) {
+        regionExportStatus(err.message || String(err), true);
+        return;
+      }
+      if (action === "copy") {
+        await regionCopyText(payload.text);
+      } else if (action === "download") {
+        regionDownload(payload.filename, payload.text);
+        regionExportStatus("已下载 " + payload.filename);
+      } else if (action === "send") {
+        $("positiveBox").value = payload.text;
+        updateCounters();
+        regionExportStatus("已写入正向提示词框（" + payload.text.length + " 字符）");
+      }
+    }
+
+    function regionUpdateTokens() {
+      const host = $("regionTokenInfo");
+      if (!host) return;
+      const adapters = window.RegionAdapters;
+      const doc = regionExportDoc();
+      const parts = [];
+      try {
+        parts.push("MOSS ≈ " + tokenEstimate(JSON.stringify(adapters.toMoss(doc))) + " tok");
+      } catch (err) {
+        parts.push("MOSS：画布宽高需为 16 的倍数");
+      }
+      try {
+        parts.push("Ideogram ≈ " + tokenEstimate(JSON.stringify(adapters.toIdeogram(doc))) + " tok");
+      } catch (err) {
+        // ignore
+      }
+      parts.push("JSONL ≈ " + tokenEstimate(adapters.toGenericJsonl(doc, $("regionJsonlPerRegion").checked)) + " tok");
+      parts.push("Tag 行 ≈ " + tokenEstimate(adapters.toTagLines(doc)) + " tok");
+      host.textContent = parts.join(" · ");
+    }
+
+    function regionImageStatus(message, isError) {
+      const el = $("regionImageStatus");
+      el.textContent = message;
+      el.style.color = isError ? "#f85149" : "";
+    }
+
+    function regionLoadImageFile(file) {
+      if (!file) return;
+      if (file.type && file.type.indexOf("image/") !== 0) {
+        regionImageStatus("请选择图片文件", true);
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        const img = new Image();
+        img.onload = () => {
+          regionImage = img;
+          regionImageName = file.name || "pasted.png";
+          regionDrawBase();
+          regionRefreshHint();
+          regionRender();
+          regionImageStatus("已载入：" + regionImageName + "（" + img.naturalWidth + "×" + img.naturalHeight + "）；参考图不写入草稿", false);
+        };
+        img.onerror = () => regionImageStatus("图片解码失败", true);
+        img.src = String(reader.result);
+      };
+      reader.onerror = () => regionImageStatus("读取文件失败", true);
+      reader.readAsDataURL(file);
+    }
+
+    function regionClearImage() {
+      regionImage = null;
+      regionImageName = "";
+      regionDrawBase();
+      regionRefreshHint();
+      regionRender();
+      regionImageStatus("未载入参考图（仍可在默认画布上画框）", false);
+      regionScheduleSave();
+    }
+
+    function regionBindUi() {
+      $("regionFile").addEventListener("change", (e) => {
+        const file = e.target.files && e.target.files[0];
+        regionLoadImageFile(file);
+      });
+
+      const dropZone = $("regionDropZone");
+      const stage = $("regionStage");
+      [dropZone, stage].forEach((el) => {
+        el.addEventListener("dragover", (e) => {
+          e.preventDefault();
+          if (el === dropZone) dropZone.style.borderColor = "var(--accent)";
+        });
+        el.addEventListener("dragleave", () => {
+          if (el === dropZone) dropZone.style.borderColor = "var(--border)";
+        });
+        el.addEventListener("drop", (e) => {
+          e.preventDefault();
+          if (el === dropZone) dropZone.style.borderColor = "var(--border)";
+          const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+          regionLoadImageFile(file);
+        });
+      });
+
+      function pasteImage(e) {
+        const target = e.target;
+        const editable = target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
+        if (editable) return;
+        const items = (e.clipboardData || {}).items || [];
+        for (const item of items) {
+          if (item.type && item.type.indexOf("image/") === 0) {
+            e.preventDefault();
+            regionLoadImageFile(item.getAsFile());
+            return;
+          }
+        }
+      }
+      dropZone.addEventListener("paste", pasteImage);
+      document.addEventListener("paste", (e) => {
+        if (e.defaultPrevented) return;
+        const panel = $("panel-region");
+        if (!panel || panel.style.display === "none") return;
+        pasteImage(e);
+      });
+
+      $("regionClearImage").addEventListener("click", regionClearImage);
+      $("regionUndo").addEventListener("click", regionUndoAction);
+      $("regionRedo").addEventListener("click", regionRedoAction);
+      $("regionDeleteAll").addEventListener("click", regionDeleteSelected);
+      $("regionDeleteBtn").addEventListener("click", regionDeleteSelected);
+
+      const draw = $("regionDraw");
+      draw.addEventListener("pointerdown", regionPointerDown);
+      draw.addEventListener("pointermove", regionPointerMove);
+      draw.addEventListener("pointerup", regionPointerUp);
+      draw.addEventListener("pointercancel", regionPointerUp);
+      draw.addEventListener("pointerleave", () => {
+        if (!regionGesture) draw.style.cursor = "crosshair";
+      });
+
+      $("regionCanvasW").addEventListener("change", () => {
+        regionSetCanvasDimension("w", $("regionCanvasW").value, $("regionCanvasW"));
+      });
+      $("regionCanvasH").addEventListener("change", () => {
+        regionSetCanvasDimension("h", $("regionCanvasH").value, $("regionCanvasH"));
+      });
+
+      ["regionCaptionZh", "regionCaptionEn"].forEach((id) => {
+        const el = $(id);
+        el.addEventListener("focus", regionFieldBegin);
+        el.addEventListener("blur", regionFieldEnd);
+        el.addEventListener("input", () => {
+          if (regionFieldGuard) return;
+          regionDoc.global[id === "regionCaptionZh" ? "caption_zh" : "caption_en"] = el.value;
+          regionUpdateTokens();
+          regionScheduleSave();
+        });
+      });
+
+      ["regionLiteral", "regionNlZh", "regionNlEn"].forEach((id) => {
+        const el = $(id);
+        el.addEventListener("focus", regionFieldBegin);
+        el.addEventListener("blur", regionFieldEnd);
+      });
+
+      $("regionLiteral").addEventListener("input", () => {
+        if (regionFieldGuard) return;
+        const region = regionPrimaryRegion();
+        if (!region) return;
+        region.literalText = $("regionLiteral").value;
+        regionUpdateTokens();
+        regionScheduleSave();
+      });
+
+      $("regionNlZh").addEventListener("input", () => {
+        if (regionFieldGuard) return;
+        const region = regionPrimaryRegion();
+        if (!region) return;
+        region.nl = region.nl || { zh: "", en: "" };
+        region.nl.zh = $("regionNlZh").value;
+        regionUpdateTokens();
+        regionScheduleSave();
+      });
+
+      $("regionNlEn").addEventListener("input", () => {
+        if (regionFieldGuard) return;
+        const region = regionPrimaryRegion();
+        if (!region) return;
+        region.nl = region.nl || { zh: "", en: "" };
+        region.nl.en = $("regionNlEn").value;
+        regionUpdateTokens();
+        regionScheduleSave();
+      });
+
+      $("regionRole").addEventListener("change", () => {
+        if (regionFieldGuard) return;
+        const region = regionPrimaryRegion();
+        if (!region) return;
+        const before = regionSnapshot();
+        region.role = $("regionRole").value === "text" ? "text" : "obj";
+        $("regionLiteralWrap").style.display = region.role === "text" ? "block" : "none";
+        regionCommitHistory(before);
+        regionRender();
+        regionUpdateTokens();
+        regionScheduleSave();
+      });
+
+      $("regionMuted").addEventListener("change", () => {
+        if (regionFieldGuard) return;
+        const region = regionPrimaryRegion();
+        if (!region) return;
+        const before = regionSnapshot();
+        region.muted = $("regionMuted").checked;
+        regionCommitHistory(before);
+        regionRender();
+        regionUpdateTokens();
+        regionScheduleSave();
+      });
+
+      $("regionTagAdd").addEventListener("click", () => {
+        const input = $("regionTagInput");
+        if (input.value.trim()) {
+          regionAddTag(input.value);
+          input.value = "";
+        }
+      });
+      $("regionTagInput").addEventListener("keydown", (e) => {
+        if (e.key !== "Enter") return;
+        e.preventDefault();
+        const input = $("regionTagInput");
+        if (input.value.trim()) {
+          regionAddTag(input.value);
+          input.value = "";
+        }
+      });
+
+      const chips = $("regionChips");
+      chips.addEventListener("dragstart", (e) => {
+        const chip = e.target.closest("[data-region-tag-index]");
+        if (!chip) return;
+        regionChipDrag = Number(chip.getAttribute("data-region-tag-index"));
+        chip.classList.add("is-dragging");
+        if (e.dataTransfer) {
+          e.dataTransfer.effectAllowed = "move";
+          e.dataTransfer.setData("text/plain", String(regionChipDrag));
+        }
+      });
+      chips.addEventListener("dragover", (e) => {
+        if (regionChipDrag === null) return;
+        const chip = e.target.closest("[data-region-tag-index]");
+        if (!chip) return;
+        e.preventDefault();
+        chips.querySelectorAll(".is-drop-target").forEach((node) => node.classList.remove("is-drop-target"));
+        chip.classList.add("is-drop-target");
+        if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+      });
+      chips.addEventListener("drop", (e) => {
+        if (regionChipDrag === null) return;
+        const chip = e.target.closest("[data-region-tag-index]");
+        if (chip) {
+          e.preventDefault();
+          regionReorderTag(regionChipDrag, Number(chip.getAttribute("data-region-tag-index")));
+        }
+        regionChipDrag = null;
+        chips.querySelectorAll(".is-drop-target, .is-dragging").forEach((node) => node.classList.remove("is-drop-target", "is-dragging"));
+      });
+      chips.addEventListener("dragend", () => {
+        regionChipDrag = null;
+        chips.querySelectorAll(".is-drop-target, .is-dragging").forEach((node) => node.classList.remove("is-drop-target", "is-dragging"));
+      });
+
+      document.querySelectorAll("[data-region-export]").forEach((button) => {
+        button.addEventListener("click", () => {
+          regionRunExport(button.getAttribute("data-region-export"), button.getAttribute("data-region-action"));
+        });
+      });
+      $("regionJsonlPerRegion").addEventListener("change", regionUpdateTokens);
+
+      if (window.ResizeObserver) {
+        const observer = new ResizeObserver(() => {
+          if ($("panel-region").style.display !== "none") regionRender();
+        });
+        observer.observe($("regionStage"));
+      }
+      window.addEventListener("resize", () => {
+        if ($("panel-region").style.display !== "none") regionRender();
+      });
+    }
+
+    document.addEventListener("keydown", (e) => {
+      const panel = $("panel-region");
+      if (!panel || panel.style.display === "none") return;
+      const target = e.target;
+      const tagName = target && target.tagName ? target.tagName.toLowerCase() : "";
+      if (tagName === "input" || tagName === "textarea" || tagName === "select" || (target && target.isContentEditable)) return;
+      const key = String(e.key || "").toLowerCase();
+      if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+        if (key === "z") {
+          e.preventDefault();
+          if (e.shiftKey) regionRedoAction();
+          else regionUndoAction();
+          return;
+        }
+        if (key === "y") {
+          e.preventDefault();
+          regionRedoAction();
+          return;
+        }
+      }
+      if (e.key === "Delete" || e.key === "Backspace") {
+        if (regionSelection.size) {
+          e.preventDefault();
+          regionDeleteSelected();
+        }
+      }
+    });
+
+    const regionTabButton = document.querySelector('.tab[data-tab="region"]');
+    if (regionTabButton) {
+      regionTabButton.addEventListener("click", () => {
+        setTimeout(() => {
+          regionRender();
+          regionRefreshHint();
+        }, 0);
+      });
+    }
+
+    regionBindUi();
+    regionLoadDraft();
+    regionSyncGlobalInputs();
+    regionApplyCanvasSize();
+    regionUpdateSelectionPanel();
+    regionUpdateTokens();
+    regionUpdateUndoButtons();
 
     // ── model profiles ──
     async function refreshProfiles() {
