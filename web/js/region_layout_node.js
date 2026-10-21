@@ -660,8 +660,29 @@ function installRegionEditor(node) {
         "min-height:12px;font-size:10px;opacity:.5;overflow:hidden;" +
         "text-overflow:ellipsis;white-space:nowrap;";
 
+    const globalLabel = document.createElement("div");
+    globalLabel.textContent = "全局描述（场景 / 风格 / 光线 / 镜头 / 氛围）";
+    globalLabel.style.cssText = "font-size:10px;opacity:.6;";
+
+    const globalInput = document.createElement("textarea");
+    globalInput.placeholder =
+        "A cluttered anime bedroom in a medium shot, soft even indoor lighting, cel-shaded anime style…";
+    globalInput.style.cssText =
+        "width:100%;height:40px;box-sizing:border-box;background:#1b1b1b;border:1px solid #444;" +
+        "border-radius:3px;color:#ddd;font:12px sans-serif;padding:4px 6px;resize:vertical;";
+    globalInput.addEventListener("input", () => {
+        doc.global.caption_en = globalInput.value;
+        writeDoc();
+    });
+
+    const globalRow = document.createElement("div");
+    globalRow.style.cssText = "display:flex;flex-direction:column;gap:3px;";
+    globalRow.appendChild(globalLabel);
+    globalRow.appendChild(globalInput);
+
     container.appendChild(toolbar);
     container.appendChild(canvas);
+    container.appendChild(globalRow);
     container.appendChild(editPromptButton);
     container.appendChild(roleRow);
     container.appendChild(enInput);
@@ -777,6 +798,7 @@ function installRegionEditor(node) {
             }
             const size = canvasSize();
             doc = sanitizeDoc(parsed, size.w, size.h);
+            globalInput.value = doc.global.caption_en || doc.global.caption_zh || "";
             if (selectedId && !doc.regions.some((region) => region.id === selectedId)) {
                 selectedId = null;
             }
