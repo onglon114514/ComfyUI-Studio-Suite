@@ -64,6 +64,240 @@ const RegionBoxBridge = (() => {
 window.RegionBoxBridge = RegionBoxBridge;
 // == REGION_BOX_BRIDGE_END ==
 
+// == REGION_LAYOUT_ARCHIVE_BEGIN ==
+const RegionLayoutArchive = (() => {
+    const MAX_ARCHIVES = 50;
+    const STORAGE_KEY = "studio_suite_region_layouts";
+    const DEFAULT_SCHEMA = "prompt-studio/region-v1";
+    const DEFAULT_CANVAS = 1024;
+
+    function isPlainObject(value) {
+        return !!value && typeof value === "object" && !Array.isArray(value);
+    }
+
+    function cloneJson(value) {
+        return JSON.parse(JSON.stringify(value));
+    }
+
+    function positiveInt(value, fallback) {
+        const number = Math.round(Number(value));
+        return Number.isFinite(number) && number > 0 ? number : fallback;
+    }
+
+    function hasArea(bbox) {
+        if (!Array.isArray(bbox) || bbox.length !== 4) return false;
+        const values = bbox.map((value) => Number(value));
+        if (values.some((value) => !Number.isFinite(value))) return false;
+        return values[2] > values[0] && values[3] > values[1];
+    }
+
+    function countActiveRegions(regions) {
+        if (!Array.isArray(regions)) return 0;
+        let total = 0;
+        for (const region of regions) {
+            if (!isPlainObject(region) || region.muted) continue;
+            if (hasArea(region.bbox)) total += 1;
+        }
+        return total;
+    }
+
+    function normalizeDoc(raw) {
+        const source = isPlainObject(raw) ? raw : {};
+        const canvas = isPlainObject(source.canvas) ? source.canvas : {};
+        const global = isPlainObject(source.global) ? source.global : {};
+        const regions = [];
+        if (Array.isArray(source.regions)) {
+            for (const region of source.regions) {
+                if (!isPlainObject(region)) continue;
+                try {
+                    regions.push(cloneJson(region));
+                } catch (error) {
+                    continue;
+                }
+            }
+        }
+        return {
+            schema: typeof source.schema === "string" && source.schema ? source.schema : DEFAULT_SCHEMA,
+            canvas: {
+                w: positiveInt(canvas.w, DEFAULT_CANVAS),
+                h: positiveInt(canvas.h, DEFAULT_CANVAS),
+            },
+            global: {
+                caption_zh: typeof global.caption_zh === "string" ? global.caption_zh : "",
+                caption_en: typeof global.caption_en === "string" ? global.caption_en : "",
+            },
+            regions: regions,
+        };
+    }
+
+    function entryInfo(name, entry) {
+        if (!isPlainObject(entry)) return null;
+        const savedAt = Number(entry.savedAt);
+        if (!Number.isFinite(savedAt)) return null;
+        if (!isPlainObject(entry.doc)) return null;
+        const canvas = entry.doc.canvas;
+        if (!isPlainObject(canvas)) return null;
+        const width = Number(canvas.w);
+        const height = Number(canvas.h);
+        if (!Number.isFinite(width) || width <= 0) return null;
+        if (!Number.isFinite(height) || height <= 0) return null;
+        if (!Array.isArray(entry.doc.regions)) return null;
+        return {
+            name: name,
+            savedAt: savedAt,
+            regions: countActiveRegions(entry.doc.regions),
+            w: Math.round(width),
+            h: Math.round(height),
+        };
+    }
+
+    function listArchives(store) {
+        const result = [];
+        if (!isPlainObject(store)) return result;
+        for (const rawName of Object.keys(store)) {
+            const name = String(rawName).trim();
+            if (!name) continue;
+            const info = entryInfo(name, store[rawName]);
+            if (info) result.push(info);
+        }
+        result.sort((a, b) => (b.savedAt - a.savedAt) || a.name.localeCompare(b.name));
+        return result;
+    }
+
+    function cloneStore(store) {
+        const next = {};
+        if (!isPlainObject(store)) return next;
+        for (const name of Object.keys(store)) {
+            const entry = store[name];
+            if (!isPlainObject(entry) || !isPlainObject(entry.doc)) continue;
+            try {
+                next[name] = { savedAt: entry.savedAt, doc: cloneJson(entry.doc) };
+            } catch (error) {
+                continue;
+            }
+        }
+        return next;
+    }
+
+    function saveArchive(store, name, doc) {
+        const key = typeof name === "string" ? name.trim() : "";
+        if (!key) throw new Error("布局存档名称不能为空");
+        const next = cloneStore(store);
+        next[key] = { savedAt: Date.now(), doc: normalizeDoc(doc) };
+        const names = Object.keys(next);
+        if (names.length > MAX_ARCHIVES) {
+            names.sort((a, b) => {
+                const diff = (Number(next[a].savedAt) || 0) - (Number(next[b].savedAt) || 0);
+                return diff !== 0 ? diff : a.localeCompare(b);
+            });
+            for (const stale of names.slice(0, names.length - MAX_ARCHIVES)) {
+                delete next[stale];
+            }
+        }
+        return next;
+    }
+
+    function deleteArchive(store, name) {
+        const next = cloneStore(store);
+        const key = typeof name === "string" ? name.trim() : "";
+        if (key) delete next[key];
+        return next;
+    }
+
+    function applyArchive(entry, widgets) {
+        const source = isPlainObject(entry) && isPlainObject(entry.doc) ? entry.doc : entry;
+        const doc = normalizeDoc(source);
+        const targets = isPlainObject(widgets) ? widgets : {};
+        const values = [
+            ["canvas_width", doc.canvas.w],
+            ["canvas_height", doc.canvas.h],
+        ];
+        for (const [key, value] of values) {
+            const widget = targets[key];
+            if (isPlainObject(widget)) widget.value = value;
+        }
+        return doc;
+    }
+
+    function defaultStorage() {
+        try {
+            return typeof localStorage !== "undefined" ? localStorage : null;
+        } catch (error) {
+            return null;
+        }
+    }
+
+    function loadStore(storage) {
+        const target = storage === undefined ? defaultStorage() : storage;
+        if (!target) return {};
+        let text = null;
+        try {
+            text = target.getItem(STORAGE_KEY);
+        } catch (error) {
+            return {};
+        }
+        if (typeof text !== "string" || !text) return {};
+        let parsed = null;
+        try {
+            parsed = JSON.parse(text);
+        } catch (error) {
+            return {};
+        }
+        if (!isPlainObject(parsed)) return {};
+        const next = {};
+        for (const rawName of Object.keys(parsed)) {
+            const name = String(rawName).trim();
+            if (!name) continue;
+            const info = entryInfo(name, parsed[rawName]);
+            if (!info) continue;
+            next[name] = { savedAt: info.savedAt, doc: normalizeDoc(parsed[rawName].doc) };
+        }
+        return next;
+    }
+
+    function saveStore(storage, store) {
+        const target = storage === undefined ? defaultStorage() : storage;
+        if (!target) return false;
+        try {
+            target.setItem(STORAGE_KEY, JSON.stringify(isPlainObject(store) ? store : {}));
+            return true;
+        } catch (error) {
+            return false;
+        }
+    }
+
+    function pad2(value) {
+        return String(value).padStart(2, "0");
+    }
+
+    function suggestName(date) {
+        const now = date instanceof Date && !Number.isNaN(date.getTime()) ? date : new Date();
+        return (
+            "layout_" +
+            now.getFullYear() +
+            pad2(now.getMonth() + 1) +
+            pad2(now.getDate()) +
+            "_" +
+            pad2(now.getHours()) +
+            pad2(now.getMinutes())
+        );
+    }
+
+    return {
+        MAX_ARCHIVES,
+        STORAGE_KEY,
+        listArchives,
+        saveArchive,
+        deleteArchive,
+        applyArchive,
+        loadStore,
+        saveStore,
+        suggestName,
+    };
+})();
+window.RegionLayoutArchive = RegionLayoutArchive;
+// == REGION_LAYOUT_ARCHIVE_END ==
+
 function clampNumber(value, lo, hi) {
     return Math.min(hi, Math.max(lo, value));
 }
@@ -240,6 +474,63 @@ function installRegionEditor(node) {
     filterHint.textContent = "禁词过滤已启用";
     filterHint.style.cssText = "font-size:10px;opacity:.5;";
 
+    function makeArchiveButton(text, theme) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = text;
+        button.style.cssText =
+            "flex:none;height:24px;padding:0 8px;border:1px solid " + theme.border + ";" +
+            "border-radius:3px;background:" + theme.background + ";color:" + theme.color + ";" +
+            "font:12px sans-serif;cursor:pointer;white-space:nowrap;";
+        return button;
+    }
+
+    const archiveSaveRow = document.createElement("div");
+    archiveSaveRow.style.cssText = "display:flex;align-items:center;gap:6px;";
+
+    const archiveNameInput = makeTextInput("存档名称");
+    archiveNameInput.style.width = "auto";
+    archiveNameInput.style.flex = "1";
+    archiveNameInput.style.minWidth = "0";
+    archiveNameInput.value = RegionLayoutArchive.suggestName();
+
+    const archiveSaveButton = makeArchiveButton("保存布局", {
+        border: "#3f5f8a",
+        background: "#1d2b3d",
+        color: "#bcd7ff",
+    });
+
+    archiveSaveRow.appendChild(archiveNameInput);
+    archiveSaveRow.appendChild(archiveSaveButton);
+
+    const archiveLoadRow = document.createElement("div");
+    archiveLoadRow.style.cssText = "display:flex;align-items:center;gap:6px;";
+
+    const archiveSelect = document.createElement("select");
+    archiveSelect.style.cssText =
+        "flex:1;min-width:0;height:24px;box-sizing:border-box;background:#1b1b1b;" +
+        "border:1px solid #444;border-radius:3px;color:#ddd;font:12px sans-serif;";
+
+    const archiveLoadButton = makeArchiveButton("载入", {
+        border: "#555",
+        background: "#2a2a2a",
+        color: "#ddd",
+    });
+    const archiveDeleteButton = makeArchiveButton("删除存档", {
+        border: "#6a3a3a",
+        background: "#3a2020",
+        color: "#f0b0b0",
+    });
+
+    archiveLoadRow.appendChild(archiveSelect);
+    archiveLoadRow.appendChild(archiveLoadButton);
+    archiveLoadRow.appendChild(archiveDeleteButton);
+
+    const archiveStatus = document.createElement("div");
+    archiveStatus.style.cssText =
+        "min-height:12px;font-size:10px;opacity:.5;overflow:hidden;" +
+        "text-overflow:ellipsis;white-space:nowrap;";
+
     container.appendChild(toolbar);
     container.appendChild(canvas);
     container.appendChild(editPromptButton);
@@ -247,6 +538,9 @@ function installRegionEditor(node) {
     container.appendChild(enInput);
     container.appendChild(zhInput);
     container.appendChild(tagsInput);
+    container.appendChild(archiveSaveRow);
+    container.appendChild(archiveLoadRow);
+    container.appendChild(archiveStatus);
     container.appendChild(hint);
     container.appendChild(filterHint);
 
@@ -753,6 +1047,122 @@ function installRegionEditor(node) {
             return result;
         };
     }
+
+    let archiveStore = RegionLayoutArchive.loadStore();
+
+    function refreshArchiveButtons() {
+        const hasSelection = !!archiveSelect.value && !!archiveStore[archiveSelect.value];
+        for (const button of [archiveLoadButton, archiveDeleteButton]) {
+            button.disabled = !hasSelection;
+            button.style.opacity = hasSelection ? "1" : "0.45";
+            button.style.cursor = hasSelection ? "pointer" : "default";
+        }
+    }
+
+    function renderArchiveOptions(preferredName) {
+        const entries = RegionLayoutArchive.listArchives(archiveStore);
+        const previous = typeof preferredName === "string" ? preferredName : archiveSelect.value;
+        archiveSelect.textContent = "";
+        if (!entries.length) {
+            const option = document.createElement("option");
+            option.value = "";
+            option.textContent = "（无存档）";
+            archiveSelect.appendChild(option);
+            archiveSelect.disabled = true;
+            refreshArchiveButtons();
+            return;
+        }
+        archiveSelect.disabled = false;
+        for (const entry of entries) {
+            const option = document.createElement("option");
+            option.value = entry.name;
+            option.textContent = entry.name + " · " + entry.regions + "区 · " + entry.w + "x" + entry.h;
+            archiveSelect.appendChild(option);
+        }
+        archiveSelect.value = entries.some((entry) => entry.name === previous)
+            ? previous
+            : entries[0].name;
+        refreshArchiveButtons();
+    }
+
+    function setArchiveStatus(text, isError) {
+        archiveStatus.textContent = text || "";
+        archiveStatus.style.color = isError ? "#ff8080" : "";
+        archiveStatus.style.opacity = isError ? "1" : ".5";
+    }
+
+    function syncCanvasWidget(name, value) {
+        const widget = findWidget(name);
+        if (widget) widget.value = value;
+        const element = widget && (widget.inputEl || widget.element);
+        if (element && typeof element.value === "string") element.value = String(value);
+    }
+
+    function saveCurrentArchive() {
+        const name = archiveNameInput.value.trim();
+        let next;
+        try {
+            next = RegionLayoutArchive.saveArchive(archiveStore, name, doc);
+        } catch (error) {
+            setArchiveStatus(String((error && error.message) || "保存失败"), true);
+            archiveNameInput.focus();
+            return;
+        }
+        archiveStore = next;
+        RegionLayoutArchive.saveStore(undefined, archiveStore);
+        archiveNameInput.value = name;
+        renderArchiveOptions(name);
+        setArchiveStatus("已保存 " + name);
+    }
+
+    function loadSelectedArchive() {
+        const name = archiveSelect.value;
+        const entry = name ? archiveStore[name] : null;
+        if (!entry) {
+            setArchiveStatus("请先选择存档", true);
+            return;
+        }
+        doc = RegionLayoutArchive.applyArchive(entry, {
+            canvas_width: findWidget("canvas_width"),
+            canvas_height: findWidget("canvas_height"),
+        });
+        selectedId = null;
+        syncCanvasWidget("canvas_width", doc.canvas.w);
+        syncCanvasWidget("canvas_height", doc.canvas.h);
+        updateFields();
+        draw();
+        writeDoc();
+        archiveNameInput.value = name;
+        setArchiveStatus("已载入 " + name);
+    }
+
+    function deleteSelectedArchive() {
+        const name = archiveSelect.value;
+        if (!name || !archiveStore[name]) {
+            setArchiveStatus("请先选择存档", true);
+            return;
+        }
+        archiveStore = RegionLayoutArchive.deleteArchive(archiveStore, name);
+        RegionLayoutArchive.saveStore(undefined, archiveStore);
+        renderArchiveOptions();
+        setArchiveStatus("已删除 " + name);
+    }
+
+    archiveSaveButton.addEventListener("click", saveCurrentArchive);
+    archiveLoadButton.addEventListener("click", loadSelectedArchive);
+    archiveDeleteButton.addEventListener("click", deleteSelectedArchive);
+    archiveSelect.addEventListener("change", () => {
+        refreshArchiveButtons();
+        setArchiveStatus("");
+    });
+    archiveNameInput.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter") return;
+        event.preventDefault();
+        event.stopPropagation();
+        saveCurrentArchive();
+    });
+
+    renderArchiveOptions();
 
     node.__studioSuiteRegionRefresh = readDocFromWidget;
     readDocFromWidget();
