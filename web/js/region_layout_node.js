@@ -1358,6 +1358,15 @@ function installRegionEditor(node) {
 
     const layoutWidget = findWidget("layout_json");
     if (layoutWidget) {
+        // Internal storage only: hide the textarea entirely. ComfyUI multiline
+        // widgets grow with the node and would eat the editor's space.
+        layoutWidget.computeSize = () => [0, -4];
+        layoutWidget.type = "hidden";
+        if (layoutWidget.inputEl) {
+            layoutWidget.inputEl.style.display = "none";
+            layoutWidget.inputEl.style.height = "0";
+            layoutWidget.inputEl.style.minHeight = "0";
+        }
         const originalCallback = layoutWidget.callback;
         layoutWidget.callback = function (...args) {
             const result = originalCallback ? originalCallback.apply(this, args) : undefined;
