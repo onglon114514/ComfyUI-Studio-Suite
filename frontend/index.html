@@ -478,6 +478,23 @@
           <div class="muted" id="regionExportStatus" style="font-size:11px; min-height:16px;"></div>
           <div class="muted" id="regionTokenInfo" style="font-size:11px; margin-top:6px;"></div>
         </div>
+
+        <div class="card" id="regionDatasetCard">
+          <h3>数据集</h3>
+          <div class="muted" style="font-size:11px; margin-bottom:6px;">数据集条目仅存本机浏览器，不写入工作流。</div>
+          <div class="row" style="flex-wrap:wrap;">
+            <input id="regionDatasetImage" value="image_001" placeholder="image_001" style="flex:1 1 120px; min-width:100px;">
+            <button class="small" id="regionDatasetAdd" title="把当前画布与所有可见框存为一张图">添加当前框到数据集</button>
+          </div>
+          <div class="muted" id="regionDatasetStatus" style="font-size:11px; min-height:16px; margin-top:4px;"></div>
+          <div id="regionDatasetList"></div>
+          <div class="muted" id="regionDatasetSummary" style="font-size:11px; margin-top:4px;"></div>
+          <div class="row" style="flex-wrap:wrap; margin-top:8px;">
+            <button class="small ghost" id="regionDatasetExportAll">导出数据集 jsonl</button>
+            <button class="small ghost" id="regionDatasetExportPerRegion">导出每区域行</button>
+            <button class="small ghost" id="regionDatasetClear">清空</button>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -819,12 +836,200 @@
         toTagLines: toTagLines,
         fromIdeogram: fromIdeogram,
         fromMoss: fromMoss,
+        asDoc: asDoc,
       };
     })();
+
+    // ── 区域布局：数据集（纯函数，node 测试抽取本块）──────────────
+    // == REGION_DATASET_BEGIN ==
+    window.RegionDataset = (() => {
+      const MAX_ENTRIES = 200;
+
+      function adapters() {
+        const api = window.RegionAdapters;
+        if (!api || typeof api.asDoc !== "function") {
+          throw new Error("RegionAdapters 未加载，无法处理数据集");
+        }
+        return api;
+      }
+
+      function entryList(entries) {
+        return Array.isArray(entries) ? entries : [];
+      }
+
+      function imageName(entry) {
+        return entry && typeof entry.image === "string" ? entry.image.trim() : "";
+      }
+
+      // 把条目的 doc 规范成 toGenericJsonl 需要的形状；空 doc / 无 region 返回 null。
+      function entryDoc(entry) {
+        if (!entry || !entry.doc || typeof entry.doc !== "object") return null;
+        let doc;
+        try {
+          doc = adapters().asDoc(entry.doc);
+        } catch (err) {
+          return null;
+        }
+        if (!doc.regions.length) return null;
+        return {
+          canvas: { w: doc.w, h: doc.h },
+          global: doc.global,
+          regions: doc.regions,
+          image: imageName(entry),
+        };
+      }
+
+      function mergeToJsonl(entries, perRegion) {
+        const api = adapters();
+        const lines = [];
+        for (const entry of entryList(entries)) {
+          const doc = entryDoc(entry);
+          if (!doc) continue;
+          let text;
+          try {
+            // 先按每区域行探测；静音框 / 零面积框全被过滤时，整图行也应跳过。
+            text = api.toGenericJsonl(doc, true);
+            if (!text) continue;
+            if (!perRegion) text = api.toGenericJsonl(doc, false);
+          } catch (err) {
+            continue;
+          }
+          if (text) lines.push(text);
+        }
+        return lines.join("\n");
+      }
+
+      function docFromRegionJson(input) {
+        let obj = input;
+        if (typeof input === "string") {
+          try {
+            obj = JSON.parse(input);
+          } catch (err) {
+            throw new Error("区域 JSON 解析失败：" + err.message);
+          }
+        }
+        if (!obj || typeof obj !== "object" || Array.isArray(obj)) {
+          throw new Error("区域 JSON 无效：需要对象");
+        }
+        if (!Array.isArray(obj.regions)) {
+          throw new Error("区域 JSON 无效：缺少 regions 数组");
+        }
+        let doc;
+        try {
+          doc = adapters().asDoc(obj);
+        } catch (err) {
+          throw new Error("区域 JSON 无效：" + err.message);
+        }
+        if (!doc.w || !doc.h) {
+          throw new Error("区域 JSON 无效：缺少画布宽高");
+        }
+        if (!doc.regions.length) {
+          throw new Error("区域 JSON 无效：regions 为空");
+        }
+        const clamp = (v) => Math.max(0, Math.min(1, v));
+        const regions = doc.regions.map((region, index) => {
+          if (!region || typeof region !== "object") {
+            throw new Error("区域 JSON 无效：regions[" + index + "] 不是对象");
+          }
+          if (!Array.isArray(region.bbox) || region.bbox.length !== 4) {
+            throw new Error("区域 JSON 无效：regions[" + index + "].bbox 需要 4 项");
+          }
+          const n = region.bbox.map((v) => Number(v));
+          if (n.some((v) => !isFinite(v))) {
+            throw new Error("区域 JSON 无效：regions[" + index + "].bbox 含非法数值");
+          }
+          const nl = region.nl && typeof region.nl === "object" ? region.nl : {};
+          const tags = (Array.isArray(region.tags) ? region.tags : [])
+            .map((tag) => {
+              const name = typeof tag === "string" ? tag : (tag && tag.tag) || "";
+              const weight = typeof tag === "string" ? 1 : (Number(tag && tag.weight) || 1);
+              const source = typeof tag === "string" ? "manual" : String((tag && tag.source) || "manual");
+              return { tag: String(name).trim(), weight: weight, source: source };
+            })
+            .filter((tag) => tag.tag);
+          return {
+            id: typeof region.id === "string" && region.id ? region.id : "r" + (index + 1),
+            bbox: [
+              clamp(Math.min(n[0], n[2])),
+              clamp(Math.min(n[1], n[3])),
+              clamp(Math.max(n[0], n[2])),
+              clamp(Math.max(n[1], n[3])),
+            ],
+            role: region.role === "text" ? "text" : "obj",
+            literalText: typeof region.literalText === "string" ? region.literalText : "",
+            nl: { zh: String(nl.zh || ""), en: String(nl.en || "") },
+            tags: tags,
+            muted: !!region.muted,
+            linkedTo: region.linkedTo ? String(region.linkedTo) : null,
+          };
+        });
+        return {
+          schema: "prompt-studio/region-v1",
+          canvas: { w: doc.w, h: doc.h },
+          global: {
+            caption_zh: String((doc.global || {}).caption_zh || ""),
+            caption_en: String((doc.global || {}).caption_en || ""),
+          },
+          regions: regions,
+          image: typeof obj.image === "string" ? obj.image : "",
+        };
+      }
+
+      function summarizeEntries(entries) {
+        const api = adapters();
+        const list = entryList(entries);
+        let regions = 0;
+        let missingCaption = 0;
+        for (const entry of list) {
+          const doc = entryDoc(entry);
+          if (!doc) continue;
+          let text = "";
+          try {
+            text = api.toGenericJsonl(doc, true);
+          } catch (err) {
+            text = "";
+          }
+          regions += text ? text.split("\n").length : 0;
+          const caption = String((doc.global || {}).caption_en || (doc.global || {}).caption_zh || "").trim();
+          if (!caption) missingCaption += 1;
+        }
+        return { images: list.length, regions: regions, missingCaption: missingCaption };
+      }
+
+      function upsertEntry(entries, entry) {
+        if (!entry || typeof entry !== "object") {
+          throw new Error("数据集条目无效：缺少 image 与 doc");
+        }
+        const image = imageName(entry);
+        if (!image) {
+          throw new Error("数据集条目无效：image 名称不能为空");
+        }
+        const next = { image: image, doc: entry.doc };
+        const list = entryList(entries).map((item) => ({
+          image: imageName(item),
+          doc: item && item.doc,
+        }));
+        const index = list.findIndex((item) => item.image === image);
+        if (index >= 0) list[index] = next;
+        else list.push(next);
+        while (list.length > MAX_ENTRIES) list.shift();
+        return list;
+      }
+
+      return {
+        MAX_ENTRIES: MAX_ENTRIES,
+        mergeToJsonl: mergeToJsonl,
+        docFromRegionJson: docFromRegionJson,
+        summarizeEntries: summarizeEntries,
+        upsertEntry: upsertEntry,
+      };
+    })();
+    // == REGION_DATASET_END ==
     // == REGION_ADAPTERS_END ==
 
     // ── 区域布局：编辑器状态 ──────────────────────────────────────
     const REGION_DRAFT_KEY = "studio_suite_region_draft";
+    const REGION_DATASET_KEY = "studio_suite_region_dataset";
     const REGION_SCHEMA = "prompt-studio/region-v1";
     const REGION_HANDLES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
     const REGION_CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳";
@@ -1762,6 +1967,167 @@
       host.textContent = parts.join(" · ");
     }
 
+    // ── 区域布局：数据集（localStorage，仅本机）──────────────────
+    let regionDataset = [];
+
+    function regionDatasetStatus(message, isError) {
+      const el = $("regionDatasetStatus");
+      if (!el) return;
+      el.textContent = message;
+      el.style.color = isError ? "#f85149" : "";
+    }
+
+    function regionDatasetSave() {
+      try {
+        localStorage.setItem(REGION_DATASET_KEY, JSON.stringify(regionDataset));
+      } catch (err) {
+        // 隐私模式 / 配额不足时忽略
+      }
+    }
+
+    function regionDatasetLoad() {
+      let text = null;
+      try {
+        text = localStorage.getItem(REGION_DATASET_KEY);
+      } catch (err) {
+        return;
+      }
+      if (!text) return;
+      let data = null;
+      try {
+        data = JSON.parse(text);
+      } catch (err) {
+        return;
+      }
+      if (!Array.isArray(data)) return;
+      const clean = [];
+      for (const item of data.slice(0, window.RegionDataset.MAX_ENTRIES)) {
+        if (!item || typeof item.image !== "string" || !item.image.trim()) continue;
+        try {
+          clean.push({ image: item.image.trim(), doc: window.RegionDataset.docFromRegionJson(item.doc) });
+        } catch (err) {
+          // 跳过无法恢复的旧条目
+        }
+      }
+      regionDataset = clean;
+    }
+
+    function regionDatasetActiveCount(doc) {
+      try {
+        return window.RegionDataset.summarizeEntries([{ image: "entry", doc: doc }]).regions;
+      } catch (err) {
+        return 0;
+      }
+    }
+
+    function regionDatasetRender() {
+      const host = $("regionDatasetList");
+      if (!host) return;
+      host.innerHTML = "";
+      if (!regionDataset.length) {
+        const empty = document.createElement("div");
+        empty.className = "muted";
+        empty.style.cssText = "font-size:11px; padding:4px 0;";
+        empty.textContent = "暂无条目";
+        host.appendChild(empty);
+      }
+      regionDataset.forEach((entry, index) => {
+        const row = document.createElement("div");
+        row.className = "row";
+        row.style.cssText = "justify-content:space-between; gap:6px; padding:4px 0; border-bottom:1px solid var(--border);";
+        const left = document.createElement("span");
+        left.style.cssText = "display:flex; align-items:center; gap:8px; min-width:0;";
+        const name = document.createElement("span");
+        name.style.cssText = "font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;";
+        name.textContent = entry.image;
+        name.title = entry.image;
+        const count = document.createElement("span");
+        count.className = "muted";
+        count.style.cssText = "font-size:11px; white-space:nowrap;";
+        count.textContent = regionDatasetActiveCount(entry.doc) + " 区";
+        left.appendChild(name);
+        left.appendChild(count);
+        const del = document.createElement("button");
+        del.className = "small ghost";
+        del.textContent = "删除";
+        del.addEventListener("click", () => regionDatasetRemove(index));
+        row.appendChild(left);
+        row.appendChild(del);
+        host.appendChild(row);
+      });
+      const stats = window.RegionDataset.summarizeEntries(regionDataset);
+      $("regionDatasetSummary").textContent = "共 " + stats.images + " 张图 · " + stats.regions + " 个区域"
+        + (stats.missingCaption ? " · " + stats.missingCaption + " 条缺 caption" : "");
+    }
+
+    function regionDatasetAddCurrent() {
+      const input = $("regionDatasetImage");
+      let image = String(input.value || "").trim();
+      if (!image) {
+        image = "image_001";
+        input.value = image;
+      }
+      let doc = null;
+      try {
+        doc = window.RegionDataset.docFromRegionJson(regionExportDoc());
+      } catch (err) {
+        regionDatasetStatus(err.message || String(err), true);
+        return;
+      }
+      const active = regionDatasetActiveCount(doc);
+      if (!active) {
+        regionDatasetStatus("当前没有可导出的框（静音框与零面积框不计入）", true);
+        return;
+      }
+      doc.image = image;
+      regionDataset = window.RegionDataset.upsertEntry(regionDataset, { image: image, doc: doc });
+      regionDatasetSave();
+      regionDatasetRender();
+      regionDatasetStatus("已加入数据集：" + image + "（" + active + " 区）", false);
+    }
+
+    function regionDatasetRemove(index) {
+      if (index < 0 || index >= regionDataset.length) return;
+      const removed = regionDataset[index];
+      regionDataset = regionDataset.filter((entry, i) => i !== index);
+      regionDatasetSave();
+      regionDatasetRender();
+      regionDatasetStatus("已删除：" + removed.image, false);
+    }
+
+    function regionDatasetClear() {
+      if (!regionDataset.length) {
+        regionDatasetStatus("数据集已为空", false);
+        return;
+      }
+      if (!window.confirm("清空数据集？本机已保存的 " + regionDataset.length + " 条会全部删除。")) return;
+      regionDataset = [];
+      regionDatasetSave();
+      regionDatasetRender();
+      regionDatasetStatus("数据集已清空", false);
+    }
+
+    function regionDatasetExport(perRegion) {
+      if (!regionDataset.length) {
+        regionDatasetStatus("数据集为空，请先添加当前框", true);
+        return;
+      }
+      let text = "";
+      try {
+        text = window.RegionDataset.mergeToJsonl(regionDataset, perRegion);
+      } catch (err) {
+        regionDatasetStatus(err.message || String(err), true);
+        return;
+      }
+      if (!text) {
+        regionDatasetStatus("没有可导出的区域（空 doc 已跳过）", true);
+        return;
+      }
+      const filename = perRegion ? "region-dataset-per-region.jsonl" : "region-dataset.jsonl";
+      regionDownload(filename, text);
+      regionDatasetStatus("已下载 " + filename + "（" + text.split("\n").length + " 行）", false);
+    }
+
     function regionImageStatus(message, isError) {
       const el = $("regionImageStatus");
       el.textContent = message;
@@ -2000,6 +2366,16 @@
       });
       $("regionJsonlPerRegion").addEventListener("change", regionUpdateTokens);
 
+      $("regionDatasetAdd").addEventListener("click", regionDatasetAddCurrent);
+      $("regionDatasetClear").addEventListener("click", regionDatasetClear);
+      $("regionDatasetExportAll").addEventListener("click", () => regionDatasetExport(false));
+      $("regionDatasetExportPerRegion").addEventListener("click", () => regionDatasetExport(true));
+      $("regionDatasetImage").addEventListener("keydown", (e) => {
+        if (e.key !== "Enter") return;
+        e.preventDefault();
+        regionDatasetAddCurrent();
+      });
+
       if (window.ResizeObserver) {
         const observer = new ResizeObserver(() => {
           if ($("panel-region").style.display !== "none") regionRender();
@@ -2051,6 +2427,8 @@
 
     regionBindUi();
     regionLoadDraft();
+    regionDatasetLoad();
+    regionDatasetRender();
     regionSyncGlobalInputs();
     regionApplyCanvasSize();
     regionUpdateSelectionPanel();
