@@ -15,6 +15,8 @@ const MAX_EDITOR_HEIGHT = 2000;
 const MIN_NODE_WIDTH = 420;
 const MIN_NODE_HEIGHT = 800;
 const TOKEN_BUDGET = 4000;
+const MAX_CANVAS_DISPLAY = 640; // CSS 显示宽度上限，避免画布随节点无限拉宽
+const MAX_DPR = 2; // backing store 的 DPR 上限，控制高分屏下的像素总量
 
 // == REGION_BOX_BRIDGE_BEGIN ==
 const RegionBoxBridge = (() => {
@@ -495,6 +497,20 @@ function installRegionEditor(node) {
     const toolbar = document.createElement("div");
     toolbar.style.cssText = "display:flex;align-items:center;gap:6px;min-height:24px;";
 
+    function makeModeButton(text) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = text;
+        button.setAttribute("aria-pressed", "false");
+        button.style.cssText =
+            "flex:none;height:24px;padding:0 10px;border:1px solid #555;border-radius:3px;" +
+            "background:#2a2a2a;color:#ddd;font:12px sans-serif;cursor:pointer;white-space:nowrap;";
+        return button;
+    }
+
+    const selectModeButton = makeModeButton("选择");
+    const drawModeButton = makeModeButton("新建框");
+
     const loadButton = document.createElement("button");
     loadButton.type = "button";
     loadButton.textContent = "载入参考图";
@@ -512,6 +528,8 @@ function installRegionEditor(node) {
     fileInput.accept = "image/*";
     fileInput.style.display = "none";
 
+    toolbar.appendChild(selectModeButton);
+    toolbar.appendChild(drawModeButton);
     toolbar.appendChild(loadButton);
     toolbar.appendChild(imageName);
     toolbar.appendChild(fileInput);
@@ -521,8 +539,9 @@ function installRegionEditor(node) {
     canvas.height = CANVAS_SIZE;
     canvas.tabIndex = 0;
     canvas.style.cssText =
-        "display:block;flex:none;width:100%;height:auto;aspect-ratio:1 / 1;" +
-        "margin:0 auto;background:#222;border-radius:4px;touch-action:none;outline:none;";
+        "display:block;flex:none;width:100%;max-width:" + MAX_CANVAS_DISPLAY + "px;" +
+        "height:auto;aspect-ratio:1 / 1;margin:0 auto;background:#222;border-radius:4px;" +
+        "touch-action:none;outline:none;";
 
     const roleRow = document.createElement("div");
     roleRow.style.cssText = "display:flex;align-items:center;gap:6px;";
@@ -571,7 +590,8 @@ function installRegionEditor(node) {
         "background:#1d2b3d;color:#bcd7ff;font:12px sans-serif;cursor:pointer;";
 
     const hint = document.createElement("div");
-    hint.textContent = "框：拖拽新建 / Shift+拖拽叠框 / 点选 / Del 删除";
+    hint.textContent =
+        "选择：点选/拖动/拖角缩放 · 新建框：任意位置拖拽（可叠框） · Del 删除";
     hint.style.cssText = "font-size:11px;opacity:.6;";
 
     const tokenHint = document.createElement("span");
@@ -671,6 +691,26 @@ function installRegionEditor(node) {
     let lastRect = null;
     let referenceImage = null;
     let readingDoc = false;
+    let editorMode = "select";
+
+    function applyModeButtonStyle(button, active) {
+        button.style.background = active ? "#7a3f00" : "#2a2a2a";
+        button.style.borderColor = active ? "#ff8c00" : "#555";
+        button.style.color = active ? "#ffe0b0" : "#ddd";
+        button.setAttribute("aria-pressed", active ? "true" : "false");
+    }
+
+    // 只切换交互模式；不改动 doc、layout_json 或选中状态。
+    function setEditorMode(mode) {
+        editorMode = mode === "draw" ? "draw" : "select";
+        applyModeButtonStyle(selectModeButton, editorMode === "select");
+        applyModeButtonStyle(drawModeButton, editorMode === "draw");
+        canvas.style.cursor = editorMode === "draw" ? "crosshair" : "";
+    }
+
+    selectModeButton.addEventListener("click", () => setEditorMode("select"));
+    drawModeButton.addEventListener("click", () => setEditorMode("draw"));
+    setEditorMode("select");
 
     function findWidget(name) {
         return (node.widgets || []).find((widget) => widget && widget.name === name) || null;
@@ -830,8 +870,10 @@ function installRegionEditor(node) {
         const ratioHeight = Math.max(1, size.h);
         canvas.style.aspectRatio = ratioWidth + " / " + ratioHeight;
         const bounds = canvas.getBoundingClientRect();
-        const displayWidth = Number(bounds.width) || Number(container.clientWidth) || CANVAS_SIZE;
-        const dpr = Number(window.devicePixelRatio) > 0 ? Number(window.devicePixelRatio) : 1;
+        const rawWidth = Number(bounds.width) || Number(container.clientWidth) || CANVAS_SIZE;
+        const displayWidth = Math.max(1, Math.min(rawWidth, MAX_CANVAS_DISPLAY));
+        const rawDpr = Number(window.devicePixelRatio) > 0 ? Number(window.devicePixelRatio) : 1;
+        const dpr = Math.min(rawDpr, MAX_DPR);
         const pixelWidth = Math.max(1, Math.round(displayWidth * dpr));
         const pixelHeight = Math.max(1, Math.round((displayWidth * ratioHeight * dpr) / ratioWidth));
         if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
@@ -1097,6 +1139,10 @@ function installRegionEditor(node) {
     };
 
     function updateHandleCursor(event) {
+        if (editorMode === "draw") {
+            canvas.style.cursor = "crosshair";
+            return;
+        }
         const position = pointerToNorm(event);
         const handle = position ? hitHandleAt(position) : null;
         canvas.style.cursor = handle ? HANDLE_CURSORS[handle] : "";
@@ -1109,8 +1155,10 @@ function installRegionEditor(node) {
         const position = pointerToNorm(event);
         if (!position) return;
 
-        const forceCreate = event.shiftKey || event.altKey;
-        const handle = forceCreate ? null : hitHandleAt(position);
+        // select：handle → resize，命中框 → 选中+move，空白 → create。
+        // draw：忽略 handle / 命中框，任意位置一律 create（因此可以叠框）。
+        const drawMode = editorMode === "draw";
+        const handle = drawMode ? null : hitHandleAt(position);
         if (handle) {
             const region = selectedRegion();
             if (region) {
@@ -1125,7 +1173,7 @@ function installRegionEditor(node) {
         }
 
         if (!drag) {
-            const hit = forceCreate ? null : hitTest(position);
+            const hit = drawMode ? null : hitTest(position);
             if (hit) {
                 selectedId = hit.id;
                 drag = { mode: "move", id: hit.id, start: position, origin: hit.bbox.slice() };
@@ -1182,7 +1230,7 @@ function installRegionEditor(node) {
     });
 
     canvas.addEventListener("pointerleave", () => {
-        if (!drag) canvas.style.cursor = "";
+        if (!drag) canvas.style.cursor = editorMode === "draw" ? "crosshair" : "";
     });
 
     canvas.addEventListener("pointerup", finishGesture);
