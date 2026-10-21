@@ -3,10 +3,15 @@ import { getLegacyPromptStudioController } from "./prompt_studio_controller.js";
 
 const NODE_NAME = "StudioSuiteRegionLayout";
 const SCHEMA = "prompt-studio/region-v1";
-const CANVAS_SIZE = 360;
+const CANVAS_SIZE = 360; // 仅作为画布最小/兜底像素尺寸，实际尺寸随节点宽度变化
 const CANVAS_MARGIN = 4;
 const MIN_BOX_PX = 8;
+const MIN_BOX = 0.01;
+const HANDLE_SIZE = 8;
+const HANDLE_TOLERANCE = 7;
 const EDITOR_HEIGHT = 548;
+const MIN_EDITOR_HEIGHT = 260;
+const MAX_EDITOR_HEIGHT = 2000;
 const MIN_NODE_WIDTH = 420;
 const MIN_NODE_HEIGHT = 800;
 const TOKEN_BUDGET = 4000;
@@ -63,6 +68,110 @@ const RegionBoxBridge = (() => {
 })();
 window.RegionBoxBridge = RegionBoxBridge;
 // == REGION_BOX_BRIDGE_END ==
+
+// == REGION_RESIZE_BEGIN ==
+// 纯几何工具：不依赖模块内其它符号，供画布交互与 node 测试共用。
+const RegionResize = (() => {
+    const DEFAULT_MIN_BOX = 0.01;
+    const DEFAULT_TOLERANCE_PX = 7;
+    const HANDLE_ORDER = ["nw", "ne", "se", "sw", "n", "e", "s", "w"];
+
+    function clamp(value, lo, hi) {
+        return Math.min(hi, Math.max(lo, value));
+    }
+
+    function normalizeBox(raw) {
+        if (!Array.isArray(raw) || raw.length !== 4) return null;
+        const values = raw.map((value) => Number(value));
+        if (values.some((value) => !Number.isFinite(value))) return null;
+        return values;
+    }
+
+    function handlePoints(box, width, height) {
+        const x1 = box[0] * width;
+        const x2 = box[2] * width;
+        const y1 = box[1] * height;
+        const y2 = box[3] * height;
+        const midX = (x1 + x2) / 2;
+        const midY = (y1 + y2) / 2;
+        return [
+            { handle: "nw", x: x1, y: y1 },
+            { handle: "ne", x: x2, y: y1 },
+            { handle: "se", x: x2, y: y2 },
+            { handle: "sw", x: x1, y: y2 },
+            { handle: "n", x: midX, y: y1 },
+            { handle: "e", x: x2, y: midY },
+            { handle: "s", x: midX, y: y2 },
+            { handle: "w", x: x1, y: midY },
+        ];
+    }
+
+    // 拖动某个 handle：只移动该 handle 对应的边，对边/对角保持固定。
+    // 非法 handle 抛错；origin 非法返回 null。
+    function resizeBbox(origin, handle, dx, dy, minSize) {
+        if (!HANDLE_ORDER.includes(handle)) {
+            throw new Error('RegionResize: unknown handle "' + String(handle) + '"');
+        }
+        const box = normalizeBox(origin);
+        if (!box) return null;
+        const minimum = Number.isFinite(Number(minSize)) && Number(minSize) > 0
+            ? Math.min(1, Number(minSize))
+            : DEFAULT_MIN_BOX;
+        const moveX = Number.isFinite(Number(dx)) ? Number(dx) : 0;
+        const moveY = Number.isFinite(Number(dy)) ? Number(dy) : 0;
+        let x1 = box[0];
+        let y1 = box[1];
+        let x2 = box[2];
+        let y2 = box[3];
+
+        if (handle.includes("w")) {
+            x1 = clamp(x1 + moveX, 0, Math.max(0, x2 - minimum));
+        }
+        if (handle.includes("e")) {
+            x2 = clamp(x2 + moveX, Math.min(1, x1 + minimum), 1);
+        }
+        if (handle.includes("n")) {
+            y1 = clamp(y1 + moveY, 0, Math.max(0, y2 - minimum));
+        }
+        if (handle.includes("s")) {
+            y2 = clamp(y2 + moveY, Math.min(1, y1 + minimum), 1);
+        }
+        return [x1, y1, x2, y2];
+    }
+
+    // bbox / point 为 0..1 归一化坐标，rect 为画布内部像素尺寸（{w,h} 或 {width,height}）。
+    // 容差包含边界（<=），四角优先于四边。
+    function handleAtPoint(bbox, point, rect, tolerancePx) {
+        const box = normalizeBox(bbox);
+        if (!box) return null;
+        const width = Number(rect && (rect.w !== undefined ? rect.w : rect.width));
+        const height = Number(rect && (rect.h !== undefined ? rect.h : rect.height));
+        if (!(width > 0) || !(height > 0)) return null;
+        const pointX = Number(point && point.x);
+        const pointY = Number(point && point.y);
+        if (!Number.isFinite(pointX) || !Number.isFinite(pointY)) return null;
+        let tolerance = DEFAULT_TOLERANCE_PX;
+        if (tolerancePx !== undefined && tolerancePx !== null) {
+            const value = Number(tolerancePx);
+            if (Number.isFinite(value)) tolerance = Math.max(0, value);
+        }
+        const px = pointX * width;
+        const py = pointY * height;
+        for (const candidate of handlePoints(box, width, height)) {
+            if (
+                Math.abs(px - candidate.x) <= tolerance &&
+                Math.abs(py - candidate.y) <= tolerance
+            ) {
+                return candidate.handle;
+            }
+        }
+        return null;
+    }
+
+    return { resizeBbox, handleAtPoint };
+})();
+window.RegionResize = RegionResize;
+// == REGION_RESIZE_END ==
 
 // == REGION_LAYOUT_ARCHIVE_BEGIN ==
 const RegionLayoutArchive = (() => {
@@ -412,7 +521,7 @@ function installRegionEditor(node) {
     canvas.height = CANVAS_SIZE;
     canvas.tabIndex = 0;
     canvas.style.cssText =
-        "display:block;width:360px;max-width:100%;height:auto;aspect-ratio:1/1;" +
+        "display:block;flex:none;width:100%;height:auto;aspect-ratio:1 / 1;" +
         "margin:0 auto;background:#222;border-radius:4px;touch-action:none;outline:none;";
 
     const roleRow = document.createElement("div");
@@ -462,7 +571,7 @@ function installRegionEditor(node) {
         "background:#1d2b3d;color:#bcd7ff;font:12px sans-serif;cursor:pointer;";
 
     const hint = document.createElement("div");
-    hint.textContent = "框：拖拽新建 / 点选 / Del 删除";
+    hint.textContent = "框：拖拽新建 / Shift+拖拽叠框 / 点选 / Del 删除";
     hint.style.cssText = "font-size:11px;opacity:.6;";
 
     const tokenHint = document.createElement("span");
@@ -548,9 +657,9 @@ function installRegionEditor(node) {
         node.addDOMWidget("region_editor", "customtext", container, {
             serialize: false,
             hideOnZoom: false,
-            getMinHeight: () => EDITOR_HEIGHT,
-            getMaxHeight: () => EDITOR_HEIGHT,
-            getHeight: () => EDITOR_HEIGHT,
+            getMinHeight: () => MIN_EDITOR_HEIGHT,
+            getMaxHeight: () => MAX_EDITOR_HEIGHT,
+            getHeight: () => Math.max(MIN_EDITOR_HEIGHT, container.offsetHeight || EDITOR_HEIGHT),
         });
     } else {
         console.warn("[ComfyUI-Studio-Suite] Region Layout: addDOMWidget is unavailable");
@@ -708,31 +817,105 @@ function installRegionEditor(node) {
         };
     }
 
-    function computeLayoutRect() {
+    // 画布内部像素 = 显示宽度 × devicePixelRatio；画布高度按 doc.canvas 宽高比推导。
+    function canvasPixelScale() {
+        const bounds = canvas.getBoundingClientRect();
+        if (!bounds.width) return 1;
+        return Math.max(0.01, canvas.width / bounds.width);
+    }
+
+    function syncCanvasSize() {
+        const size = canvasSize();
+        const ratioWidth = Math.max(1, size.w);
+        const ratioHeight = Math.max(1, size.h);
+        canvas.style.aspectRatio = ratioWidth + " / " + ratioHeight;
+        const bounds = canvas.getBoundingClientRect();
+        const displayWidth = Number(bounds.width) || Number(container.clientWidth) || CANVAS_SIZE;
+        const dpr = Number(window.devicePixelRatio) > 0 ? Number(window.devicePixelRatio) : 1;
+        const pixelWidth = Math.max(1, Math.round(displayWidth * dpr));
+        const pixelHeight = Math.max(1, Math.round((displayWidth * ratioHeight * dpr) / ratioWidth));
+        if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+            canvas.width = pixelWidth;
+            canvas.height = pixelHeight;
+        }
+    }
+
+    function rectHandlePoints(bbox, rect) {
+        const x1 = rect.x + bbox[0] * rect.w;
+        const x2 = rect.x + bbox[2] * rect.w;
+        const y1 = rect.y + bbox[1] * rect.h;
+        const y2 = rect.y + bbox[3] * rect.h;
+        const midX = (x1 + x2) / 2;
+        const midY = (y1 + y2) / 2;
+        return [
+            { handle: "nw", x: x1, y: y1 },
+            { handle: "ne", x: x2, y: y1 },
+            { handle: "se", x: x2, y: y2 },
+            { handle: "sw", x: x1, y: y2 },
+            { handle: "n", x: midX, y: y1 },
+            { handle: "e", x: x2, y: midY },
+            { handle: "s", x: midX, y: y2 },
+            { handle: "w", x: x1, y: midY },
+        ];
+    }
+
+    function drawSelectionHandles(context, rect) {
+        const region = selectedRegion();
+        if (!region || !Array.isArray(region.bbox)) return;
+        const scale = canvasPixelScale();
+        const size = Math.max(4, HANDLE_SIZE * scale);
+        const half = size / 2;
+        const lineWidth = Math.max(1, scale);
+        for (const point of rectHandlePoints(region.bbox, rect)) {
+            context.fillStyle = "#1a1a1a";
+            context.fillRect(point.x - half, point.y - half, size, size);
+            context.strokeStyle = "#ff8c00";
+            context.lineWidth = lineWidth;
+            context.strokeRect(
+                point.x - half + lineWidth / 2,
+                point.y - half + lineWidth / 2,
+                Math.max(1, size - lineWidth),
+                Math.max(1, size - lineWidth)
+            );
+        }
+    }
+
+    function computeLayoutRect(displayScale) {
+        const pixelWidth = Math.max(1, canvas.width || CANVAS_SIZE);
+        const pixelHeight = Math.max(1, canvas.height || CANVAS_SIZE);
         const width = Math.max(1, doc.canvas.w);
         const height = Math.max(1, doc.canvas.h);
-        const maxSize = CANVAS_SIZE - CANVAS_MARGIN * 2;
-        const scale = Math.min(maxSize / width, maxSize / height);
+        const margin = Math.min(
+            CANVAS_MARGIN * Math.max(1, displayScale || 1),
+            Math.floor(Math.min(pixelWidth, pixelHeight) / 4)
+        );
+        const maxWidth = Math.max(1, pixelWidth - margin * 2);
+        const maxHeight = Math.max(1, pixelHeight - margin * 2);
+        const scale = Math.min(maxWidth / width, maxHeight / height);
         const drawWidth = width * scale;
         const drawHeight = height * scale;
         return {
-            x: (CANVAS_SIZE - drawWidth) / 2,
-            y: (CANVAS_SIZE - drawHeight) / 2,
+            x: (pixelWidth - drawWidth) / 2,
+            y: (pixelHeight - drawHeight) / 2,
             w: drawWidth,
             h: drawHeight,
         };
     }
 
     function draw() {
+        syncCanvasSize();
         const context = canvas.getContext("2d");
         if (!context) return;
+        const pixelWidth = Math.max(1, canvas.width);
+        const pixelHeight = Math.max(1, canvas.height);
+        const scale = canvasPixelScale();
 
         context.setTransform(1, 0, 0, 1, 0, 0);
-        context.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+        context.clearRect(0, 0, pixelWidth, pixelHeight);
         context.fillStyle = "#222";
-        context.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+        context.fillRect(0, 0, pixelWidth, pixelHeight);
 
-        const rect = computeLayoutRect();
+        const rect = computeLayoutRect(scale);
         lastRect = rect;
 
         context.fillStyle = "#1a1a1a";
@@ -747,7 +930,7 @@ function installRegionEditor(node) {
         }
 
         context.strokeStyle = "rgba(255,255,255,0.08)";
-        context.lineWidth = 1;
+        context.lineWidth = Math.max(1, scale);
         for (let index = 1; index < 8; index += 1) {
             const x = rect.x + (rect.w * index) / 8;
             const y = rect.y + (rect.h * index) / 8;
@@ -779,20 +962,21 @@ function installRegionEditor(node) {
             context.fillRect(x, y, width, height);
 
             context.setLineDash(region.muted ? [4, 3] : []);
-            context.lineWidth = selected ? 2 : 1;
+            context.lineWidth = (selected ? 2 : 1) * Math.max(1, scale);
             context.strokeStyle = selected ? "#ff8c00" : region.muted ? "#888888" : "#4aa3ff";
             context.strokeRect(x + 0.5, y + 0.5, Math.max(0, width - 1), Math.max(0, height - 1));
             context.setLineDash([]);
 
             const label = String(index + 1);
-            context.font = "11px sans-serif";
-            const labelWidth = context.measureText(label).width + 8;
-            const labelY = Math.max(rect.y, y - 14);
+            context.font = (11 * Math.max(1, scale)) + "px sans-serif";
+            const labelWidth = context.measureText(label).width + 8 * Math.max(1, scale);
+            const labelHeight = 14 * Math.max(1, scale);
+            const labelY = Math.max(rect.y, y - labelHeight);
             context.fillStyle = selected ? "#ff8c00" : "rgba(0,0,0,0.65)";
-            context.fillRect(x, labelY, labelWidth, 14);
+            context.fillRect(x, labelY, labelWidth, labelHeight);
             context.fillStyle = "#ffffff";
             context.textBaseline = "middle";
-            context.fillText(label, x + 4, labelY + 7);
+            context.fillText(label, x + 4 * Math.max(1, scale), labelY + labelHeight / 2);
         });
 
         if (drag && drag.mode === "create") {
@@ -803,12 +987,14 @@ function installRegionEditor(node) {
                 const width = (bbox[2] - bbox[0]) * rect.w;
                 const height = (bbox[3] - bbox[1]) * rect.h;
                 context.setLineDash([4, 3]);
-                context.lineWidth = 1;
+                context.lineWidth = Math.max(1, scale);
                 context.strokeStyle = "#ff8c00";
                 context.strokeRect(x + 0.5, y + 0.5, width, height);
                 context.setLineDash([]);
             }
         }
+
+        drawSelectionHandles(context, rect);
 
         updateTokenHint();
     }
@@ -817,8 +1003,10 @@ function installRegionEditor(node) {
         if (!lastRect) return null;
         const bounds = canvas.getBoundingClientRect();
         if (!bounds.width || !bounds.height) return null;
-        const x = ((event.clientX - bounds.left) * CANVAS_SIZE) / bounds.width;
-        const y = ((event.clientY - bounds.top) * CANVAS_SIZE) / bounds.height;
+        const pixelWidth = Math.max(1, canvas.width);
+        const pixelHeight = Math.max(1, canvas.height);
+        const x = ((event.clientX - bounds.left) * pixelWidth) / bounds.width;
+        const y = ((event.clientY - bounds.top) * pixelHeight) / bounds.height;
         return {
             x: clamp01((x - lastRect.x) / lastRect.w),
             y: clamp01((y - lastRect.y) / lastRect.h),
@@ -840,6 +1028,17 @@ function installRegionEditor(node) {
             }
         }
         return null;
+    }
+
+    function hitHandleAt(position) {
+        const region = selectedRegion();
+        if (!region || !lastRect) return null;
+        return RegionResize.handleAtPoint(
+            region.bbox,
+            position,
+            { w: lastRect.w, h: lastRect.h },
+            HANDLE_TOLERANCE * canvasPixelScale()
+        );
     }
 
     function deleteSelected() {
@@ -871,7 +1070,8 @@ function installRegionEditor(node) {
             if (bbox && lastRect) {
                 const widthPx = (bbox[2] - bbox[0]) * lastRect.w;
                 const heightPx = (bbox[3] - bbox[1]) * lastRect.h;
-                if (widthPx >= MIN_BOX_PX && heightPx >= MIN_BOX_PX) {
+                const minBoxPx = MIN_BOX_PX * canvasPixelScale();
+                if (widthPx >= minBoxPx && heightPx >= minBoxPx) {
                     const region = createRegion(bbox);
                     doc.regions.push(region);
                     selectedId = region.id;
@@ -879,25 +1079,60 @@ function installRegionEditor(node) {
                     writeDoc();
                 }
             }
-        } else if (gesture.mode === "move") {
+        } else if (gesture.mode === "move" || gesture.mode === "resize") {
             writeDoc();
         }
         draw();
     }
 
+    const HANDLE_CURSORS = {
+        n: "ns-resize",
+        s: "ns-resize",
+        e: "ew-resize",
+        w: "ew-resize",
+        nw: "nwse-resize",
+        se: "nwse-resize",
+        ne: "nesw-resize",
+        sw: "nesw-resize",
+    };
+
+    function updateHandleCursor(event) {
+        const position = pointerToNorm(event);
+        const handle = position ? hitHandleAt(position) : null;
+        canvas.style.cursor = handle ? HANDLE_CURSORS[handle] : "";
+    }
+
     canvas.addEventListener("pointerdown", (event) => {
         if (event.button !== 0) return;
+        if (drag) return;
         canvas.focus({ preventScroll: true });
         const position = pointerToNorm(event);
         if (!position) return;
 
-        const hit = hitTest(position);
-        if (hit) {
-            selectedId = hit.id;
-            drag = { mode: "move", id: hit.id, start: position, origin: hit.bbox.slice() };
-        } else {
-            selectedId = null;
-            drag = { mode: "create", start: position, current: position };
+        const forceCreate = event.shiftKey || event.altKey;
+        const handle = forceCreate ? null : hitHandleAt(position);
+        if (handle) {
+            const region = selectedRegion();
+            if (region) {
+                drag = {
+                    mode: "resize",
+                    id: region.id,
+                    handle: handle,
+                    start: position,
+                    origin: region.bbox.slice(),
+                };
+            }
+        }
+
+        if (!drag) {
+            const hit = forceCreate ? null : hitTest(position);
+            if (hit) {
+                selectedId = hit.id;
+                drag = { mode: "move", id: hit.id, start: position, origin: hit.bbox.slice() };
+            } else {
+                selectedId = null;
+                drag = { mode: "create", start: position, current: position };
+            }
         }
         updateFields();
         draw();
@@ -907,7 +1142,10 @@ function installRegionEditor(node) {
     });
 
     canvas.addEventListener("pointermove", (event) => {
-        if (!drag) return;
+        if (!drag) {
+            updateHandleCursor(event);
+            return;
+        }
         const position = pointerToNorm(event);
         if (!position) return;
 
@@ -921,12 +1159,30 @@ function installRegionEditor(node) {
         if (!region) return;
         const deltaX = position.x - drag.start.x;
         const deltaY = position.y - drag.start.y;
+
+        if (drag.mode === "resize") {
+            const next = RegionResize.resizeBbox(
+                drag.origin,
+                drag.handle,
+                deltaX,
+                deltaY,
+                MIN_BOX
+            );
+            if (next) region.bbox = next;
+            draw();
+            return;
+        }
+
         const width = drag.origin[2] - drag.origin[0];
         const height = drag.origin[3] - drag.origin[1];
         const x1 = clampNumber(drag.origin[0] + deltaX, 0, 1 - width);
         const y1 = clampNumber(drag.origin[1] + deltaY, 0, 1 - height);
         region.bbox = [x1, y1, x1 + width, y1 + height];
         draw();
+    });
+
+    canvas.addEventListener("pointerleave", () => {
+        if (!drag) canvas.style.cursor = "";
     });
 
     canvas.addEventListener("pointerup", finishGesture);
@@ -1164,8 +1420,53 @@ function installRegionEditor(node) {
 
     renderArchiveOptions();
 
+    function resizeCanvasToNode() {
+        syncCanvasSize();
+        draw();
+    }
+
+    let resizeFrame = 0;
+    function scheduleCanvasResize() {
+        if (typeof requestAnimationFrame !== "function") {
+            resizeCanvasToNode();
+            return;
+        }
+        if (resizeFrame) return;
+        resizeFrame = requestAnimationFrame(() => {
+            resizeFrame = 0;
+            resizeCanvasToNode();
+        });
+    }
+
+    if (typeof ResizeObserver === "function") {
+        const observer = new ResizeObserver(scheduleCanvasResize);
+        observer.observe(container);
+        node.__studioSuiteRegionStopResize = () => {
+            observer.disconnect();
+            if (resizeFrame && typeof cancelAnimationFrame === "function") {
+                cancelAnimationFrame(resizeFrame);
+                resizeFrame = 0;
+            }
+        };
+    } else if (typeof window.addEventListener === "function") {
+        window.addEventListener("resize", scheduleCanvasResize);
+    }
+
+    const originalOnRemoved = node.onRemoved;
+    node.onRemoved = function (...args) {
+        node.__studioSuiteRegionStopResize?.();
+        return typeof originalOnRemoved === "function"
+            ? originalOnRemoved.apply(this, args)
+            : undefined;
+    };
+
     node.__studioSuiteRegionRefresh = readDocFromWidget;
+    node.__studioSuiteRegionResize = () => {
+        resizeCanvasToNode();
+        scheduleCanvasResize();
+    };
     readDocFromWidget();
+    resizeCanvasToNode();
 
     if (typeof node.setSize === "function") {
         const width = Math.max(Number(node.size?.[0]) || 0, MIN_NODE_WIDTH);
@@ -1190,6 +1491,7 @@ app.registerExtension({
         nodeType.prototype.onConfigure = function (...args) {
             const result = originalOnConfigure ? originalOnConfigure.apply(this, args) : undefined;
             this.__studioSuiteRegionRefresh?.();
+            this.__studioSuiteRegionResize?.();
             return result;
         };
     },
