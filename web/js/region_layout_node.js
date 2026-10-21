@@ -9,6 +9,7 @@ const MIN_BOX_PX = 8;
 const EDITOR_HEIGHT = 548;
 const MIN_NODE_WIDTH = 420;
 const MIN_NODE_HEIGHT = 800;
+const TOKEN_BUDGET = 4000;
 
 // == REGION_BOX_BRIDGE_BEGIN ==
 const RegionBoxBridge = (() => {
@@ -230,6 +231,15 @@ function installRegionEditor(node) {
     hint.textContent = "框：拖拽新建 / 点选 / Del 删除";
     hint.style.cssText = "font-size:11px;opacity:.6;";
 
+    const tokenHint = document.createElement("span");
+    tokenHint.textContent = "总 tokens: 0 / " + TOKEN_BUDGET;
+    tokenHint.style.cssText = "margin-left:8px;";
+    hint.appendChild(tokenHint);
+
+    const filterHint = document.createElement("div");
+    filterHint.textContent = "禁词过滤已启用";
+    filterHint.style.cssText = "font-size:10px;opacity:.5;";
+
     container.appendChild(toolbar);
     container.appendChild(canvas);
     container.appendChild(editPromptButton);
@@ -238,6 +248,7 @@ function installRegionEditor(node) {
     container.appendChild(zhInput);
     container.appendChild(tagsInput);
     container.appendChild(hint);
+    container.appendChild(filterHint);
 
     if (typeof node.addDOMWidget === "function") {
         node.addDOMWidget("region_editor", "customtext", container, {
@@ -334,6 +345,7 @@ function installRegionEditor(node) {
     }
 
     function writeDoc() {
+        updateTokenHint();
         const widget = findWidget("layout_json");
         if (!widget) return;
         const text = JSON.stringify(doc);
@@ -344,6 +356,41 @@ function installRegionEditor(node) {
             element.value = text;
         }
         node.graph?.setDirtyCanvas?.(true, true);
+    }
+
+    function estimateTokens(text) {
+        let total = 0;
+        for (const char of String(text || "")) {
+            total += char.charCodeAt(0) > 127 ? 1 : 0.3;
+        }
+        return Math.round(total);
+    }
+
+    function computeTokenTotal() {
+        let total = 0;
+        for (const region of doc.regions) {
+            if (!region || region.muted) continue;
+            const bbox = region.bbox;
+            if (!Array.isArray(bbox) || bbox[2] <= bbox[0] || bbox[3] <= bbox[1]) continue;
+            const tags = Array.isArray(region.tags)
+                ? region.tags.map(regionTagValue).filter(Boolean)
+                : [];
+            const nl = region.nl && typeof region.nl === "object" ? region.nl : {};
+            const caption = String(nl.en || "").trim() || String(nl.zh || "").trim();
+            const parts = [];
+            if (tags.length) parts.push(tags.join(", "));
+            if (caption) parts.push(caption);
+            total += estimateTokens(parts.join(", "));
+        }
+        return total;
+    }
+
+    function updateTokenHint() {
+        const total = computeTokenTotal();
+        const overBudget = total > TOKEN_BUDGET;
+        tokenHint.textContent = "总 tokens: " + total + " / " + TOKEN_BUDGET;
+        tokenHint.style.color = overBudget ? "#ff6b6b" : "";
+        tokenHint.style.opacity = overBudget ? "1" : "";
     }
 
     function nextRegionId() {
@@ -468,6 +515,8 @@ function installRegionEditor(node) {
                 context.setLineDash([]);
             }
         }
+
+        updateTokenHint();
     }
 
     function pointerToNorm(event) {

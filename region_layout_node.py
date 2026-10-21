@@ -44,6 +44,49 @@ CATEGORY_NAME = (
 
 SCHEMA = "prompt-studio/region-v1"
 
+PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
+TAGGING_TERMS_PATH = os.path.join(PROJECT_DIR, "config", "tagging_terms.json")
+TOKEN_BUDGET = 4000
+
+TAGGING_TERMS_DEFAULT = {
+    "banned_exact_tags": [
+        "masterpiece",
+        "best quality",
+        "detailed",
+        "ultra-detailed",
+        "highres",
+    ],
+    "banned_substrings": [
+        "azur lane",
+        "arknights",
+        "genshin impact",
+        "honkai: star rail",
+        "honkai impact 3rd",
+        "fate/grand order",
+        "kantai collection",
+        "touhou project",
+    ],
+    "banned_artifact_tags": [
+        "artist name",
+        "signature",
+        "character name",
+        "copyright name",
+        "character signature",
+        "twitter username",
+        "username",
+        "watermark",
+        "english text",
+        "copyright notice",
+        "cover page",
+        "doujin cover",
+        "magazine cover",
+        "cover art",
+    ],
+    "trigger_prefix": "",
+}
+
+_TAGGING_TERMS_CACHE = None
+
 _TAG_SEPARATOR = re.compile(r"[\s,]+")
 
 
@@ -74,6 +117,13 @@ def _js_number(value):
 def _js_round(value: float) -> int:
     # JS Math.round, not Python's banker's rounding.
     return int(math.floor(value + 0.5))
+
+
+def estimate_tokens(text) -> int:
+    total = 0.0
+    for char in str(text or ""):
+        total += 1.0 if ord(char) > 127 else 0.3
+    return _js_round(total)
 
 
 def _js_round_number(value) -> int:
@@ -155,6 +205,117 @@ def normalize_tag(raw) -> str:
     return _TAG_SEPARATOR.sub("_", text).strip("_")
 
 
+def _load_tagging_terms() -> dict:
+    global _TAGGING_TERMS_CACHE
+    if _TAGGING_TERMS_CACHE is not None:
+        return _TAGGING_TERMS_CACHE
+    merged = {
+        key: (list(value) if isinstance(value, list) else value)
+        for key, value in TAGGING_TERMS_DEFAULT.items()
+    }
+    try:
+        with open(TAGGING_TERMS_PATH, "r", encoding="utf-8") as handle:
+            loaded = json.load(handle)
+        if isinstance(loaded, dict):
+            merged.update(loaded)
+    except Exception:
+        pass
+    _TAGGING_TERMS_CACHE = merged
+    return merged
+
+
+def _tagging_terms_list(name: str) -> list:
+    value = _load_tagging_terms().get(name)
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _dedupe_terms(terms) -> list:
+    seen = set()
+    result = []
+    for term in terms:
+        text = str(term).strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        result.append(text)
+    return result
+
+
+def _filter_banned_tags(tags) -> list:
+    exact = set()
+    for name in ("banned_exact_tags", "banned_artifact_tags"):
+        for item in _tagging_terms_list(name):
+            exact.add(item.lower())
+            exact.add(normalize_tag(item))
+    substrings = []
+    for item in _tagging_terms_list("banned_substrings"):
+        substrings.append((item.lower(), normalize_tag(item)))
+
+    result = []
+    for tag in tags or []:
+        text = str(tag).strip()
+        if not text:
+            continue
+        lowered = text.lower()
+        normalized = normalize_tag(text)
+        if lowered in exact or normalized in exact:
+            continue
+        if any(fragment in lowered for fragment, _ in substrings):
+            continue
+        if any(fragment and fragment in normalized for _, fragment in substrings):
+            continue
+        result.append(tag)
+    return result
+
+
+def _banned_term_pattern(term: str):
+    escaped = re.escape(str(term).strip())
+    escaped = escaped.replace("\\ ", "[\\s_-]+")
+    return re.compile(r"(?<![A-Za-z0-9])" + escaped + r"(?![A-Za-z0-9])", re.IGNORECASE)
+
+
+def _sanitize_caption(text) -> str:
+    cleaned = str(text or "")
+    if not cleaned.strip():
+        return cleaned
+    terms = _dedupe_terms(
+        _tagging_terms_list("banned_artifact_tags")
+        + _tagging_terms_list("banned_substrings")
+        + _tagging_terms_list("banned_exact_tags")
+    )
+    for term in sorted(terms, key=len, reverse=True):
+        cleaned = _banned_term_pattern(term).sub(" ", cleaned)
+    cleaned = re.sub(r"\(\s*\)", " ", cleaned)
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    cleaned = re.sub(r"\s+([,.!?;:])", r"\1", cleaned)
+    cleaned = re.sub(r"([,.!?;:])\s*(?=[,.!?;:])", r"\1", cleaned)
+    cleaned = re.sub(r",\s*,", ",", cleaned)
+    cleaned = re.sub(r"^[\s,]+", "", cleaned)
+    cleaned = re.sub(r"[\s,]+$", "", cleaned)
+    cleaned = re.sub(r",\s*([.!?])", r"\1", cleaned)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned)
+    return cleaned.strip()
+
+
+def _filter_region_terms(region: dict) -> dict:
+    filtered = dict(region)
+    filtered["tags"] = _filter_banned_tags(region.get("tags"))
+    nl = region.get("nl") if isinstance(region.get("nl"), dict) else {}
+    filtered["nl"] = {
+        "zh": _sanitize_caption(nl.get("zh") or ""),
+        "en": _sanitize_caption(nl.get("en") or ""),
+    }
+    return filtered
+
+
+def _filter_doc_terms(doc: dict) -> dict:
+    filtered = dict(doc)
+    filtered["regions"] = [_filter_region_terms(region) for region in doc["regions"]]
+    return filtered
+
+
 def _nl_text(region, with_tags: bool) -> str:
     nl = region.get("nl") if isinstance(region, dict) else None
     if not isinstance(nl, dict):
@@ -191,6 +352,18 @@ def _active_regions(doc):
             continue
         active.append((region, bbox))
     return active
+
+
+def _region_token_stats(doc):
+    stats = []
+    for region, _bbox in _active_regions(doc):
+        nl = region.get("nl") if isinstance(region.get("nl"), dict) else {}
+        caption = str(nl.get("en") or "").strip() or str(nl.get("zh") or "").strip()
+        content = ", ".join(region.get("tags") or [])
+        if caption:
+            content = content + (", " if content else "") + caption
+        stats.append((str(region.get("id") or ""), estimate_tokens(content)))
+    return stats
 
 
 # These adapters mirror frontend/index.html RegionAdapters and must stay
@@ -400,11 +573,27 @@ class StudioSuiteRegionLayout:
         width = int(canvas_width)
         height = int(canvas_height)
         normalized = _sanitize_doc(raw_doc, width, height)
+        filtered = _filter_doc_terms(normalized)
 
         doc_json = dump_json(normalized)
-        moss_layout = dump_json(to_moss_doc(normalized))
-        ideogram_caption = dump_json(to_ideogram_doc(normalized))
-        tag_lines = to_tag_lines_doc(normalized)
+        moss_layout = dump_json(to_moss_doc(filtered))
+        ideogram_caption = dump_json(to_ideogram_doc(filtered))
+        tag_lines = to_tag_lines_doc(filtered)
+
+        stats = _region_token_stats(filtered)
+        total_tokens = sum(tokens for _region_id, tokens in stats)
+        print(
+            "[StudioSuiteRegionLayout] tokens: total=%d regions=[%s]"
+            % (
+                total_tokens,
+                ", ".join("%s=%d" % (region_id, tokens) for region_id, tokens in stats),
+            )
+        )
+        if total_tokens > TOKEN_BUDGET:
+            print(
+                "[StudioSuiteRegionLayout][warn] tokens 超出预算: total=%d > %d"
+                % (total_tokens, TOKEN_BUDGET)
+            )
         return (doc_json, moss_layout, ideogram_caption, tag_lines)
 
 

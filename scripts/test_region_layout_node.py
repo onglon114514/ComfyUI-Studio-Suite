@@ -12,6 +12,8 @@ import shutil
 import subprocess
 import sys
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 
 PACKAGE_DIR = Path(__file__).resolve().parent.parent
@@ -221,6 +223,109 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(region_layout.normalize_tag("Red Hat"), "red_hat")
         self.assertEqual(region_layout.normalize_tag("  red,hat  "), "red_hat")
         self.assertEqual(region_layout.normalize_tag("__Red__"), "red")
+
+
+class TagFilterTests(unittest.TestCase):
+    def test_filter_banned_exact_and_artifact_tags(self):
+        self.assertEqual(
+            region_layout._filter_banned_tags(
+                ["masterpiece", "Signature", "best quality", "red hat", "watermark"]
+            ),
+            ["red hat"],
+        )
+
+    def test_filter_banned_substrings_case_insensitive(self):
+        self.assertEqual(
+            region_layout._filter_banned_tags(
+                ["Azur Lane", "azur_lane", "ARKNIGHTS fanart", "blue archive", "Touhou Project"]
+            ),
+            ["blue archive"],
+        )
+
+    def test_filter_normalizes_before_exact_match(self):
+        self.assertEqual(
+            region_layout._filter_banned_tags(
+                ["MasterPiece", "Best,Quality", "Artist   Name", "red hat"]
+            ),
+            ["red hat"],
+        )
+
+    def test_sanitize_caption_removes_terms_and_tidies(self):
+        self.assertEqual(
+            region_layout._sanitize_caption(
+                "a beautiful Azur Lane girl, masterpiece, with Signature."
+            ),
+            "a beautiful girl, with.",
+        )
+        self.assertEqual(region_layout._sanitize_caption(""), "")
+
+    def test_estimate_tokens_ascii_cjk_mixed(self):
+        self.assertEqual(region_layout.estimate_tokens(""), 0)
+        self.assertEqual(region_layout.estimate_tokens("abc"), 1)
+        self.assertEqual(region_layout.estimate_tokens("abcd"), 1)
+        self.assertEqual(region_layout.estimate_tokens("你好"), 2)
+        self.assertEqual(region_layout.estimate_tokens("abc你好"), 3)
+
+    def test_compose_filters_region_tags_and_captions_but_not_doc_json(self):
+        doc = fixture()
+        region = doc["regions"][0]
+        region["tags"] = ["Masterpiece", "Azur Lane", "red hat"]
+        region["nl"]["en"] = "masterpiece girl from Azur Lane, signature"
+
+        doc_json, moss_json, ideogram_json, tag_lines = compose(doc)
+        stored = json.loads(doc_json)["regions"][0]
+        self.assertEqual(stored["tags"], ["masterpiece", "azur_lane", "red_hat"])
+        self.assertEqual(stored["nl"]["en"], "masterpiece girl from Azur Lane, signature")
+
+        self.assertEqual(json.loads(moss_json)["items"][0]["caption"], "girl from")
+        elements = json.loads(ideogram_json)["compositional_deconstruction"]["elements"]
+        self.assertEqual(elements[0]["desc"], "girl from")
+        self.assertEqual(tag_lines.split("\n")[0], "red_hat, girl from")
+        for banned in ("masterpiece", "azur lane", "signature"):
+            self.assertNotIn(banned, moss_json.lower())
+            self.assertNotIn(banned, tag_lines.lower())
+
+    def test_compose_uses_zh_caption_when_en_empty(self):
+        doc = fixture()
+        doc["regions"][0]["tags"] = []
+        doc["regions"][0]["nl"]["en"] = ""
+        doc["regions"][0]["nl"]["zh"] = "azur lane 少女, masterpiece"
+        _doc_json, _moss, _ideogram, tag_lines = compose(doc)
+        self.assertIn("少女", tag_lines)
+        self.assertNotIn("azur lane", tag_lines.lower())
+        self.assertNotIn("masterpiece", tag_lines.lower())
+
+    def test_compose_keeps_muted_regions_out_of_outputs(self):
+        doc = fixture()
+        muted = doc["regions"][2]
+        muted["tags"] = ["masterpiece"]
+        muted["nl"]["en"] = "azur lane"
+        doc_json, moss_json, _ideogram_json, tag_lines = compose(doc)
+        stored = json.loads(doc_json)["regions"][2]
+        self.assertTrue(stored["muted"])
+        self.assertEqual(stored["tags"], ["masterpiece"])
+        self.assertEqual(stored["nl"]["en"], "azur lane")
+        self.assertEqual(len(json.loads(moss_json)["items"]), 2)
+        self.assertNotIn("azur lane", tag_lines.lower())
+
+    def test_compose_token_line_and_over_budget_warning(self):
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            compose(fixture())
+        output = buffer.getvalue()
+        self.assertIn("tokens: total=8 regions=[r1=5, r2=3]", output)
+        self.assertNotIn("[warn]", output)
+
+        doc = fixture()
+        doc["regions"] = [doc["regions"][0]]
+        doc["regions"][0]["tags"] = []
+        doc["regions"][0]["nl"]["en"] = "字" * 4500
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            compose(doc)
+        output = buffer.getvalue()
+        self.assertIn("tokens: total=4500 regions=[r1=4500]", output)
+        self.assertIn("[warn]", output)
 
 
 class ComposeTests(unittest.TestCase):
