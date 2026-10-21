@@ -78,6 +78,9 @@ class LegacyPromptStudioController {
         this.#recoverInterruptedMinimap();
         this.node = null;
         this.fields = null;
+        this.editorMode = null;
+        this.regionSession = null;
+        this._regionLastValue = null;
         this.randomId = null;
         this.iframeReady = false;
         this.loadedTheme = null;
@@ -99,9 +102,32 @@ class LegacyPromptStudioController {
     }
 
     open(node, fields) {
-        ensureLocalStorageDefaults();
         this.node = node;
         this.fields = fields || {};
+        this.editorMode = "widget";
+        this.regionSession = null;
+        this._regionLastValue = null;
+        this.#openOverlay();
+    }
+
+    openRegionEditor({ initialText = "", onSave = null, title = "" } = {}) {
+        this.node = null;
+        this.fields = null;
+        this.editorMode = "region";
+        this.regionSession = {
+            initialText: typeof initialText === "string" ? initialText : "",
+            onSave: typeof onSave === "function" ? onSave : null,
+            title: typeof title === "string" ? title : "",
+        };
+        this._regionLastValue = this.regionSession.initialText;
+        this.#openOverlay();
+        if (this.iframe && this.regionSession.title) {
+            this.iframe.title = this.regionSession.title;
+        }
+    }
+
+    #openOverlay() {
+        ensureLocalStorageDefaults();
         this.randomId = (Math.random() + Date.now()).toString(32).slice(0, 10);
         localStorage.setItem(WINDOW_KEYS.randomId, this.randomId);
         const theme = localStorage.getItem(WINDOW_KEYS.theme) || "dark";
@@ -122,6 +148,11 @@ class LegacyPromptStudioController {
     }
 
     close() {
+        const mode = this.editorMode;
+        const session = this.regionSession;
+        const regionValue = typeof this._regionLastValue === "string"
+            ? this._regionLastValue
+            : (session ? session.initialText : "");
         this.overlay.hidden = true;
         this.overlay.style.display = "none";
         this.overlay.style.pointerEvents = "none";
@@ -133,17 +164,33 @@ class LegacyPromptStudioController {
         this.iframeReady = false;
         this.loadedTheme = null;
         this.iframe.src = "about:blank";
+        if (mode === "region" && session && session.onSave) {
+            try {
+                session.onSave(regionValue);
+            } catch (error) {
+                console.error("[ComfyUI-Studio-Suite] region prompt save failed", error);
+            }
+        }
+        this.editorMode = null;
+        this.regionSession = null;
+        this._regionLastValue = null;
     }
 
     #sendCurrentPromptSnapshot(handel = "responeseWeiLinPrompt") {
         if (!this.iframe?.contentWindow || !this.randomId) return;
+        const regionMode = this.editorMode === "region";
+        const regionText = regionMode
+            ? (typeof this._regionLastValue === "string"
+                ? this._regionLastValue
+                : (this.regionSession ? this.regionSession.initialText : ""))
+            : "";
         this.iframe.contentWindow.postMessage({
             handel,
-            g_value: this.fields?.positive ? safePromptText(widgetValue(this.fields.positive.widget)) : "",
-            n_value: this.fields?.negative ? safePromptText(widgetValue(this.fields.negative.widget)) : "",
+            g_value: regionMode ? safePromptText(regionText) : (this.fields?.positive ? safePromptText(widgetValue(this.fields.positive.widget)) : ""),
+            n_value: regionMode ? "" : (this.fields?.negative ? safePromptText(widgetValue(this.fields.negative.widget)) : ""),
             randomid: this.randomId,
             type: "prompt",
-            nodeName: legacyPromptNodeName(this.node),
+            nodeName: regionMode ? "WeiLinComfyUIPromptAllInOneGreat" : legacyPromptNodeName(this.node),
             studio_suite_bilingual: sanitizeBilingualState(this.node?.properties?.[BILINGUAL_PROPERTY]),
         }, window.location.origin);
     }
@@ -204,6 +251,10 @@ class LegacyPromptStudioController {
                 this.#sendCurrentPromptSnapshot();
                 break;
             case "changeWeiLinPrompt":
+                if (this.editorMode === "region") {
+                    this._regionLastValue = safePromptText(data.g_value);
+                    break;
+                }
                 if (this.node && this.fields) {
                     if (this.fields.positive) syncWidgetValue(this.node, this.fields.positive.widget, safePromptText(data.g_value));
                     if (this.fields.negative) syncWidgetValue(this.node, this.fields.negative.widget, safePromptText(data.n_value));

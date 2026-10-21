@@ -1,4 +1,5 @@
 import { app } from "/scripts/app.js";
+import { getLegacyPromptStudioController } from "./prompt_studio_controller.js";
 
 const NODE_NAME = "StudioSuiteRegionLayout";
 const SCHEMA = "prompt-studio/region-v1";
@@ -8,6 +9,59 @@ const MIN_BOX_PX = 8;
 const EDITOR_HEIGHT = 548;
 const MIN_NODE_WIDTH = 420;
 const MIN_NODE_HEIGHT = 800;
+
+// == REGION_BOX_BRIDGE_BEGIN ==
+const RegionBoxBridge = (() => {
+    function tagText(tag) {
+        return typeof tag === "string" ? tag : (tag && tag.tag) || "";
+    }
+
+    function normalizeTag(tag) {
+        return String(tag || "")
+            .trim()
+            .toLowerCase()
+            .replace(/\s+/g, "_")
+            .replace(/^_+|_+$/g, "");
+    }
+
+    function normalizeTags(text) {
+        const seen = new Set();
+        const tags = [];
+        for (const part of String(text || "").split(/[,，]/)) {
+            const tag = normalizeTag(part);
+            if (!tag || seen.has(tag)) continue;
+            seen.add(tag);
+            tags.push(tag);
+        }
+        return tags;
+    }
+
+    function boxToEditorText(box) {
+        const source = box && typeof box === "object" ? box : {};
+        const tags = Array.isArray(source.tags) ? source.tags.map(tagText).filter(Boolean) : [];
+        const en = source.nl && typeof source.nl.en === "string" ? source.nl.en : "";
+        const tagLine = tags.join(", ");
+        if (!tagLine) return en;
+        return en ? tagLine + "\n\n" + en : tagLine + "\n\n";
+    }
+
+    function editorTextToBox(text, box) {
+        const source = box && typeof box === "object" ? box : {};
+        const raw = typeof text === "string" ? text : "";
+        const separator = raw.match(/\n\s*\n/);
+        const tagsText = separator ? raw.slice(0, separator.index) : "";
+        const enText = separator ? raw.slice(separator.index + separator[0].length) : raw;
+        const nl = source.nl && typeof source.nl === "object" ? source.nl : {};
+        return Object.assign({}, source, {
+            nl: Object.assign({}, nl, { en: enText.trim() }),
+            tags: normalizeTags(tagsText),
+        });
+    }
+
+    return { boxToEditorText, editorTextToBox };
+})();
+window.RegionBoxBridge = RegionBoxBridge;
+// == REGION_BOX_BRIDGE_END ==
 
 function clampNumber(value, lo, hi) {
     return Math.min(hi, Math.max(lo, value));
@@ -164,12 +218,21 @@ function installRegionEditor(node) {
     const zhInput = makeTextInput("zh 描述");
     const tagsInput = makeTextInput("tags，逗号分隔");
 
+    const editPromptButton = document.createElement("button");
+    editPromptButton.type = "button";
+    editPromptButton.textContent = "打开 Prompt Studio 编辑选中框";
+    editPromptButton.disabled = true;
+    editPromptButton.style.cssText =
+        "height:24px;padding:0 10px;border:1px solid #3f5f8a;border-radius:3px;" +
+        "background:#1d2b3d;color:#bcd7ff;font:12px sans-serif;cursor:pointer;";
+
     const hint = document.createElement("div");
     hint.textContent = "框：拖拽新建 / 点选 / Del 删除";
     hint.style.cssText = "font-size:11px;opacity:.6;";
 
     container.appendChild(toolbar);
     container.appendChild(canvas);
+    container.appendChild(editPromptButton);
     container.appendChild(roleRow);
     container.appendChild(enInput);
     container.appendChild(zhInput);
@@ -219,6 +282,15 @@ function installRegionEditor(node) {
     function updateFields() {
         const region = selectedRegion();
         const disabled = !region;
+        const canEditPrompt = !!region && !region.muted;
+        editPromptButton.disabled = !canEditPrompt;
+        editPromptButton.title = canEditPrompt
+            ? "把选中框的 tags / en 带入 Prompt Studio 编辑，关闭时回写"
+            : region
+                ? "选中框已静音，不能编辑"
+                : "请先在画布中选中 1 个框";
+        editPromptButton.style.opacity = canEditPrompt ? "1" : "0.45";
+        editPromptButton.style.cursor = canEditPrompt ? "pointer" : "default";
         for (const element of [roleSelect, deleteButton, enInput, zhInput, tagsInput]) {
             element.disabled = disabled;
         }
@@ -557,6 +629,23 @@ function installRegionEditor(node) {
     });
 
     deleteButton.addEventListener("click", deleteSelected);
+
+    editPromptButton.addEventListener("click", () => {
+        const region = selectedRegion();
+        if (!region || region.muted) return;
+        getLegacyPromptStudioController().openRegionEditor({
+            initialText: RegionBoxBridge.boxToEditorText(region),
+            title: "Region Prompt Studio",
+            onSave: (text) => {
+                const index = doc.regions.findIndex((item) => item.id === region.id);
+                if (index < 0) return;
+                doc.regions[index] = RegionBoxBridge.editorTextToBox(text, doc.regions[index]);
+                writeDoc();
+                updateFields();
+                draw();
+            },
+        });
+    });
 
     function loadReferenceImage(dataUrl) {
         const image = new Image();
