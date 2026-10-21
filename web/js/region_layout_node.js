@@ -15,7 +15,8 @@ const MAX_EDITOR_HEIGHT = 2000;
 const MIN_NODE_WIDTH = 420;
 const MIN_NODE_HEIGHT = 800;
 const TOKEN_BUDGET = 4000;
-const MAX_CANVAS_DISPLAY = 640; // CSS 显示宽度上限，避免画布随节点无限拉宽
+const MAX_CANVAS_WIDTH = 720; // 画布显示宽度上限
+const MAX_CANVAS_HEIGHT = 640; // 画布显示高度上限（竖图按高限制，不再被裁切）
 const MAX_DPR = 2; // backing store 的 DPR 上限，控制高分屏下的像素总量
 
 // == REGION_BOX_BRIDGE_BEGIN ==
@@ -539,8 +540,7 @@ function installRegionEditor(node) {
     canvas.height = CANVAS_SIZE;
     canvas.tabIndex = 0;
     canvas.style.cssText =
-        "display:block;flex:none;width:100%;max-width:" + MAX_CANVAS_DISPLAY + "px;" +
-        "height:auto;aspect-ratio:1 / 1;margin:0 auto;background:#222;border-radius:4px;" +
+        "display:block;flex:none;margin:0 auto;background:#222;border-radius:4px;" +
         "touch-action:none;outline:none;";
 
     const roleRow = document.createElement("div");
@@ -864,18 +864,47 @@ function installRegionEditor(node) {
         return Math.max(0.01, canvas.width / bounds.width);
     }
 
+    let lastCanvasDisplay = { w: 0, h: 0 };
+    let widgetFitFrame = 0;
+
+    function scheduleWidgetFit() {
+        if (typeof requestAnimationFrame !== "function") return;
+        if (typeof node.computeSize !== "function" || typeof node.setSize !== "function") return;
+        if (widgetFitFrame) return;
+        widgetFitFrame = requestAnimationFrame(() => {
+            widgetFitFrame = 0;
+            const width = Number(node.size?.[0]) || MIN_NODE_WIDTH;
+            const currentHeight = Number(node.size?.[1]) || 0;
+            const targetHeight = Math.max(MIN_EDITOR_HEIGHT, node.computeSize()[1]);
+            // Grow-only: never fight the user when they made the node taller.
+            if (targetHeight > currentHeight + 2) {
+                node.setSize([width, targetHeight]);
+                node.graph?.setDirtyCanvas?.(true, true);
+            }
+        });
+    }
+
     function syncCanvasSize() {
         const size = canvasSize();
         const ratioWidth = Math.max(1, size.w);
         const ratioHeight = Math.max(1, size.h);
-        canvas.style.aspectRatio = ratioWidth + " / " + ratioHeight;
-        const bounds = canvas.getBoundingClientRect();
-        const rawWidth = Number(bounds.width) || Number(container.clientWidth) || CANVAS_SIZE;
-        const displayWidth = Math.max(1, Math.min(rawWidth, MAX_CANVAS_DISPLAY));
+        const containerWidth = Math.max(CANVAS_SIZE, Number(container.clientWidth) || CANVAS_SIZE);
+        const maxWidth = Math.min(containerWidth, MAX_CANVAS_WIDTH);
+        // Fit inside both caps: wide nodes stop at MAX_CANVAS_WIDTH, portrait
+        // canvases stop at MAX_CANVAS_HEIGHT instead of growing past the node.
+        const fit = Math.min(maxWidth / ratioWidth, MAX_CANVAS_HEIGHT / ratioHeight);
+        const displayWidth = Math.max(1, Math.floor(ratioWidth * fit));
+        const displayHeight = Math.max(1, Math.floor(ratioHeight * fit));
+        if (displayWidth !== lastCanvasDisplay.w || displayHeight !== lastCanvasDisplay.h) {
+            lastCanvasDisplay = { w: displayWidth, h: displayHeight };
+            canvas.style.width = displayWidth + "px";
+            canvas.style.height = displayHeight + "px";
+            scheduleWidgetFit();
+        }
         const rawDpr = Number(window.devicePixelRatio) > 0 ? Number(window.devicePixelRatio) : 1;
         const dpr = Math.min(rawDpr, MAX_DPR);
         const pixelWidth = Math.max(1, Math.round(displayWidth * dpr));
-        const pixelHeight = Math.max(1, Math.round((displayWidth * ratioHeight * dpr) / ratioWidth));
+        const pixelHeight = Math.max(1, Math.round(displayHeight * dpr));
         if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
             canvas.width = pixelWidth;
             canvas.height = pixelHeight;
