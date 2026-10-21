@@ -704,6 +704,7 @@
             const literal = literalOf(region);
             if (literal) line = 'text: "' + literal.replace(/"/g, '\\"') + '" | ' + line;
           }
+          if (!line) continue;
           lines.push(line);
         }
         return lines.join("\n");
