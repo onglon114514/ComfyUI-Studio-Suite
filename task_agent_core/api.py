@@ -20,11 +20,23 @@ def _read_tail(path, max_chars=16000):
     if not path:
         return ""
     path = Path(path)
-    if not path.exists() or not path.is_file():
+    try:
+        if not path.exists() or not path.is_file():
+            return ""
+        with path.open("rb") as handle:
+            try:
+                handle.seek(0, 2)
+                size = handle.tell()
+            except OSError:
+                return ""
+            if size <= max_chars:
+                handle.seek(0)
+                data = handle.read()
+            else:
+                handle.seek(size - max_chars)
+                data = handle.read(max_chars)
+    except OSError:
         return ""
-    data = path.read_bytes()
-    if len(data) > max_chars:
-        data = data[-max_chars:]
     return data.decode("utf-8", errors="replace")
 
 
@@ -74,12 +86,21 @@ def _queue_summary(request=None):
         prompt_queue = getattr(prompt_server, "prompt_queue", None)
         if prompt_queue is None:
             return {"running": None, "pending": None, "error": "prompt_queue unavailable"}
-        current_queue = prompt_queue.get_current_queue()
-        running = current_queue[0] if current_queue and len(current_queue) > 0 else []
-        pending = current_queue[1] if current_queue and len(current_queue) > 1 else []
+        mutex = getattr(prompt_queue, "mutex", None)
+        queue_list = getattr(prompt_queue, "queue", None)
+        if mutex is not None and isinstance(queue_list, list):
+            # Count under the queue's own lock; get_current_queue() would
+            # deepcopy the whole pending list just to read its length.
+            with mutex:
+                running = len(getattr(prompt_queue, "currently_running", None) or [])
+                pending = len(queue_list)
+        else:
+            current_queue = prompt_queue.get_current_queue()
+            running = len(current_queue[0]) if current_queue and len(current_queue) > 0 else 0
+            pending = len(current_queue[1]) if current_queue and len(current_queue) > 1 else 0
         return {
-            "running": len(running) if isinstance(running, list) else 0,
-            "pending": len(pending) if isinstance(pending, list) else 0,
+            "running": running,
+            "pending": pending,
             "remaining": prompt_queue.get_tasks_remaining(),
         }
     except Exception as error:
