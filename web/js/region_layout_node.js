@@ -920,7 +920,13 @@ function installRegionEditor(node) {
     }
 
     function syncCanvasSize() {
-        const size = canvasSize();
+        // doc.canvas is the fastest source: widget callbacks update it before
+        // redrawing, while widget.value may still hold the previous number.
+        const docSize = doc && doc.canvas ? doc.canvas : null;
+        const size =
+            docSize && Number(docSize.w) > 0 && Number(docSize.h) > 0
+                ? { w: Number(docSize.w), h: Number(docSize.h) }
+                : canvasSize();
         const ratioWidth = Math.max(1, size.w);
         const ratioHeight = Math.max(1, size.h);
         const containerWidth = Math.max(CANVAS_SIZE, Number(container.clientWidth) || CANVAS_SIZE);
@@ -1471,10 +1477,17 @@ function installRegionEditor(node) {
         const widget = findWidget(name);
         if (!widget) continue;
         const originalCallback = widget.callback;
-        widget.callback = function (...args) {
-            const result = originalCallback ? originalCallback.apply(this, args) : undefined;
+        widget.callback = function (value, ...rest) {
+            const result = originalCallback ? originalCallback.apply(this, arguments) : undefined;
             if (readingDoc) return result;
+            // ComfyUI may fire the callback before widget.value is written,
+            // so use the incoming value for the immediate redraw.
             const size = canvasSize();
+            const next = Number(value);
+            if (Number.isFinite(next) && next > 0) {
+                if (name === "canvas_width") size.w = Math.round(next);
+                else size.h = Math.round(next);
+            }
             doc.canvas = { w: size.w, h: size.h };
             draw();
             writeDoc();
