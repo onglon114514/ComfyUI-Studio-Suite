@@ -552,7 +552,7 @@ class StudioSuiteRegionLayout:
             },
             "optional": {
                 "image": ("IMAGE",),
-                "global_caption": ("STRING", {"forceInput": True}),
+                "global_caption": ("STRING", {"default": "", "multiline": False}),
             },
         }
 

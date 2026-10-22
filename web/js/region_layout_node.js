@@ -672,6 +672,8 @@ function installRegionEditor(node) {
         "border-radius:3px;color:#ddd;font:12px sans-serif;padding:4px 6px;resize:vertical;";
     globalInput.addEventListener("input", () => {
         doc.global.caption_en = globalInput.value;
+        const widget = findWidget("global_caption");
+        if (widget && widget.value !== globalInput.value) widget.value = globalInput.value;
         writeDoc();
     });
 
@@ -1379,6 +1381,19 @@ function installRegionEditor(node) {
     }
 
     const layoutWidget = findWidget("layout_json");
+    const globalWidget = findWidget("global_caption");
+    if (globalWidget) {
+        const originalGlobalCallback = globalWidget.callback;
+        globalWidget.callback = function (...args) {
+            const result = originalGlobalCallback ? originalGlobalCallback.apply(this, args) : undefined;
+            if (!readingDoc && typeof globalWidget.value === "string" && globalInput.value !== globalWidget.value) {
+                globalInput.value = globalWidget.value;
+                doc.global.caption_en = globalWidget.value;
+                writeDoc();
+            }
+            return result;
+        };
+    }
     if (layoutWidget) {
         // Internal storage only: hide the textarea entirely. ComfyUI multiline
         // widgets grow with the node and would eat the editor's space.
