@@ -393,5 +393,37 @@ class PanelParityTests(unittest.TestCase):
         self.assertEqual(js["tag_lines"], tag_lines)
 
 
+class GlobalCaptionInputTests(unittest.TestCase):
+    def test_wired_caption_overrides_summary_and_doc_json_stays_editor_state(self):
+        doc = fixture()
+        doc["global"]["caption_en"] = "editor caption"
+        node = region_layout.StudioSuiteRegionLayout()
+        doc_json, moss_json, ideogram_json, _tags = node.compose(
+            json.dumps(doc, ensure_ascii=False), 1024, 1024, None, "wired scene caption"
+        )
+        self.assertEqual(json.loads(moss_json)["summary"]["caption"], "wired scene caption")
+        self.assertEqual(json.loads(ideogram_json)["high_level_description"], "wired scene caption")
+        self.assertEqual(json.loads(doc_json)["global"]["caption_en"], "editor caption")
+
+    def test_empty_or_whitespace_caption_falls_back_to_doc(self):
+        doc = fixture()
+        doc["global"]["caption_en"] = "editor caption"
+        node = region_layout.StudioSuiteRegionLayout()
+        for override in (None, "", "   "):
+            _d, moss_json, _i, _t = node.compose(
+                json.dumps(doc, ensure_ascii=False), 1024, 1024, None, override
+            )
+            self.assertEqual(json.loads(moss_json)["summary"]["caption"], "editor caption")
+
+    def test_wired_caption_goes_through_banned_term_filter(self):
+        doc = fixture()
+        node = region_layout.StudioSuiteRegionLayout()
+        _d, moss_json, _i, _t = node.compose(
+            json.dumps(doc, ensure_ascii=False), 1024, 1024, None,
+            "masterpiece girl from Azur Lane",
+        )
+        self.assertEqual(json.loads(moss_json)["summary"]["caption"], "girl from")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

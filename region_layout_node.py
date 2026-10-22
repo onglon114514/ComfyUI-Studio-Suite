@@ -313,6 +313,12 @@ def _filter_region_terms(region: dict) -> dict:
 def _filter_doc_terms(doc: dict) -> dict:
     filtered = dict(doc)
     filtered["regions"] = [_filter_region_terms(region) for region in doc["regions"]]
+    global_info = dict(doc.get("global") or {})
+    for key in ("caption_en", "caption_zh"):
+        value = global_info.get(key)
+        if isinstance(value, str) and value:
+            global_info[key] = _sanitize_caption(value)
+    filtered["global"] = global_info
     return filtered
 
 
@@ -546,6 +552,7 @@ class StudioSuiteRegionLayout:
             },
             "optional": {
                 "image": ("IMAGE",),
+                "global_caption": ("STRING", {"forceInput": True}),
             },
         }
 
@@ -554,7 +561,7 @@ class StudioSuiteRegionLayout:
     FUNCTION = "compose"
     CATEGORY = CATEGORY_NAME
 
-    def compose(self, layout_json, canvas_width, canvas_height, image=None):
+    def compose(self, layout_json, canvas_width, canvas_height, image=None, global_caption=None):
         text = layout_json.strip() if isinstance(layout_json, str) else ""
         if not text:
             print("[StudioSuiteRegionLayout] layout_json 为空，未生成区域布局输出")
@@ -573,7 +580,15 @@ class StudioSuiteRegionLayout:
         width = int(canvas_width)
         height = int(canvas_height)
         normalized = _sanitize_doc(raw_doc, width, height)
-        filtered = _filter_doc_terms(normalized)
+        output_doc = dict(normalized)
+        output_doc["global"] = dict(normalized.get("global") or {})
+        override = global_caption.strip() if isinstance(global_caption, str) else ""
+        if override:
+            # Wired STRING input wins over the in-node caption box; keep it on
+            # a copy so doc_json still reflects the editor state.
+            output_doc["global"]["caption_en"] = override
+            output_doc["global"]["caption_zh"] = ""
+        filtered = _filter_doc_terms(output_doc)
 
         doc_json = dump_json(normalized)
         moss_layout = dump_json(to_moss_doc(filtered))
