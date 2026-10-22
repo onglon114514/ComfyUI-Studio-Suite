@@ -21,12 +21,12 @@ try {
   console.error("RegionResize 块 eval 失败: " + err.message);
   process.exit(1);
 }
-if (!RegionResize || typeof RegionResize.resizeBbox !== "function" || typeof RegionResize.handleAtPoint !== "function") {
+if (!RegionResize || typeof RegionResize.resizeBbox !== "function" || typeof RegionResize.handleAtPoint !== "function" || typeof RegionResize.badgeRect !== "function") {
   console.error("RegionResize 未导出预期函数");
   process.exit(1);
 }
 
-const { resizeBbox, handleAtPoint } = RegionResize;
+const { resizeBbox, handleAtPoint, badgeRect } = RegionResize;
 
 function bbox(values) {
   return values.slice();
@@ -202,6 +202,33 @@ test("resizeBbox：非法 origin 返回 null", () => {
 
 test("resizeBbox：非有限 dx/dy 按 0 处理，不移动", () => {
   assertBbox(resizeBbox([0.2, 0.2, 0.6, 0.6], "se", NaN, undefined, 0.01), [0.2, 0.2, 0.6, 0.6]);
+});
+
+test("badgeRect：位于框左上角上方", () => {
+  const rect = { x: 10, y: 20, w: 200, h: 100 };
+  const badge = badgeRect([0.25, 0.25, 0.75, 0.5], rect, 1, 10);
+  near(badge.x, 60);
+  near(badge.y, 20 + 25 - 14);
+  near(badge.w, 18);
+  near(badge.h, 14);
+});
+
+test("badgeRect：触顶时夹在画布内", () => {
+  const rect = { x: 0, y: 0, w: 100, h: 100 };
+  const badge = badgeRect([0, 0, 0.5, 0.5], rect, 1, 8);
+  near(badge.y, 0);
+});
+
+test("badgeRect：随 scale 放大", () => {
+  const rect = { x: 0, y: 0, w: 300, h: 300 };
+  const badge = badgeRect([0.5, 0.5, 1, 1], rect, 2, 10);
+  near(badge.h, 28);
+  near(badge.w, 26);
+});
+
+test("badgeRect：非法输入返回 null", () => {
+  assert.strictEqual(badgeRect(null, { x: 0, y: 0, w: 10, h: 10 }, 1, 5), null);
+  assert.strictEqual(badgeRect([0.1, 0.1, 0.2, 0.2], null, 1, 5), null);
 });
 
 let passed = 0;

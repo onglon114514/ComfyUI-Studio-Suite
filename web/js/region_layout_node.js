@@ -111,6 +111,17 @@ const RegionResize = (() => {
 
     // 拖动某个 handle：只移动该 handle 对应的边，对边/对角保持固定。
     // 非法 handle 抛错；origin 非法返回 null。
+    function badgeRect(bbox, rect, scale, textWidth) {
+        const s = Math.max(1, Number(scale) || 1);
+        const b = normalizeBox(bbox);
+        if (!b || !rect) return null;
+        const x = rect.x + b[0] * rect.w;
+        const y = rect.y + b[1] * rect.h;
+        const w = (Number(textWidth) || 0) + 8 * s;
+        const h = 14 * s;
+        return { x: x, y: Math.max(rect.y, y - h), w: w, h: h };
+    }
+
     function resizeBbox(origin, handle, dx, dy, minSize) {
         if (!HANDLE_ORDER.includes(handle)) {
             throw new Error('RegionResize: unknown handle "' + String(handle) + '"');
@@ -171,7 +182,7 @@ const RegionResize = (() => {
         return null;
     }
 
-    return { resizeBbox, handleAtPoint };
+    return { resizeBbox, handleAtPoint, badgeRect };
 })();
 window.RegionResize = RegionResize;
 // == REGION_RESIZE_END ==
@@ -591,7 +602,7 @@ function installRegionEditor(node) {
 
     const hint = document.createElement("div");
     hint.textContent =
-        "选择：点选/拖动/拖角缩放 · 新建框：任意位置拖拽（可叠框） · Del 删除";
+        "选择：点选/拖动/拖角缩放/点数字角标精准选重叠框 · 新建框：任意位置拖拽（可叠框） · Del 删除";
     hint.style.cssText = "font-size:11px;opacity:.6;";
 
     const tokenHint = document.createElement("span");
@@ -1094,6 +1105,15 @@ function installRegionEditor(node) {
         updateTokenHint();
     }
 
+    function pointerToCanvas(event) {
+        const bounds = canvas.getBoundingClientRect();
+        if (!bounds.width || !bounds.height) return null;
+        return {
+            x: ((event.clientX - bounds.left) * canvas.width) / bounds.width,
+            y: ((event.clientY - bounds.top) * canvas.height) / bounds.height,
+        };
+    }
+
     function pointerToNorm(event) {
         if (!lastRect) return null;
         const bounds = canvas.getBoundingClientRect();
@@ -1118,6 +1138,30 @@ function installRegionEditor(node) {
                 position.x <= bbox[2] &&
                 position.y >= bbox[1] &&
                 position.y <= bbox[3]
+            ) {
+                return region;
+            }
+        }
+        return null;
+    }
+
+    function hitBadgeAt(point) {
+        if (!point || !lastRect) return null;
+        const context = canvas.getContext("2d");
+        if (!context) return null;
+        const scale = canvasPixelScale();
+        for (let index = doc.regions.length - 1; index >= 0; index -= 1) {
+            const region = doc.regions[index];
+            if (!region.bbox) continue;
+            context.font = (11 * Math.max(1, scale)) + "px sans-serif";
+            const textWidth = context.measureText(String(index + 1)).width;
+            const badge = RegionResize.badgeRect(region.bbox, lastRect, scale, textWidth);
+            if (
+                badge &&
+                point.x >= badge.x - 2 &&
+                point.x <= badge.x + badge.w + 2 &&
+                point.y >= badge.y - 2 &&
+                point.y <= badge.y + badge.h + 2
             ) {
                 return region;
             }
@@ -1208,9 +1252,20 @@ function installRegionEditor(node) {
         const position = pointerToNorm(event);
         if (!position) return;
 
-        // select：handle → resize，命中框 → 选中+move，空白 → create。
-        // draw：忽略 handle / 命中框，任意位置一律 create（因此可以叠框）。
+        // select：数字角标 → 精准选中（重叠框），handle → resize，命中框 → 选中+move，空白 → create。
+        // draw：忽略角标 / handle / 命中框，任意位置一律 create（因此可以叠框）。
         const drawMode = editorMode === "draw";
+        const badgeHit = drawMode ? null : hitBadgeAt(pointerToCanvas(event));
+        if (badgeHit) {
+            selectedId = badgeHit.id;
+            drag = null;
+            updateFields();
+            draw();
+            canvas.setPointerCapture?.(event.pointerId);
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+        }
         const handle = drawMode ? null : hitHandleAt(position);
         if (handle) {
             const region = selectedRegion();
