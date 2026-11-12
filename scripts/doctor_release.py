@@ -116,6 +116,7 @@ def check_web_extension_surface(report):
         "web/js/color_widget.js",
         "web/js/prompt_studio_controller.js",
         "web/js/prompt_studio_nodes.js",
+        "web/js/region_layout_node.js",
         "web/js/task_agent_dynamic_slots.js",
         "web/js/task_agent_live_monitor.js",
     }

@@ -65,7 +65,7 @@ python skills/moss-image-prompt-enhancer/scripts/compile_prompt.py draft.json --
 
 ## 4. 配合 Region Layout 节点的最短路径
 
-1. 节点 `canvas_width/height` = 你准备生成的分辨率（16 倍数，如 1024×1024 / 1216×832）。
+1. 节点 `canvas_width/height` = 你准备生成的分辨率（16 倍数，如 1024×1024 / 1216×832）。这两个值同时作为 `canvas_width` / `canvas_height` 两个 INT 输出口输出，直接连空 Latent 的宽高即可保证分辨率与画布一致。
 2. 每个框：`obj` 框填英文描述；`text` 框填字体/排版描述 + 逐字文本。
 3. 全局 `caption_en` 写整幅画面的场景描述（英文）。
 4. 节点 `moss_layout` 输出 → 粘到 MOSS 工作流的**正向提示词**（Layout 工作流里也可以接 `MOSSImageLayoutPrompt` 的上游）。

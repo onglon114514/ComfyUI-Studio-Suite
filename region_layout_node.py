@@ -556,29 +556,36 @@ class StudioSuiteRegionLayout:
             },
         }
 
-    RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING")
-    RETURN_NAMES = ("doc_json", "moss_layout", "ideogram_caption", "tag_lines")
+    RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING", "INT", "INT")
+    RETURN_NAMES = (
+        "doc_json",
+        "moss_layout",
+        "ideogram_caption",
+        "tag_lines",
+        "canvas_width",
+        "canvas_height",
+    )
     FUNCTION = "compose"
     CATEGORY = CATEGORY_NAME
 
     def compose(self, layout_json, canvas_width, canvas_height, image=None, global_caption=None):
+        width = int(canvas_width)
+        height = int(canvas_height)
         text = layout_json.strip() if isinstance(layout_json, str) else ""
         if not text:
             print("[StudioSuiteRegionLayout] layout_json 为空，未生成区域布局输出")
-            return ("", "", "", "")
+            return ("", "", "", "", width, height)
 
         try:
             raw_doc = json.loads(text)
         except Exception as exc:
             print(f"[StudioSuiteRegionLayout] layout_json 解析失败，未生成输出：{exc}")
-            return ("", "", "", "")
+            return ("", "", "", "", width, height)
 
         if not isinstance(raw_doc, dict):
             print("[StudioSuiteRegionLayout] layout_json 不是 JSON 对象，未生成输出")
-            return ("", "", "", "")
+            return ("", "", "", "", width, height)
 
-        width = int(canvas_width)
-        height = int(canvas_height)
         normalized = _sanitize_doc(raw_doc, width, height)
         output_doc = dict(normalized)
         output_doc["global"] = dict(normalized.get("global") or {})
@@ -609,7 +616,7 @@ class StudioSuiteRegionLayout:
                 "[StudioSuiteRegionLayout][warn] tokens 超出预算: total=%d > %d"
                 % (total_tokens, TOKEN_BUDGET)
             )
-        return (doc_json, moss_layout, ideogram_caption, tag_lines)
+        return (doc_json, moss_layout, ideogram_caption, tag_lines, width, height)
 
 
 NODE_CLASS_MAPPINGS = {

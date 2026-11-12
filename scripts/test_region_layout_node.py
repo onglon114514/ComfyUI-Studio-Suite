@@ -239,7 +239,13 @@ class TagFilterTests(unittest.TestCase):
             region_layout._filter_banned_tags(
                 ["Azur Lane", "azur_lane", "ARKNIGHTS fanart", "blue archive", "Touhou Project"]
             ),
-            ["blue archive"],
+            [],
+        )
+
+    def test_filter_keeps_unlisted_tags(self):
+        self.assertEqual(
+            region_layout._filter_banned_tags(["long hair", "school uniform"]),
+            ["long hair", "school uniform"],
         )
 
     def test_filter_normalizes_before_exact_match(self):
@@ -272,7 +278,7 @@ class TagFilterTests(unittest.TestCase):
         region["tags"] = ["Masterpiece", "Azur Lane", "red hat"]
         region["nl"]["en"] = "masterpiece girl from Azur Lane, signature"
 
-        doc_json, moss_json, ideogram_json, tag_lines = compose(doc)
+        doc_json, moss_json, ideogram_json, tag_lines, *_ = compose(doc)
         stored = json.loads(doc_json)["regions"][0]
         self.assertEqual(stored["tags"], ["masterpiece", "azur_lane", "red_hat"])
         self.assertEqual(stored["nl"]["en"], "masterpiece girl from Azur Lane, signature")
@@ -290,7 +296,7 @@ class TagFilterTests(unittest.TestCase):
         doc["regions"][0]["tags"] = []
         doc["regions"][0]["nl"]["en"] = ""
         doc["regions"][0]["nl"]["zh"] = "azur lane 少女, masterpiece"
-        _doc_json, _moss, _ideogram, tag_lines = compose(doc)
+        _doc_json, _moss, _ideogram, tag_lines, *_ = compose(doc)
         self.assertIn("少女", tag_lines)
         self.assertNotIn("azur lane", tag_lines.lower())
         self.assertNotIn("masterpiece", tag_lines.lower())
@@ -300,7 +306,7 @@ class TagFilterTests(unittest.TestCase):
         muted = doc["regions"][2]
         muted["tags"] = ["masterpiece"]
         muted["nl"]["en"] = "azur lane"
-        doc_json, moss_json, _ideogram_json, tag_lines = compose(doc)
+        doc_json, moss_json, _ideogram_json, tag_lines, *_ = compose(doc)
         stored = json.loads(doc_json)["regions"][2]
         self.assertTrue(stored["muted"])
         self.assertEqual(stored["tags"], ["masterpiece"])
@@ -332,12 +338,28 @@ class ComposeTests(unittest.TestCase):
     def test_empty_and_invalid_docs_return_empty_strings(self):
         node = region_layout.StudioSuiteRegionLayout()
         for payload in ("", "   ", "{not json", "[]", "null"):
-            self.assertEqual(node.compose(payload, 1024, 1024), ("", "", "", ""))
-        self.assertEqual(node.compose(None, 1024, 1024), ("", "", "", ""))
+            self.assertEqual(
+                node.compose(payload, 1024, 1024), ("", "", "", "", 1024, 1024)
+            )
+        self.assertEqual(
+            node.compose(None, 1024, 1024), ("", "", "", "", 1024, 1024)
+        )
+
+    def test_canvas_size_outputs_follow_widgets_even_without_layout(self):
+        node = region_layout.StudioSuiteRegionLayout()
+        self.assertEqual(node.compose("", 832, 1216)[4:], (832, 1216))
+        self.assertEqual(node.compose("{not json", 832, 1216)[4:], (832, 1216))
+        self.assertEqual(compose(fixture(), 832, 1216)[4:], (832, 1216))
+
+    def test_return_names_match_declared_types(self):
+        node = region_layout.StudioSuiteRegionLayout
+        self.assertEqual(len(node.RETURN_TYPES), len(node.RETURN_NAMES))
+        self.assertEqual(node.RETURN_TYPES[4:], ("INT", "INT"))
+        self.assertEqual(node.RETURN_NAMES[4:], ("canvas_width", "canvas_height"))
 
     def test_canvas_widget_overrides_doc_canvas(self):
         outputs = compose(fixture(), 768, 768)
-        doc_json, moss_json, _ideogram, tag_lines = outputs
+        doc_json, moss_json, _ideogram, tag_lines, *_ = outputs
         self.assertEqual(json.loads(doc_json)["canvas"], {"w": 768, "h": 768})
         self.assertEqual(
             [item["bbox"] for item in json.loads(moss_json)["items"]],
@@ -360,7 +382,7 @@ class ComposeTests(unittest.TestCase):
         )
 
     def test_compose_normalizes_tags_in_doc_json_and_lines(self):
-        doc_json, _moss, _ideogram, tag_lines = compose(fixture())
+        doc_json, _moss, _ideogram, tag_lines, *_ = compose(fixture())
         doc = json.loads(doc_json)
         self.assertEqual(doc["regions"][0]["tags"], ["red_hat"])
         self.assertEqual(tag_lines.split("\n")[0], "red_hat, a red hat")
@@ -387,7 +409,7 @@ class PanelParityTests(unittest.TestCase):
         raw_doc = fixture()
         ingested = region_layout._sanitize_doc(raw_doc, 1024, 1024)
         js = run_panel_adapters(ingested)
-        _doc_json, moss_json, ideogram_json, tag_lines = compose(raw_doc)
+        _doc_json, moss_json, ideogram_json, tag_lines, *_ = compose(raw_doc)
         self.assertEqual(js["moss"], moss_json)
         self.assertEqual(js["ideogram"], ideogram_json)
         self.assertEqual(js["tag_lines"], tag_lines)
@@ -398,7 +420,7 @@ class GlobalCaptionInputTests(unittest.TestCase):
         doc = fixture()
         doc["global"]["caption_en"] = "editor caption"
         node = region_layout.StudioSuiteRegionLayout()
-        doc_json, moss_json, ideogram_json, _tags = node.compose(
+        doc_json, moss_json, ideogram_json, _tags, *_ = node.compose(
             json.dumps(doc, ensure_ascii=False), 1024, 1024, None, "wired scene caption"
         )
         self.assertEqual(json.loads(moss_json)["summary"]["caption"], "wired scene caption")
@@ -410,7 +432,7 @@ class GlobalCaptionInputTests(unittest.TestCase):
         doc["global"]["caption_en"] = "editor caption"
         node = region_layout.StudioSuiteRegionLayout()
         for override in (None, "", "   "):
-            _d, moss_json, _i, _t = node.compose(
+            _d, moss_json, _i, _t, *_ = node.compose(
                 json.dumps(doc, ensure_ascii=False), 1024, 1024, None, override
             )
             self.assertEqual(json.loads(moss_json)["summary"]["caption"], "editor caption")
@@ -418,7 +440,7 @@ class GlobalCaptionInputTests(unittest.TestCase):
     def test_wired_caption_goes_through_banned_term_filter(self):
         doc = fixture()
         node = region_layout.StudioSuiteRegionLayout()
-        _d, moss_json, _i, _t = node.compose(
+        _d, moss_json, _i, _t, *_ = node.compose(
             json.dumps(doc, ensure_ascii=False), 1024, 1024, None,
             "masterpiece girl from Azur Lane",
         )
