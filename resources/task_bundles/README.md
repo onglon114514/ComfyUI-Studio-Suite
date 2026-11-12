@@ -26,5 +26,20 @@
   - 禁词与启动词来自 `config/tagging_terms.json`；可用 `fixed_inputs.trigger_prefix` 覆盖启动词，行格式为 `trigger_prefix, caption`。
 - `chain_qwen_vision_to_caption.json`
   - 视觉模型读图 -> 视觉打标 -> 自然语言 caption（不依赖 WD14；需视觉档案，见 `docs/QWEN_BACKEND_zh-CN.md`）。
+- `chain_wd14_to_moss_train_caption.json`
+  - WD14 -> MOSS-Image 训练 caption（120-200 词英文长描述，无 tags 行，不写画布尺寸）。
+- `chain_wd14_to_flux2_train_caption.json`
+  - WD14 -> FLUX.2 训练 caption（50-100 词，景别机位->主体->姿态->细节->前景背景）。
+- `chain_wd14_to_qwen_image_train_caption.json`
+  - WD14 -> Qwen-Image 训练 caption（自然描述、不用结构化格式、图中文字加引号）。
+- `chain_wd14_to_zimage_train_caption.json`
+  - WD14 -> Z-Image 训练 caption（120-220 词密集描述，OCR 原文加双引号，禁 8K/杰作）。
+- `chain_wd14_to_longcat_train_caption.json`
+  - WD14 -> LongCat-Image 训练 caption（要渲染的文字必须带引号）。
+- `chain_qwen_vision_to_moss_caption.json`
+  - 视觉链路版 MOSS caption：读图直接写整段描述，文字原样引用。
+- `chain_image_to_moss_style_caption.json`
+  - 画风 LoRA 专用：读图写 MOSS caption，`caption_style_mode=style` + 只写可见内容，画风/媒介/氛围/主题解读会被提示词和格式化层双重过滤。
+- 这批新 bundle 的规则来源与适用边界见 `docs/NEW_MODEL_CAPTION_CONVENTIONS_zh-CN.md`；需要 tags 行时继续用 `chain_wd14_to_anima_train_caption(_plain)`。
 
 扩展时可以新增同结构 JSON，不需要改 Python 代码。

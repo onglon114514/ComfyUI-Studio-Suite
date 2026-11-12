@@ -220,6 +220,148 @@ class NaturalCaptionModeTests(unittest.TestCase):
         self.assertEqual(module["fixed_inputs"]["caption_output_format"], "plain")
 
 
+class NewModelCaptionProfileTests(unittest.TestCase):
+    CAPTION_ONLY_PROFILES = (
+        "moss_train_nl_v1",
+        "flux2_train_nl_v1",
+        "qwen_image_train_nl_v1",
+        "zimage_train_nl_v1",
+        "hunyuan_image_train_nl_v1",
+        "longcat_train_nl_v1",
+    )
+
+    def caption_result(self):
+        return {
+            "wd14_raw_tags_text": "1girl, long hair",
+            "expanded_tags_en": ["1girl", "long hair"],
+            "caption_long_en": LONG_CAPTION,
+        }
+
+    def test_caption_only_profiles_drop_the_tag_line(self):
+        for profile in self.CAPTION_ONLY_PROFILES:
+            formatted = gateway.profile_format_prompt(profile, self.caption_result())
+            self.assertEqual(formatted["formatted_training_text"], LONG_CAPTION, profile)
+            self.assertEqual(formatted["formatted_negative_prompt"], "", profile)
+            self.assertEqual(formatted["target_profile"], profile)
+
+    def test_caption_only_profiles_keep_trigger_prefix(self):
+        formatted = gateway.profile_format_prompt("moss_train_nl_v1", self.caption_result(), "mytag")
+        self.assertEqual(formatted["formatted_training_text"], "mytag, " + LONG_CAPTION)
+
+    def test_moss_prompt_asks_for_long_caption(self):
+        _system, prompt = gateway.build_plain_natural_caption_prompts(
+            {"raw_tags": "1girl", "target_profile": "moss_train_nl_v1"}
+        )
+        self.assertIn("120-200 words", prompt)
+        self.assertIn("overall composition first", prompt)
+        self.assertNotIn("Transcribe any visible text", prompt)
+
+    def test_text_transcription_rules_only_appear_with_an_image(self):
+        with_image = gateway.build_plain_natural_caption_prompts(
+            {"raw_tags": "1girl", "target_profile": "zimage_train_nl_v1", "image_path": "a.png"}
+        )[1]
+        without_image = gateway.build_plain_natural_caption_prompts(
+            {"raw_tags": "1girl", "target_profile": "zimage_train_nl_v1"}
+        )[1]
+        self.assertIn("Transcribe every visible character", with_image)
+        self.assertNotIn("Transcribe every visible character", without_image)
+        self.assertIn("no 8K/masterpiece", with_image)
+
+    def test_style_mode_omits_style_descriptors(self):
+        prompt = gateway.build_plain_natural_caption_prompts(
+            {"raw_tags": "1girl", "target_profile": "flux2_train_nl_v1", "caption_style_mode": "style"}
+        )[1]
+        self.assertIn("describe ONLY the subjects, objects and scene layout", prompt)
+        self.assertIn("Do not mention art style", prompt)
+        plain = gateway.build_plain_natural_caption_prompts(
+            {"raw_tags": "1girl", "target_profile": "flux2_train_nl_v1"}
+        )[1]
+        self.assertNotIn("Do not mention art style", plain)
+
+    def test_json_prompt_uses_profile_word_count(self):
+        _system, prompt = gateway.build_natural_caption_prompts(
+            {"raw_tags": "1girl", "target_profile": "moss_train_nl_v1"}
+        )
+        self.assertIn("120-200 词英文", prompt)
+        self.assertNotIn("2-4 句英文", prompt)
+
+    def test_new_bundles_exist_and_use_caption_only_profiles(self):
+        expected = {
+            "chain_wd14_to_moss_train_caption.json": "moss_train_nl_v1",
+            "chain_wd14_to_flux2_train_caption.json": "flux2_train_nl_v1",
+            "chain_wd14_to_qwen_image_train_caption.json": "qwen_image_train_nl_v1",
+            "chain_wd14_to_zimage_train_caption.json": "zimage_train_nl_v1",
+            "chain_wd14_to_longcat_train_caption.json": "longcat_train_nl_v1",
+            "chain_qwen_vision_to_moss_caption.json": "moss_train_nl_v1",
+        }
+        for name, profile in expected.items():
+            with (BUNDLE_DIR / name).open(encoding="utf-8") as handle:
+                bundle = json.load(handle)
+            self.assertEqual(bundle["format_module"]["type"], profile, name)
+            module = bundle["task_modules"][0]
+            self.assertIn(module["type"], {"generate_natural_caption", "image_captioning"}, name)
+
+
+class StyleModeTests(unittest.TestCase):
+    def test_strip_interpretive_sentences_drops_theme_commentary(self):
+        text = (
+            "A girl sits by an ornate mirror. The overall composition evokes themes of "
+            "self-reflection and duality. Two birdcages hang behind her."
+        )
+        self.assertEqual(
+            gateway.strip_interpretive_sentences(text),
+            "A girl sits by an ornate mirror. Two birdcages hang behind her.",
+        )
+
+    def test_strip_interpretive_sentences_keeps_content(self):
+        text = "A girl crouches beside a mecha arm. Red laser lines cut across the frame."
+        self.assertEqual(gateway.strip_interpretive_sentences(text), text)
+
+    def test_interpretation_is_stripped_without_style_mode(self):
+        enriched = gateway.enrich_json_result(
+            "generate_natural_caption",
+            {
+                "caption_long_en": (
+                    "A girl sits in a garden. The mood of the scene feels melancholic "
+                    "and dreamlike."
+                )
+            },
+            {"target_profile": "moss_train_nl_v1"},
+        )
+        self.assertEqual(enriched["formatted_training_text"], "A girl sits in a garden.")
+
+    def test_strip_style_descriptors_drops_style_sentences(self):
+        text = "A girl stands by the sea. The art style is clean anime line work with flat colors."
+        self.assertEqual(gateway.strip_style_descriptors(text), "A girl stands by the sea.")
+
+    def test_strip_style_descriptors_removes_style_opener(self):
+        text = "An anime-style illustration of a girl in a red dress. She holds a cup."
+        self.assertEqual(gateway.strip_style_descriptors(text), "A girl in a red dress. She holds a cup.")
+
+    def test_strip_style_descriptors_keeps_plain_caption(self):
+        text = "A girl in a red dress sits on a wooden bench, holding a cup."
+        self.assertEqual(gateway.strip_style_descriptors(text), text)
+
+    def test_style_mode_wired_through_enrich(self):
+        enriched = gateway.enrich_json_result(
+            "generate_natural_caption",
+            {
+                "caption_long_en": "A girl stands by the sea. She is rendered in a clean anime style.",
+                "caption_short_en": "A girl stands by the sea.",
+            },
+            {"target_profile": "moss_train_nl_v1", "caption_style_mode": "style"},
+        )
+        self.assertEqual(enriched["formatted_training_text"], "A girl stands by the sea.")
+
+    def test_style_mode_off_keeps_style_sentence(self):
+        enriched = gateway.enrich_json_result(
+            "generate_natural_caption",
+            {"caption_long_en": "A girl stands by the sea. The art style is cel shading."},
+            {"target_profile": "moss_train_nl_v1"},
+        )
+        self.assertIn("cel shading", enriched["formatted_training_text"])
+
+
 class TaggingTermsConfigTests(unittest.TestCase):
     def test_loaded_terms_match_the_shipped_config(self):
         with TAGGING_TERMS_PATH.open(encoding="utf-8") as handle:

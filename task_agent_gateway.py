@@ -4102,6 +4102,36 @@ def profile_format_prompt(profile_name, json_result, trigger_prefix=""):
             "profile_notes_cn": "结构化 JSON 训练标注格式：只保留训练所需字段，不追加质量词和负面词。",
         }
 
+    caption_only_profiles = {
+        "moss_train_nl_v1": "MOSS-Image 训练标注：只输出一段英文长描述（120-200 词），不含 tags 行、质量词与负面词；启动词作为描述前缀。",
+        "flux2_train_nl_v1": "FLUX.2 训练标注：只输出英文自然语言长描述，不含 tags 行、质量词与负面词。",
+        "qwen_image_train_nl_v1": "Qwen-Image 训练标注：只输出英文自然语言描述，画面里的文字按原样引用。",
+        "zimage_train_nl_v1": "Z-Image 训练标注：只输出简洁的英文自然语言描述。",
+        "hunyuan_image_train_nl_v1": "HunyuanImage 训练标注：只输出英文自然语言描述，画面里的文字按原样引用。",
+        "longcat_train_nl_v1": "LongCat-Image 训练标注：只输出英文自然语言描述，要渲染的文字必须带引号。",
+    }
+    if profile_name in caption_only_profiles:
+        caption = (
+            str(json_result.get("caption_long_en", "")).strip()
+            or str(json_result.get("natural_language_en", "")).strip()
+            or str(json_result.get("caption_short_en", "")).strip()
+        )
+        caption = sanitize_caption_banned_terms(caption)
+        if not caption:
+            caption = compact_text(", ".join(base_positive[:16]), 200)
+        caption = strip_interpretive_sentences(caption)
+        if str(json_result.get("caption_style_mode", "")).strip().lower() == "style":
+            caption = strip_style_descriptors(caption)
+        caption_text = build_training_two_line_text([], caption, trigger_prefix)
+        return {
+            "target_profile": profile_name,
+            "formatted_prompt": caption_text,
+            "formatted_negative_prompt": "",
+            "formatted_prompt_caption": caption,
+            "formatted_training_text": caption_text,
+            "profile_notes_cn": caption_only_profiles[profile_name],
+        }
+
     positive_tags = dedupe_tags(quality_tags + base_positive)
     negative_final = dedupe_tags(negative_tags)
     return {
@@ -4110,6 +4140,76 @@ def profile_format_prompt(profile_name, json_result, trigger_prefix=""):
         "formatted_negative_prompt": ", ".join(negative_final),
         "profile_notes_cn": "按通用 tag 模型格式输出，未应用特定模型专属排序规则。",
     }
+
+
+STYLE_OPENER_RE = re.compile(
+    r"^(?:an?\s+)?(?:anime[- ]style|anime|manga|digital|illustrated)\s+"
+    r"(?:illustration|image|picture|artwork|drawing)\s+of\s+",
+    re.IGNORECASE,
+)
+STYLE_SENTENCE_RE = re.compile(
+    r"\b(art\s?style|anime[- ]style|manga[- ]style|line\s?work|line art|flat colou?rs?|"
+    r"cel[- ]shad\w*|toon shad\w*|shading|rendered in|digital (?:art|illustration|painting)|"
+    r"colou?r palette|clean (?:anime|digital)|drawing style|illustration style)\b",
+    re.IGNORECASE,
+)
+
+
+def strip_style_descriptors(text):
+    """Drop style/medium sentences: style LoRA captions must describe content only."""
+    value = str(text or "").strip()
+    if not value:
+        return value
+    value = STYLE_OPENER_RE.sub("", value).strip()
+    sentences = [s for s in re.split(r"(?<=[.!?])\s+", value) if s.strip()]
+    kept = [s for s in sentences if not STYLE_SENTENCE_RE.search(s)]
+    result = " ".join(kept).strip()
+    if not result:
+        result = value
+    if result and result[0].isalpha():
+        result = result[0].upper() + result[1:]
+    return result
+
+TRAILING_INTERPRETIVE_RE = re.compile(
+    r"(?:,\s*(?:and\s+)?|\s+and\s+)(?:which\s+)?(creating|evoking|conveying|suggesting|giving|adding|"
+    r"resulting in|emphasizing|highlighting|making)\b[^.]*\.",
+    re.IGNORECASE,
+)
+INTERPRETIVE_VERB_LEAD_RE = re.compile(
+    r"^(?:the\s+)?(?:scene|lighting|light|colour|color|palette|tonality)\s+"
+    r"(?:conveys?|evokes?|suggests?|captures?|expresses?|feels?)\b",
+    re.IGNORECASE,
+)
+INTERPRETIVE_LEAD_RE = re.compile(
+    r"^(?:the\s+|this\s+|it\s+)?(?:overall\s+)?"
+    r"(composition|mood|atmosphere|artwork|picture|image|style)\b",
+    re.IGNORECASE,
+)
+
+
+INTERPRETIVE_SENTENCE_RE = re.compile(
+    r"\b(evokes?|evoking|conveys?|conveying|themes? of|symboli[sz](?:es|m|sm)|"
+    r"a sense of|atmosphere|mood of|artist'?s intent|feels? (?:dynamic|tense|serene|intimate|melancholic|dreamlike))\b",
+    re.IGNORECASE,
+)
+
+
+def strip_interpretive_sentences(text):
+    """Trim meaning/mood commentary but never drop the objects a sentence lists."""
+    value = str(text or "").strip()
+    if not value:
+        return value
+    sentences = [s for s in re.split(r"(?<=[.!?])\s+", value) if s.strip()]
+    kept = []
+    for sentence in sentences:
+        trimmed = TRAILING_INTERPRETIVE_RE.sub(".", sentence).strip()
+        if INTERPRETIVE_SENTENCE_RE.search(trimmed) and (
+            INTERPRETIVE_LEAD_RE.match(trimmed) or INTERPRETIVE_VERB_LEAD_RE.match(trimmed)
+        ):
+            continue
+        kept.append(trimmed)
+    result = " ".join(item for item in kept if item).strip()
+    return result or value
 
 
 def enrich_json_result(task_type, json_result, inputs):
@@ -4160,6 +4260,7 @@ def enrich_json_result(task_type, json_result, inputs):
         enriched["training_base_tags_en"] = get_training_base_tags(enriched, inputs)
     if str(inputs.get("wd14_raw_tags_text", "")).strip():
         enriched["wd14_raw_tags_text"] = str(inputs.get("wd14_raw_tags_text", "")).strip()
+    enriched["caption_style_mode"] = str(inputs.get("caption_style_mode", "")).strip()
     target_profile = inputs.get("target_profile", "generic_tag_model")
     enriched.update(profile_format_prompt(target_profile, enriched, resolve_training_trigger_prefix(inputs)))
     return enriched
@@ -4877,11 +4978,137 @@ WD14 原始 tags：
     return system_prompt, user_prompt
 
 
+CAPTION_STYLE_PROFILES = {
+    "moss": {
+        "length_plain": (
+            "Write one English natural-language paragraph of 120-200 words, written as a "
+            "training caption for the finished picture rather than a request."
+        ),
+        "length_json": (
+            "caption_long_en 用 120-200 词英文，按「整体构图 → 主体与动作 → 环境与光线 → 风格」"
+            "顺序展开，写成成品图的描述而不是指令"
+        ),
+        "rules": [
+            "- Describe the finished picture, not a request: overall composition first, then the subjects and their actions, then the environment, lighting and style.",
+            "[image] Transcribe any visible text exactly as rendered, in its original language, inside double quotes; never translate, romanize or normalize it.",
+            "- Do not mention canvas size, aspect ratio, resolution, camera brand or model numbers.",
+        ],
+    },
+    "flux2": {
+        "length_plain": (
+            "Write one English natural-language paragraph of 50-100 words following the "
+            "official FLUX.2 order: shot size and camera angle, subject, pose and "
+            "orientation, body details, then foreground and background."
+        ),
+        "length_json": (
+            "caption_long_en 用 50-100 词英文，顺序为：景别与机位 → 主体 → 姿态朝向 → 细节 → 前景背景"
+        ),
+        "rules": [
+            "- Plain descriptive prose only: no tag lists, no quality words, no camera brand or model numbers.",
+            "[image] Put any text that should appear in the image in quotes, in its original language.",
+            "- Describe the picture itself; never write instructions about what to generate.",
+        ],
+    },
+    "qwen_image": {
+        "length_plain": (
+            "Write one English natural-language paragraph of 80-150 words covering object "
+            "attributes, the visual relations between objects and the environment."
+        ),
+        "length_json": "caption_long_en 用 80-150 词英文，覆盖对象属性、对象之间的视觉关系与环境",
+        "rules": [
+            "- Use natural descriptive text without structured formats or field labels.",
+            "[image] Identify any text visible in the image with quotation marks, without translation or explanation.",
+            "- Stay literal and accurate; avoid generic filler.",
+        ],
+    },
+    "zimage": {
+        "length_plain": (
+            "Write one English natural-language paragraph of 120-220 words, as dense and "
+            "grounded as possible: subject, objects, background, location, lighting and style."
+        ),
+        "length_json": "caption_long_en 用 120-220 词英文，尽可能密集地覆盖主体、物体、背景、地点、光线与风格",
+        "rules": [
+            "[image] Transcribe every visible character exactly, keep the original language, and wrap that text in English double quotes.",
+            "- Be objective and concrete: no metaphors, no emotional language, no 8K/masterpiece style meta tags.",
+            "[image] For posters, menus or UI screenshots, describe the layout, fonts and typography.",
+        ],
+    },
+    "hunyuan_image": {
+        "length_plain": (
+            "Write one English natural-language paragraph of 80-160 words: a one-sentence "
+            "summary first, then subject details, then style, camera, lighting and composition."
+        ),
+        "length_json": "caption_long_en 用 80-160 词英文，先一句总述，再写主体细节，最后写风格、机位、光线与构图",
+        "rules": [
+            "- Layered but plain text: no field labels, no JSON.",
+            "[image] Quote any visible text verbatim in its original language.",
+        ],
+    },
+    "longcat": {
+        "length_plain": (
+            "Write one English natural-language paragraph of 60-120 words covering subject, "
+            "clothing and accessories, background, lighting, shot distance and composition."
+        ),
+        "length_json": "caption_long_en 用 60-120 词英文，覆盖主体、服装配饰、背景、光线、镜头距离与构图",
+        "rules": [
+            "[image] Any text that should be rendered must sit inside single or double quotation marks; without quotes the model loses character-level rendering.",
+            "- No quality words and no platform names.",
+        ],
+    },
+}
+
+
+def caption_style_profile(target_profile):
+    name = str(target_profile or "").strip().lower()
+    for prefix, profile in CAPTION_STYLE_PROFILES.items():
+        if name.startswith(prefix):
+            return profile
+    return None
+
+
+def caption_style_requirements(target_profile, for_json=False, has_image=False):
+    profile = caption_style_profile(target_profile)
+    if not profile:
+        if for_json:
+            return (
+                "caption_long_en 用 2-4 句英文，覆盖主体、外观、服装、表情、姿态、镜头/构图和显著细节",
+                [],
+            )
+        return (
+            "Write one English natural-language paragraph of 3-6 sentences covering subject, "
+            "appearance, outfit, expression, pose, camera composition and notable details.",
+            [],
+        )
+    key = "length_json" if for_json else "length_plain"
+    # Rules tagged [image] only make sense when the model actually receives the picture;
+    # text-only runs would otherwise be told to transcribe text they cannot see.
+    rules = [
+        rule[len("[image] "):] if rule.startswith("[image] ") else rule
+        for rule in profile["rules"]
+        if has_image or not rule.startswith("[image] ")
+    ]
+    rules.append(
+        "- Only describe what is clearly visible. If an object or part of the scene is "
+        "ambiguous, describe it in general terms instead of guessing a specific object."
+    )
+    rules.append(
+        "- Do not interpret the picture: no meaning, mood, theme, symbolism or artist-intent "
+        "commentary. Stop after the visible content."
+    )
+    return profile[key], rules
+
+
 def build_plain_natural_caption_prompts(inputs):
     raw_tags = inputs.get("raw_tags", "").strip()
     raw_text = inputs.get("raw_text", "").strip()
     purpose = inputs.get("purpose", "").strip()
     target_profile = inputs.get("target_profile", "flux_natural_language_v1").strip()
+    has_image = bool(str(inputs.get("image_path", "")).strip())
+    length_rule, extra_rules = caption_style_requirements(target_profile, has_image=has_image)
+    extra_block = ("\n".join(extra_rules) + "\n") if extra_rules else ""
+    style_mode_rule = ""
+    if str(inputs.get("caption_style_mode", "")).strip().lower() == "style":
+        style_mode_rule = "- This caption is for a style LoRA: describe ONLY the subjects, objects and scene layout. Do not mention art style, medium, rendering technique, line quality, color palette, shading or how the picture was drawn - not even in the final sentence.\n"
     system_prompt = (
         "You are an anime image caption writer for training-data labeling. "
         "Answer with plain English prose only. "
@@ -4900,9 +5127,9 @@ def build_plain_natural_caption_prompts(inputs):
 {target_profile}
 
 要求：
-- Write one English natural-language paragraph of 3-6 sentences covering subject, appearance, outfit, expression, pose, camera composition and notable details.
+- {length_rule}
 - Plain prose only: no JSON, no markdown, no quality tags (masterpiece/best quality), no artist names, no character or IP names, no signature/watermark mentions.
-- 以现有 tags 为主要事实依据来写，不要重新发明与 tags 不一致的内容
+{extra_block}{style_mode_rule}- 以现有 tags 为主要事实依据来写，不要重新发明与 tags 不一致的内容
 - 禁止输出以下词与字段（大小写不敏感、按整词匹配）：{build_banned_terms_constraint_text()}
 - 直接输出这段正文，不要输出字段名，不要用 JSON 或 markdown 包裹
 """.strip()
@@ -4916,6 +5143,12 @@ def build_natural_caption_prompts(inputs):
     raw_text = inputs.get("raw_text", "").strip()
     purpose = inputs.get("purpose", "").strip()
     target_profile = inputs.get("target_profile", "flux_natural_language_v1").strip()
+    has_image = bool(str(inputs.get("image_path", "")).strip())
+    length_rule, extra_rules = caption_style_requirements(target_profile, for_json=True, has_image=has_image)
+    extra_block = ("\n".join(extra_rules) + "\n") if extra_rules else ""
+    style_mode_rule = ""
+    if str(inputs.get("caption_style_mode", "")).strip().lower() == "style":
+        style_mode_rule = "- This caption is for a style LoRA: describe ONLY the subjects, objects and scene layout. Do not mention art style, medium, rendering technique, line quality, color palette, shading or how the picture was drawn - not even in the final sentence.\n"
     system_prompt = (
         "You are an anime image caption writer. "
         "Use tags and the image together, then write clean generation-friendly natural language. "
@@ -4945,11 +5178,11 @@ def build_natural_caption_prompts(inputs):
 - 以现有 tags 为主要事实依据来写自然语言
 - 不要重新发明一套和 tags 不一致的内容
 - caption_short_en 用一句话概括
-- caption_long_en 用 2-4 句英文，覆盖主体、外观、服装、表情、姿态、镜头/构图和显著细节
+- {length_rule}
 - natural_language_en 可以与 caption_long_en 接近，但要保持清晰、稳定、便于模型理解
 - 不要写成小说，不要使用过度修辞
 - 不要重复输出完整 tags 列表
-- 如果目标是训练标注，不要猜测或写出现有版权角色名、作品名、IP 名；只描述图像中可见内容
+{extra_block}{style_mode_rule}- 如果目标是训练标注，不要猜测或写出现有版权角色名、作品名、IP 名；只描述图像中可见内容
 - 如果目标是训练标注，不要加入 masterpiece、best quality、score、negative prompt 这类质量词
 - 只输出一个很短的 JSON，不要在 JSON 之外添加任何内容
 - 不要输出画师名（artist）、signature、watermark、社交账号等元信息

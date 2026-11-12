@@ -18,5 +18,37 @@
   "newbie_exp01": {
     "type": "newbie_exp01",
     "notes_cn": "按 NewBie-image Exp0.1：支持自然语言、tags、XML；多角色推荐 XML。"
+  },
+  "flux_natural_language_v1": {
+    "type": "flux_natural_language_v1",
+    "notes_cn": "FLUX 系列推理用纯自然语言 caption，不带 tags、质量词与负面词。"
+  },
+  "flux_train_nl_v1": {
+    "type": "flux_train_nl_v1",
+    "notes_cn": "FLUX 训练标注：只输出自然语言描述。"
+  },
+  "flux2_train_nl_v1": {
+    "type": "flux2_train_nl_v1",
+    "notes_cn": "FLUX.2 训练标注：只输出 50-100 词英文长句，顺序为景别机位→主体→姿态→细节→前景背景；style LoRA 用 caption_style_mode=style 省略风格词。"
+  },
+  "qwen_image_train_nl_v1": {
+    "type": "qwen_image_train_nl_v1",
+    "notes_cn": "Qwen-Image 训练标注：自然描述段落，不用结构化格式，图中文字用引号原样引用。"
+  },
+  "zimage_train_nl_v1": {
+    "type": "zimage_train_nl_v1",
+    "notes_cn": "Z-Image 训练标注：120-220 词密集长描述，OCR 原文加双引号，禁止 8K/杰作类元标签。"
+  },
+  "hunyuan_image_train_nl_v1": {
+    "type": "hunyuan_image_train_nl_v1",
+    "notes_cn": "HunyuanImage 3.0 训练标注：总述 + 主体细节 + 风格/机位/光线/构图的 80-160 词描述。"
+  },
+  "longcat_train_nl_v1": {
+    "type": "longcat_train_nl_v1",
+    "notes_cn": "LongCat-Image 训练标注：自然语言描述；要渲染的文字必须放进引号，否则丢失字符级渲染。"
+  },
+  "moss_train_nl_v1": {
+    "type": "moss_train_nl_v1",
+    "notes_cn": "MOSS-Image 训练标注：120-200 词英文长描述，覆盖构图/主体动作/环境光线/风格，画面文字原样引用，不写画布尺寸。"
   }
 }

@@ -1,0 +1,21 @@
+{
+  "task_modules": [
+    {
+      "type": "generate_natural_caption",
+      "fixed_inputs": {
+        "caption_output_format": "plain",
+        "caption_max_tokens": 1200
+      }
+    }
+  ],
+  "format_module": {
+    "type": "zimage_train_nl_v1"
+  },
+  "task_defaults": {
+    "style_hint": "Z-Image training caption, English only, 120-220 words, dense and grounded",
+    "purpose": "Z-Image 训练 caption：尽量密集地覆盖主体、物体、背景、地点、光线与风格；OCR 原文保持原语言并用双引号括起；禁止 8K/杰作类元标签与比喻修辞。"
+  },
+  "fixed_inputs": {
+    "caption_mode": "training_caption_only"
+  }
+}

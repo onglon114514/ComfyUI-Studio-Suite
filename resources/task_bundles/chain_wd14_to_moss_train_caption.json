@@ -1,0 +1,21 @@
+{
+  "task_modules": [
+    {
+      "type": "generate_natural_caption",
+      "fixed_inputs": {
+        "caption_output_format": "plain",
+        "caption_max_tokens": 900
+      }
+    }
+  ],
+  "format_module": {
+    "type": "moss_train_nl_v1"
+  },
+  "task_defaults": {
+    "style_hint": "MOSS-Image LoRA training caption, English only, 120-200 words",
+    "purpose": "MOSS-Image Base 的 LoRA 训练 caption：整段英文描述，覆盖构图、主体与动作、环境光线、风格；画面里的文字原样引用；不写画布尺寸，不追加 tags 行。"
+  },
+  "fixed_inputs": {
+    "caption_mode": "training_caption_only"
+  }
+}

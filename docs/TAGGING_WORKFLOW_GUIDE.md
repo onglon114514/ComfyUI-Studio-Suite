@@ -98,6 +98,11 @@
   - 训练用结构化 JSON
   - 不追加质量词和负面词
 
+- `moss_train_nl_v1` / `flux2_train_nl_v1` / `qwen_image_train_nl_v1` / `zimage_train_nl_v1` / `hunyuan_image_train_nl_v1` / `longcat_train_nl_v1`
+  - 新基座训练标注：只输出一段英文自然语言 caption，不带 tags 行、质量词和负面词
+  - 各档的长度、结构与文字转写规则按对应官方模型卡收紧，详见 `docs/NEW_MODEL_CAPTION_CONVENTIONS_zh-CN.md`
+  - `caption_style_mode=style` 时额外省略风格/媒介/美学描述（FLUX.2 style LoRA 官方做法）
+
 ## 推荐工作流
 
 ### 1. WD14 参考打标 -> Anima
@@ -136,6 +141,23 @@
 - 产出仍是两行式：第一行 WD14 原文，空行，第二行纯自然语言（可加 `trigger_prefix` 启动词前缀）
 - 禁词（IP 角色/画师/signature 等）在 `config/tagging_terms.json` 配置，只过滤 LLM 侧；WD14 层过滤用其 `exclude_tags` 槽位
 - 掉格式观测：节点 `status` 带 `ok / repaired / fallback` 标记
+
+### 6. 新基座纯 caption（2026-10-24 新增）
+
+- 任务 bundle：`chain_wd14_to_moss_train_caption` / `..._flux2_...` / `..._qwen_image_...` / `..._zimage_...` / `..._longcat_...`
+- 视觉链路：`chain_qwen_vision_to_moss_caption`（`image_captioning` 直接读图）
+- 产出只有一段英文 caption；WD14 只作为写作事实来源，不写进结果
+- 需要 tags 行时仍用第 5 种两行式，两者按数据集目标二选一，不要混用
+- 新基座的 caption 更依赖「图中文字原样引用」；没有接图时，工作流会自动去掉这些转写规则，避免模型编造文字
+
+### 7. 画风 LoRA 的 caption 卫生（2026-10-25 新增）
+
+画风 LoRA 的 caption 目标是「把画面内容说清楚，风格交给图片本身学」，实践中有两处会自动清理：
+
+- `caption_style_mode=style`：提示词要求只写主体/物体/画面布局，不写画风、媒介、渲染、线条、配色；格式化层还会按句删掉漏网的风格句（`strip_style_descriptors`）。
+- 主题/氛围解读句：`strip_interpretive_sentences` 会删掉「The overall composition evokes themes of…」这类整句，但只裁掉 `, creating … atmosphere.` 这样的附属从句，不会连带删掉句子里列举的物体。
+- 视觉链路优先：`chain_image_to_moss_style_caption`（读图）比「WD14 → 文本 LLM」准确得多；纯文本链路容易把不确定的物体写具体。
+- 训练前跑 `scripts/audit_caption_dataset.py <目录> --trigger @画师`：会报缺启动词、过短/过长、风格词、解读句、禁词、重复 caption，有问题的文件直接列出来，退出码非 0 可以作为训练前的闸门。
 
 ## 推荐资源
 

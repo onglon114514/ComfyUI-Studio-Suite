@@ -1,0 +1,22 @@
+{
+  "task_modules": [
+    {
+      "type": "generate_natural_caption",
+      "fixed_inputs": {
+        "caption_output_format": "plain",
+        "caption_style_mode": "style",
+        "caption_max_tokens": 700
+      }
+    }
+  ],
+  "format_module": {
+    "type": "moss_train_nl_v1"
+  },
+  "task_defaults": {
+    "style_hint": "style LoRA caption, image-first, 120-200 words, no style or mood commentary",
+    "purpose": "画风 LoRA 的 MOSS caption：直接读图写整段描述，只写主体/物体/画面布局；风格词、画风描述和主题解读会被提示词和格式化层双重过滤。需要视觉档案。"
+  },
+  "fixed_inputs": {
+    "caption_mode": "training_caption_only"
+  }
+}

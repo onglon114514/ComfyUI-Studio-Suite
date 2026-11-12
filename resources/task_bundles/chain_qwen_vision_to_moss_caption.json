@@ -1,0 +1,18 @@
+{
+  "task_modules": [
+    {
+      "type": "image_captioning",
+      "fixed_inputs": {}
+    }
+  ],
+  "format_module": {
+    "type": "moss_train_nl_v1"
+  },
+  "task_defaults": {
+    "style_hint": "MOSS-Image LoRA training caption from the image itself, English only, 120-200 words",
+    "purpose": "视觉链路版 MOSS 训练 caption：直接读图写整段英文描述，画面里的文字原样引用；需要视觉模型档案（见 docs/QWEN_BACKEND_zh-CN.md）。"
+  },
+  "fixed_inputs": {
+    "caption_mode": "training_caption_only"
+  }
+}

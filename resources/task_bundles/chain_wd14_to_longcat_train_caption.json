@@ -1,0 +1,21 @@
+{
+  "task_modules": [
+    {
+      "type": "generate_natural_caption",
+      "fixed_inputs": {
+        "caption_output_format": "plain",
+        "caption_max_tokens": 800
+      }
+    }
+  ],
+  "format_module": {
+    "type": "longcat_train_nl_v1"
+  },
+  "task_defaults": {
+    "style_hint": "LongCat-Image training caption, English only, 60-120 words",
+    "purpose": "LongCat-Image 训练 caption：写主体、服装配饰、背景、光线、镜头距离与构图；要渲染的文字必须放进引号，否则会丢失字符级渲染能力。"
+  },
+  "fixed_inputs": {
+    "caption_mode": "training_caption_only"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "task_modules": [
+    {
+      "type": "generate_natural_caption",
+      "fixed_inputs": {
+        "caption_output_format": "plain",
+        "caption_max_tokens": 700
+      }
+    }
+  ],
+  "format_module": {
+    "type": "flux2_train_nl_v1"
+  },
+  "task_defaults": {
+    "style_hint": "FLUX.2 training caption, English only, 50-100 words, trigger word first",
+    "purpose": "FLUX.2 训练 caption：英文长句，按官方顺序写景别机位、主体、姿态朝向、细节、前景背景；不写质量词，不做 style LoRA 时把 caption_style_mode 设为 style 以省略风格描述。"
+  },
+  "fixed_inputs": {
+    "caption_mode": "training_caption_only"
+  }
+}

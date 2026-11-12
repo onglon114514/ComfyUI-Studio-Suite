@@ -1,0 +1,21 @@
+{
+  "task_modules": [
+    {
+      "type": "generate_natural_caption",
+      "fixed_inputs": {
+        "caption_output_format": "plain",
+        "caption_max_tokens": 800
+      }
+    }
+  ],
+  "format_module": {
+    "type": "qwen_image_train_nl_v1"
+  },
+  "task_defaults": {
+    "style_hint": "Qwen-Image training caption, English only, 80-150 words",
+    "purpose": "Qwen-Image 训练 caption：自然描述段落，写对象属性、对象间关系与环境；不用结构化格式；图中文字用引号原样引用，不翻译。"
+  },
+  "fixed_inputs": {
+    "caption_mode": "training_caption_only"
+  }
+}
