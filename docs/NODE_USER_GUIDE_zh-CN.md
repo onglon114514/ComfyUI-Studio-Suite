@@ -189,6 +189,8 @@ Independent Load Image Path -> 主处理工作流 -> Independent Result Writer (
 
 每张图会成为一个独立 ComfyUI prompt，避免单次循环累积显存和执行状态。
 
+`include_subfolders`（可选，默认关闭）：打开后会扫描子文件夹里的图片，适合 `111new/amukeer` 这类「合集/画师」两级目录。开启时会检查重名 stem，重名会直接报错并列出例子，因为输出文件按 stem 命名，重名会互相覆盖。目录里只有子文件夹、又没有打开这个开关时，节点会提示 `found N subfolder(s) ... enable include_subfolders`，而不是只说没有图片。
+
 ## 6. 图像预处理和训练分桶
 
 `智能填充裁剪缩放` 输出固定尺寸，适合工作流统一画布。

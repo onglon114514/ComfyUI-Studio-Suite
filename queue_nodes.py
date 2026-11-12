@@ -157,20 +157,21 @@ def _register_prompt_hook():
     _PROMPT_HOOK_REGISTERED = True
 
 
-def _sorted_image_files(folder_path, sort_mode):
+def _sorted_image_files(folder_path, sort_mode, include_subfolders=False):
     base = Path(folder_path)
     if not base.is_dir():
         raise ValueError(f"Image folder not found: {folder_path}")
 
-    files = [p for p in base.iterdir() if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS]
+    iterator = base.rglob("*") if include_subfolders else base.iterdir()
+    files = [p for p in iterator if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS]
     if sort_mode == "name_desc":
-        files.sort(key=lambda p: p.name.lower(), reverse=True)
+        files.sort(key=lambda p: str(p.relative_to(base)).lower(), reverse=True)
     elif sort_mode == "mtime_asc":
         files.sort(key=lambda p: p.stat().st_mtime)
     elif sort_mode == "mtime_desc":
         files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
     else:
-        files.sort(key=lambda p: p.name.lower())
+        files.sort(key=lambda p: str(p.relative_to(base)).lower())
     return files
 
 
@@ -1156,6 +1157,15 @@ class IndependentPromptFolderQueue:
                     },
                 ),
             },
+            "optional": {
+                "include_subfolders": (
+                    "BOOLEAN",
+                    {
+                        "default": False,
+                        "tooltip": "Scan images inside subfolders too (one level of folders like 111new/amukeer). Image stems must stay unique because output files are named by stem.",
+                    },
+                ),
+            },
             "hidden": {
                 "prompt": "PROMPT",
                 "extra_pnginfo": "EXTRA_PNGINFO",
@@ -1210,6 +1220,7 @@ class IndependentPromptFolderQueue:
         missing_text_behavior,
         queue_front,
         dry_run,
+        include_subfolders=False,
         prompt=None,
         extra_pnginfo=None,
         unique_id=None,
@@ -1236,13 +1247,35 @@ class IndependentPromptFolderQueue:
             dry_run=dry_run,
         )
 
-        files = _sorted_image_files(image_folder, sort_mode)
+        files = _sorted_image_files(image_folder, sort_mode, include_subfolders)
         files = files[start_index:]
         if limit > 0:
             files = files[:limit]
 
         if not files:
+            subfolders = sorted(p.name for p in Path(image_folder).iterdir() if p.is_dir())
+            if subfolders and not include_subfolders:
+                return (
+                    f"No image files in the top folder; found {len(subfolders)} subfolder(s) "
+                    f"(e.g. {subfolders[0]}) - enable include_subfolders",
+                    0,
+                )
             return ("No image files matched", 0)
+
+        if include_subfolders:
+            seen_stems = {}
+            duplicates = []
+            for path in files:
+                if path.stem in seen_stems:
+                    duplicates.append(f"{seen_stems[path.stem].name} / {path.name}")
+                else:
+                    seen_stems[path.stem] = path
+            if duplicates:
+                raise ValueError(
+                    "Subfolder scan found duplicate image stems; output files would overwrite each other. "
+                    "Rename them or scan one artist folder at a time. Examples: "
+                    + ", ".join(duplicates[:5])
+                )
 
         text_pairs = _resolve_text_pairs(
             image_files=files,
