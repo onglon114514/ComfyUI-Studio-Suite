@@ -46,6 +46,15 @@ This is the local development line intended for the next GitHub push after `v0.1
 - Added documentation for XY matrix usage, LoRA comparison, and the stable tagging baseline.
 - Added a task-oriented Chinese node manual and a local Prompt Studio translation guide.
 - Added disk-backed Danbooru character alias lookup for Prompt Studio, with a one-time SQLite index builder for the optional large character resource.
+- Added `canvas_width` / `canvas_height` INT outputs to Region Layout, so the canvas size set in the node can drive the empty-latent width/height directly.
+- Added caption profiles and task bundles for the 2025-2026 base models: `moss_train_nl_v1`, `flux2_train_nl_v1`, `qwen_image_train_nl_v1`, `zimage_train_nl_v1`, `hunyuan_image_train_nl_v1`, `longcat_train_nl_v1`, each with the official length/structure/text-transcription rules; `caption_style_mode=style` drops style descriptors for style LoRAs, and image-transcription rules only apply when an image is actually attached. See `docs/NEW_MODEL_CAPTION_CONVENTIONS_zh-CN.md`.
+- Expanded `config/tagging_terms.json` banned franchises so LLM-written captions stop leaking recent IP names.
+- Training captions now drop mood/theme commentary: `strip_interpretive_sentences` removes whole interpretive sentences and trims `, creating … atmosphere.` clauses without losing the objects the sentence lists.
+- Added `chain_image_to_moss_style_caption` for style-LoRA captioning (image-first, `caption_style_mode=style`).
+- Added `scripts/audit_caption_dataset.py` to check a training caption folder for missing trigger prefixes, word-count outliers, style words, interpretive sentences, banned terms and duplicates before a training run.
+- Independent Prompt Folder Queue now has an optional `include_subfolders` switch for two-level artist folders, reports how many subfolders it skipped, and refuses to queue when duplicate image stems would overwrite outputs.
+- WebUI NTR graph mode now sends `image_inputs` (image/mask base64 for `WNT_ImageInput`, uploaded name for `LoadImage`); the gateway injects them into the prompt and reports `injected.images`. Masks are only sent after the user actually paints, so a blank canvas no longer overwrites the workflow default.
+- Restored `workflows_graph/webui_ntr_img2img_wnt.json` and wired `WNT_ImageOutput.mask` to `WNT_ImageInput.mask` (link 112), so graph runs return the mask file as well.
 
 ### Changed
 

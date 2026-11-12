@@ -6736,6 +6736,15 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 disabled = payload.get("disabled_groups") or []
                 positive = payload.get("positive") or ""
                 negative = payload.get("negative") or ""
+                _image_inputs_dbg = payload.get("image_inputs") or {}
+                if _image_inputs_dbg:
+                    _summary = {
+                        str(_k): {f: len(_v[f]) for f in ("image", "mask")
+                                   if isinstance(_v, dict) and isinstance(_v.get(f), str) and _v.get(f)}
+                        for _k, _v in _image_inputs_dbg.items()
+                    }
+                    print("[generate-graph] image_inputs=" + json.dumps(_summary, ensure_ascii=False)
+                          + " overrides=" + str(len(payload.get("overrides") or {})), flush=True)
                 target = WORKFLOWS_GRAPH_DIR / f"{name}.json"
                 if not WORKFLOWS_GRAPH_DIR.is_dir() or not target.is_file():
                     self._send_json(HTTPStatus.NOT_FOUND, {"error": "graph_workflow_not_found", "name": name})
@@ -6756,7 +6765,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
 
                 # 注入遵循 webui ntr 约定：只认 ETN_Parameter
                 #   type 含 prompt (positive) → 正；含 prompt (negative) → 负；其余参数走 overrides
-                injected = {"positive": 0, "negative": 0, "overrides": 0}
+                injected = {"positive": 0, "negative": 0, "overrides": 0, "images": 0}
                 overrides = payload.get("overrides") or {}
                 for _nid, node in list(prompt.items()):
                     if str(node.get("class_type") or "") != "ETN_Parameter":
@@ -6777,6 +6786,19 @@ class GatewayHandler(BaseHTTPRequestHandler):
                         else:
                             ins["default"] = "" if value is None else str(value)
                         injected["overrides"] += 1
+                # 网页图片/蒙版：WNT_ImageInput 的 image/mask 都是 STRING widget，直接写 prompt.inputs
+                image_inputs = payload.get("image_inputs") or {}
+                if isinstance(image_inputs, dict):
+                    for _nid, patch in image_inputs.items():
+                        node = prompt.get(str(_nid))
+                        if not node or str(node.get("class_type") or "") != "WNT_ImageInput":
+                            continue
+                        ins = node.setdefault("inputs", {})
+                        for field in ("image", "mask"):
+                            value = patch.get(field) if isinstance(patch, dict) else None
+                            if isinstance(value, str) and value:
+                                ins[field] = value
+                                injected["images"] += 1
                 # 兜底：经典 KSampler 直连 CLIPTextEncode（字面量）时也能注入
                 if positive or negative:
                     for _nid, node in list(prompt.items()):

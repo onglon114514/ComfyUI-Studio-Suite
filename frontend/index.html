@@ -3261,7 +3261,7 @@
       status.textContent = "未选择（将沿用工作流里的原值）";
       card.appendChild(status);
 
-      const info = { dataUrl: prev.dataUrl || "", filename: prev.filename || "", uploadedName: "", maskCanvas: cv };
+      const info = { dataUrl: prev.dataUrl || "", filename: prev.filename || "", uploadedName: "", maskCanvas: cv, maskDirty: false };
       wfImageInputs[nodeId] = info;
 
       function syncCanvas() {
@@ -3269,6 +3269,7 @@
         const w = base.naturalWidth || 512, h = base.naturalHeight || 512;
         cv.width = w; cv.height = h;
         cv.getContext("2d").clearRect(0, 0, w, h);
+        info.maskDirty = false;
       }
       base.addEventListener("load", syncCanvas);
       if (info.dataUrl) { base.src = info.dataUrl; status.textContent = "已选择：" + (info.filename || "图片"); }
@@ -3322,7 +3323,10 @@
         note.style.cssText = "font-size:11px; margin-top:2px;";
         note.textContent = "在图上涂抹要重绘的区域（提交时导出为蒙版 PNG）";
         card.appendChild(note);
-        clearBtn.addEventListener("click", () => cv.getContext("2d").clearRect(0, 0, cv.width, cv.height));
+        clearBtn.addEventListener("click", () => {
+          cv.getContext("2d").clearRect(0, 0, cv.width, cv.height);
+          info.maskDirty = false;
+        });
         let painting = false;
         const paint = (e) => {
           const r = cv.getBoundingClientRect();
@@ -3336,7 +3340,12 @@
           ctx.arc(x, y, Math.max(1, (Number(size.value) / 2) * kx), 0, Math.PI * 2);
           ctx.fill();
         };
-        cv.addEventListener("pointerdown", (e) => { painting = true; if (cv.setPointerCapture) cv.setPointerCapture(e.pointerId); paint(e); });
+        cv.addEventListener("pointerdown", (e) => {
+          painting = true;
+          info.maskDirty = true;
+          if (cv.setPointerCapture) cv.setPointerCapture(e.pointerId);
+          paint(e);
+        });
         cv.addEventListener("pointermove", (e) => { if (painting) paint(e); });
         cv.addEventListener("pointerup", () => { painting = false; });
         cv.addEventListener("pointerleave", () => { painting = false; });
@@ -3597,6 +3606,30 @@
             if (!ctl || wfPromptTargets[nid]) continue;
             overrides[nid] = ctl.type === "checkbox" ? !!ctl.checked : String(ctl.value === undefined || ctl.value === null ? "" : ctl.value);
           }
+          // graph 模式没有 buildWorkflow() 的 image 注入，这里补齐 WNT_ImageInput / LoadImage 的图与蒙版
+          const imageInputs = {};
+          const maskBase64 = (info) => {
+            if (!info.maskDirty || !info.maskCanvas) return "";
+            const du = info.maskCanvas.toDataURL("image/png");
+            return du && du.indexOf(",") > 0 ? du.split(",")[1] : "";
+          };
+          for (const [nid, tgt] of Object.entries(wfImageTargets || {})) {
+            const info = wfImageInputs[nid] || {};
+            const patch = {};
+            if (tgt.field === "mask") {
+              const m = maskBase64(info);
+              if (m) patch.mask = m;
+            } else if (tgt.mode === "base64") {
+              if (info.dataUrl && info.dataUrl.indexOf(",") > 0) patch.image = info.dataUrl.split(",")[1];
+              if ((tgt.field || "").indexOf("mask") >= 0) {
+                const m = maskBase64(info);
+                if (m) patch.mask = m;
+              }
+            } else if (tgt.mode === "upload" && info.uploadedName) {
+              patch.image = info.uploadedName;
+            }
+            if (Object.keys(patch).length) imageInputs[nid] = patch;
+          }
           const resp = await fetch("/api/generate-graph", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -3606,6 +3639,7 @@
               positive: $("positiveBox").value.trim(),
               negative: $("negativeBox").value.trim(),
               overrides: overrides,
+              image_inputs: imageInputs,
             }),
           });
           const data = await resp.json();
@@ -3615,6 +3649,7 @@
           }
           st.textContent = "已提交 prompt_id=" + data.prompt_id + "（节点 " + data.node_count + "）"
             + (data.injected ? "  注入 正" + data.injected.positive + "/负" + data.injected.negative : "")
+            + (data.injected && data.injected.images ? "  图" + data.injected.images : "")
             + (data.warnings && data.warnings.length ? "  | 警告 " + data.warnings.length : "");
           pollHistory(data.prompt_id, st);
         } catch (err) {
@@ -3650,11 +3685,17 @@
           const outputs = entry.outputs || {};
           let img = null;
           let msk = null;
+          let maskedImg = null;
           for (const k in outputs) {
             const o = outputs[k];
+            if (o && o.masks && o.masks.length) {
+              // 带蒙版的输出（WNT_ImageOutput）优先作为主图，避免预览节点抢显示
+              if (!msk) msk = o.masks[0];
+              if (!maskedImg && o.images && o.images.length) maskedImg = o.images[0];
+            }
             if (o && o.images && o.images.length && !img) img = o.images[0];
-            if (o && o.masks && o.masks.length && !msk) msk = o.masks[0];
           }
+          if (maskedImg) img = maskedImg;
           if (img) {
             st.textContent = "完成 ✅ " + img.filename;
             const url = "/view?filename=" + encodeURIComponent(img.filename)
