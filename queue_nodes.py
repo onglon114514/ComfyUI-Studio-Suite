@@ -157,6 +157,32 @@ def _register_prompt_hook():
     _PROMPT_HOOK_REGISTERED = True
 
 
+def _subfolder_hint(folder_path):
+    """Message for a folder that only contains subfolders."""
+    try:
+        subfolders = sorted(p.name for p in Path(folder_path).iterdir() if p.is_dir())
+    except OSError:
+        return ""
+    if not subfolders:
+        return ""
+    return (
+        f"No image files in the top folder; found {len(subfolders)} subfolder(s) "
+        f"(e.g. {subfolders[0]}) - enable include_subfolders"
+    )
+
+
+def _duplicate_stem_pairs(files):
+    """Pairs of files that would overwrite each other's outputs (same stem)."""
+    seen = {}
+    duplicates = []
+    for path in files:
+        if path.stem in seen:
+            duplicates.append((seen[path.stem], path))
+        else:
+            seen[path.stem] = path
+    return duplicates
+
+
 def _sorted_image_files(folder_path, sort_mode, include_subfolders=False):
     base = Path(folder_path)
     if not base.is_dir():
@@ -1253,28 +1279,19 @@ class IndependentPromptFolderQueue:
             files = files[:limit]
 
         if not files:
-            subfolders = sorted(p.name for p in Path(image_folder).iterdir() if p.is_dir())
-            if subfolders and not include_subfolders:
-                return (
-                    f"No image files in the top folder; found {len(subfolders)} subfolder(s) "
-                    f"(e.g. {subfolders[0]}) - enable include_subfolders",
-                    0,
-                )
+            if not include_subfolders:
+                hint = _subfolder_hint(image_folder)
+                if hint:
+                    return (hint, 0)
             return ("No image files matched", 0)
 
         if include_subfolders:
-            seen_stems = {}
-            duplicates = []
-            for path in files:
-                if path.stem in seen_stems:
-                    duplicates.append(f"{seen_stems[path.stem].name} / {path.name}")
-                else:
-                    seen_stems[path.stem] = path
+            duplicates = _duplicate_stem_pairs(files)
             if duplicates:
                 raise ValueError(
                     "Subfolder scan found duplicate image stems; output files would overwrite each other. "
                     "Rename them or scan one artist folder at a time. Examples: "
-                    + ", ".join(duplicates[:5])
+                    + ", ".join(f"{left.name} / {right.name}" for left, right in duplicates[:5])
                 )
 
         text_pairs = _resolve_text_pairs(
