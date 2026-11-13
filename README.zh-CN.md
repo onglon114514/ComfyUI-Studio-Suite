@@ -101,6 +101,16 @@ python scripts/doctor_release.py
 
 ## 快速开始
 
+### 0. 启动网页面板（不写代码的使用者）
+
+先启动 ComfyUI（秋叶启动器），然后双击：
+
+```text
+launcher/start-studio-suite.bat
+```
+
+控制台会启动 7860 网关并自动打开 `http://127.0.0.1:7860/`。启动器只启动面板，不启动 ComfyUI；会优先使用 ComfyUI 自带的 Python。配置与排错见 `launcher/README.md`。
+
 ### 1. 先跑纯文本 smoke test
 
 建议先用：
