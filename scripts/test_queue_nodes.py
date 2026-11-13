@@ -128,5 +128,92 @@ class SubfolderHintTests(unittest.TestCase):
         self.assertEqual(queue_nodes._subfolder_hint(self.base / "missing"), "")
 
 
+
+
+class QueueResultShapeTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.base = Path(self._tmp.name)
+        (self.base / "artist_a").mkdir()
+        (self.base / "artist_a" / "one.png").write_bytes(b"")
+        (self.base / "artist_b").mkdir()
+        (self.base / "artist_b" / "two.png").write_bytes(b"")
+        self._had_instance = hasattr(queue_nodes.PromptServer, "instance")
+        self._previous = getattr(queue_nodes.PromptServer, "instance", None)
+        queue_nodes.PromptServer.instance = None
+
+    def tearDown(self):
+        if self._had_instance:
+            queue_nodes.PromptServer.instance = self._previous
+        else:
+            del queue_nodes.PromptServer.instance
+        self._tmp.cleanup()
+
+    def run_queue(self, include_subfolders, limit=0):
+        prompt = {
+            "2": {"class_type": "IndependentLoadImagePath", "inputs": {"image_path": ""}},
+            "3": {"class_type": "IndependentResultWriterProxy", "inputs": {}},
+        }
+        return queue_nodes.IndependentPromptFolderQueue().queue_jobs(
+            enabled=True,
+            image_folder=str(self.base),
+            loader_node_id=2,
+            writer_node_id=3,
+            start_index=0,
+            limit=limit,
+            sort_mode="name_asc",
+            text_pair_mode="none",
+            text_folder="",
+            text_sort_mode="name_asc",
+            missing_text_behavior="empty",
+            queue_front=False,
+            dry_run=True,
+            include_subfolders=include_subfolders,
+            prompt=prompt,
+            unique_id="test",
+        )
+
+    def test_subfolder_hint_is_exposed_to_ui(self):
+        result = self.run_queue(False)
+        summary, queued = result["result"]
+        self.assertIn("found 2 subfolder(s)", summary)
+        self.assertEqual(queued, 0)
+        self.assertEqual(result["ui"]["text"], (summary,))
+
+    def test_dry_run_count_is_exposed_to_ui(self):
+        result = self.run_queue(True)
+        summary, queued = result["result"]
+        self.assertEqual(summary, "Queued 2 / 2 independent prompts")
+        self.assertEqual(queued, 2)
+        self.assertEqual(result["ui"]["text"], (summary,))
+
+    def test_limit_is_reflected_in_ui_text(self):
+        result = self.run_queue(True, limit=1)
+        summary, queued = result["result"]
+        self.assertEqual(summary, "Queued 1 / 1 independent prompts")
+        self.assertEqual(queued, 1)
+
+    def test_disabled_queue_keeps_ui_text(self):
+        prompt = {"2": {"class_type": "IndependentLoadImagePath", "inputs": {}}}
+        result = queue_nodes.IndependentPromptFolderQueue().queue_jobs(
+            enabled=False,
+            image_folder=str(self.base),
+            loader_node_id=2,
+            writer_node_id=3,
+            start_index=0,
+            limit=0,
+            sort_mode="name_asc",
+            text_pair_mode="none",
+            text_folder="",
+            text_sort_mode="name_asc",
+            missing_text_behavior="empty",
+            queue_front=False,
+            dry_run=True,
+            prompt=prompt,
+            unique_id="test",
+        )
+        self.assertEqual(result["ui"]["text"], ("Independent queue disabled",))
+        self.assertEqual(result["result"][1], 0)
+
 if __name__ == "__main__":
     unittest.main()

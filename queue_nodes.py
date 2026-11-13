@@ -157,6 +157,11 @@ def _register_prompt_hook():
     _PROMPT_HOOK_REGISTERED = True
 
 
+def _queue_result(summary, queued):
+    """Return the node result plus ui.text so /history also shows the summary."""
+    return {"ui": {"text": (summary,)}, "result": (summary, queued)}
+
+
 def _subfolder_hint(folder_path):
     """Message for a folder that only contains subfolders."""
     try:
@@ -1252,7 +1257,7 @@ class IndependentPromptFolderQueue:
         unique_id=None,
     ):
         if not enabled:
-            return ("Independent queue disabled", 0)
+            return _queue_result("Independent queue disabled", 0)
 
         if not prompt:
             raise ValueError("Current prompt data is missing")
@@ -1282,8 +1287,8 @@ class IndependentPromptFolderQueue:
             if not include_subfolders:
                 hint = _subfolder_hint(image_folder)
                 if hint:
-                    return (hint, 0)
-            return ("No image files matched", 0)
+                    return _queue_result(hint, 0)
+            return _queue_result("No image files matched", 0)
 
         if include_subfolders:
             duplicates = _duplicate_stem_pairs(files)
@@ -1354,7 +1359,7 @@ class IndependentPromptFolderQueue:
 
         summary = f"Queued {queued} / {len(files)} independent prompts"
         _send_status(unique_id, summary)
-        return (summary, queued)
+        return _queue_result(summary, queued)
 
 
 NODE_CLASS_MAPPINGS = {
