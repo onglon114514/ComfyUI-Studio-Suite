@@ -396,3 +396,6 @@ class ReasoningBlockTests(unittest.TestCase):
 
     def test_stray_tags_are_removed(self):
         self.assertEqual(gateway.strip_reasoning_blocks("</think>  caption"), "caption")
+
+if __name__ == "__main__":
+    unittest.main()
