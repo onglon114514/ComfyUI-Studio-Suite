@@ -375,8 +375,6 @@ class TaggingTermsConfigTests(unittest.TestCase):
         self.assertIn("signature", summary)
 
 
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
 
 
 class ReasoningBlockTests(unittest.TestCase):
