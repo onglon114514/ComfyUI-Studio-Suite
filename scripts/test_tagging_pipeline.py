@@ -377,3 +377,22 @@ class TaggingTermsConfigTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class ReasoningBlockTests(unittest.TestCase):
+    def test_strips_closed_think_block(self):
+        text = "thinking about shapes\n</think>\n\nA red circle on a white background."
+        self.assertEqual(
+            gateway.strip_reasoning_blocks(text),
+            "A red circle on a white background.",
+        )
+
+    def test_strips_xml_think_pair(self):
+        text = "<think>step one\nstep two</think>\nFinal caption."
+        self.assertEqual(gateway.strip_reasoning_blocks(text), "Final caption.")
+
+    def test_plain_text_is_unchanged(self):
+        self.assertEqual(gateway.strip_reasoning_blocks("A plain caption."), "A plain caption.")
+
+    def test_stray_tags_are_removed(self):
+        self.assertEqual(gateway.strip_reasoning_blocks("</think>  caption"), "caption")

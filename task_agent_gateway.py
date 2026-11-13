@@ -2236,6 +2236,16 @@ def apply_runtime_context(system_prompt, user_prompt, inputs):
     return system_prompt, user_prompt
 
 
+def strip_reasoning_blocks(text):
+    """Drop Qwen-style thinking blocks, keeping only the final answer."""
+    value = str(text or "")
+    marker = value.rfind("</think>")
+    if marker >= 0:
+        value = value[marker + len("</think>"):]
+    value = re.sub(r"</?think>", "", value, flags=re.IGNORECASE)
+    return value.strip()
+
+
 def strip_markdown_fences(text):
     stripped = text.strip()
     if stripped.startswith("```"):
@@ -5818,7 +5828,7 @@ class ManagedBackend:
                 f"profile={self.current_backend_profile} memory_after={get_combined_memory_snapshot()}",
                 flush=True,
             )
-            return response_text
+            return strip_reasoning_blocks(response_text)
         if provider == "transformers_inproc":
             raise NotImplementedError("transformers_inproc is planned but not implemented yet.")
         if provider == "clip_reuse":
