@@ -51,6 +51,10 @@ This is the local development line intended for the next GitHub push after `v0.1
 - Expanded `config/tagging_terms.json` banned franchises so LLM-written captions stop leaking recent IP names.
 - Training captions now drop mood/theme commentary: `strip_interpretive_sentences` removes whole interpretive sentences and trims `, creating … atmosphere.` clauses without losing the objects the sentence lists.
 - Added `chain_image_to_moss_style_caption` for style-LoRA captioning (image-first, `caption_style_mode=style`).
+- Added `chain_image_to_moss_caption` for image-first reverse captioning with a vision profile; the module uses `generate_natural_caption`, `input_field=image_path`, and plain output.
+- In-process vision tagging now attaches the image when the selected profile declares `supports_vision`/`mmproj_path`, and strips Qwen `</think>` blocks before parsing.
+- Task Agent unloads the in-process LLM after tagging when the same prompt also contains an image-generation sampler/loader, so tag-then-draw workflows do not run out of VRAM.
+- The in-process loader now adds torch and the installed llama_cpp DLL directories, so the newer public llama-cpp-python build loads without the private runtime.
 - Added `scripts/audit_caption_dataset.py` to check a training caption folder for missing trigger prefixes, word-count outliers, style words, interpretive sentences, banned terms and duplicates before a training run.
 - Independent Prompt Folder Queue now has an optional `include_subfolders` switch for two-level artist folders, reports how many subfolders it skipped, and refuses to queue when duplicate image stems would overwrite outputs.
 - WebUI NTR graph mode now sends `image_inputs` (image/mask base64 for `WNT_ImageInput`, uploaded name for `LoadImage`); the gateway injects them into the prompt and reports `injected.images`. Masks are only sent after the user actually paints, so a blank canvas no longer overwrites the workflow default.

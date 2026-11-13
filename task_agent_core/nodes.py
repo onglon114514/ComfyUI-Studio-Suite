@@ -999,11 +999,32 @@ def build_runtime_options(llama_cpp_python_n_gpu_layers, llama_cpp_python_n_batc
     return options
 
 
+def prompt_has_image_generation_nodes(prompt):
+    """True when the current prompt also contains an image-generation graph."""
+    if not isinstance(prompt, dict):
+        return False
+    for node in prompt.values():
+        if not isinstance(node, dict):
+            continue
+        class_type = str(node.get("class_type", ""))
+        if "KSampler" in class_type or class_type in {"UNETLoader", "CheckpointLoaderSimple", "VAEDecode"}:
+            return True
+    return False
+
+
 def backend_choice_supports_vision(backend_profile, custom_mmproj_path):
     if str(custom_mmproj_path or "").strip():
         return True
     profile_key = parse_backend_profile_choice(backend_profile).lower()
-    return "vision" in profile_key
+    if "vision" in profile_key:
+        return True
+    try:
+        profile = load_backend_profiles().get(parse_backend_profile_choice(backend_profile))
+        if isinstance(profile, dict):
+            return bool(profile.get("supports_vision") or str(profile.get("mmproj_path", "")).strip())
+    except Exception:
+        pass
+    return False
 
 
 def inject_backend_payload(payload, backend_provider, model_source, backend_profile, custom_model_path, custom_mmproj_path):
@@ -1813,7 +1834,10 @@ def execute_tag_utility_internal(
     auto_load_backend,
     unload_after_run,
     context_bundle_json=None,
+    prompt=None,
 ):
+    if prompt_has_image_generation_nodes(prompt):
+        unload_after_run = True
     runtime_options = build_runtime_options(
         llama_cpp_python_n_gpu_layers,
         llama_cpp_python_n_batch,
@@ -2414,7 +2438,11 @@ class TaskAgentLegacyTagUtilityNode:
                 ),
             }
         )
-        return {"required": common, "optional": build_context_optional_inputs()}
+        return {
+            "required": common,
+            "optional": build_context_optional_inputs(),
+            "hidden": {"prompt": "PROMPT"},
+        }
 
     RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING", "STRING")
     RETURN_NAMES = ("positive_prompt", "negative_prompt", "raw_text", "json_text", "status")
@@ -2443,6 +2471,7 @@ class TaskAgentLegacyTagUtilityNode:
         auto_load_backend,
         unload_after_run,
         context_bundle_json=None,
+        prompt=None,
     ):
         return execute_tag_utility_internal(
             gateway_url=gateway_url,
@@ -2464,6 +2493,7 @@ class TaskAgentLegacyTagUtilityNode:
             auto_load_backend=auto_load_backend,
             unload_after_run=unload_after_run,
             context_bundle_json=context_bundle_json,
+            prompt=prompt,
         )
 
 
@@ -2486,7 +2516,11 @@ class TaskAgentTagUtilityNode:
                 ),
             }
         )
-        return {"required": common, "optional": build_context_optional_inputs()}
+        return {
+            "required": common,
+            "optional": build_context_optional_inputs(),
+            "hidden": {"prompt": "PROMPT"},
+        }
 
     RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING", "STRING")
     RETURN_NAMES = ("positive_prompt", "negative_prompt", "raw_text", "json_text", "status")
@@ -2510,6 +2544,7 @@ class TaskAgentTagUtilityNode:
         auto_load_backend,
         unload_after_run,
         context_bundle_json=None,
+        prompt=None,
     ):
         return execute_tag_utility_internal(
             gateway_url=gateway_url,
@@ -2531,6 +2566,7 @@ class TaskAgentTagUtilityNode:
             auto_load_backend=auto_load_backend,
             unload_after_run=unload_after_run,
             context_bundle_json=context_bundle_json,
+            prompt=prompt,
         )
 
 

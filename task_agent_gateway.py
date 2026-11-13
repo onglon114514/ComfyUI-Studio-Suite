@@ -560,10 +560,30 @@ def prepare_llama_cpp_dll_paths(private_root):
         pass
 
 
+def add_public_llama_cpp_dll_paths():
+    """Add torch and the installed llama_cpp lib so public wheels load too."""
+    try:
+        import importlib.util
+
+        spec = importlib.util.find_spec("llama_cpp")
+        if spec and spec.origin:
+            add_dll_directory_if_exists(Path(spec.origin).resolve().parent / "lib")
+    except Exception:
+        pass
+    try:
+        import torch
+
+        add_dll_directory_if_exists(Path(torch.__file__).resolve().parent / "lib")
+    except Exception:
+        pass
+
+
 def load_llama_cpp_for_task_agent(prefer_private=True):
     if prefer_private:
         ensure_private_python_lib_path(PRIVATE_LLAMA_CPP_PYTHON_DIR)
         prepare_llama_cpp_dll_paths(PRIVATE_LLAMA_CPP_PYTHON_DIR)
+    else:
+        add_public_llama_cpp_dll_paths()
     try:
         import llama_cpp
         from llama_cpp import Llama

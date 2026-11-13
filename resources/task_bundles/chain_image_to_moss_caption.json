@@ -1,0 +1,22 @@
+{
+  "task_modules": [
+    {
+      "type": "generate_natural_caption",
+      "input_field": "image_path",
+      "fixed_inputs": {
+        "caption_output_format": "plain",
+        "caption_max_tokens": 900
+      }
+    }
+  ],
+  "format_module": {
+    "type": "moss_train_nl_v1"
+  },
+  "task_defaults": {
+    "style_hint": "image-first reverse caption, English, 120-200 words",
+    "purpose": "图反推 caption：直接读图写整段英文描述，不依赖 WD14；画面文字原样引用，不写画布尺寸。"
+  },
+  "fixed_inputs": {
+    "caption_mode": "training_caption_only"
+  }
+}

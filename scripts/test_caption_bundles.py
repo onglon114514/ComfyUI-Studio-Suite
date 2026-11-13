@@ -45,6 +45,7 @@ CAPTION_CHAINS = {
     "chain_wd14_to_zimage_train_caption": "zimage_train_nl_v1",
     "chain_wd14_to_longcat_train_caption": "longcat_train_nl_v1",
     "chain_image_to_moss_style_caption": "moss_train_nl_v1",
+    "chain_image_to_moss_caption": "moss_train_nl_v1",
 }
 
 CAPTION = (
