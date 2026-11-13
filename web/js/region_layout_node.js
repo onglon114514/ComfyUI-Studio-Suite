@@ -811,7 +811,7 @@ function installRegionEditor(node) {
             }
             const size = canvasSize();
             doc = sanitizeDoc(parsed, size.w, size.h);
-            globalInput.value = doc.global.caption_en || doc.global.caption_zh || "";
+            syncGlobalCaption(doc.global.caption_en || doc.global.caption_zh || "");
             if (selectedId && !doc.regions.some((region) => region.id === selectedId)) {
                 selectedId = null;
             }
@@ -834,6 +834,13 @@ function installRegionEditor(node) {
             element.value = text;
         }
         node.graph?.setDirtyCanvas?.(true, true);
+    }
+
+    function syncGlobalCaption(value) {
+        const text = String(value || "");
+        if (globalInput.value !== text) globalInput.value = text;
+        const widget = findWidget("global_caption");
+        if (widget && widget.value !== text) widget.value = text;
     }
 
     function estimateTokens(text) {
@@ -1576,6 +1583,7 @@ function installRegionEditor(node) {
         selectedId = null;
         syncCanvasWidget("canvas_width", doc.canvas.w);
         syncCanvasWidget("canvas_height", doc.canvas.h);
+        syncGlobalCaption(doc.global.caption_en || doc.global.caption_zh || "");
         updateFields();
         draw();
         writeDoc();
