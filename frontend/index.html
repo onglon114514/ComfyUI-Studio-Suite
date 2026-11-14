@@ -3000,6 +3000,7 @@
         '<button type="button" class="small ghost lora-help" title="切分规则 / LoRA 语法">?</button>',
         '</div>',
         '<div class="cat-tabs lora-groups"></div>',
+        '<div class="cat-tabs lora-folders"></div>',
         '<div class="lora-grid"><div class="tag-empty">展开后加载…</div></div>',
       ].join("");
       editor.appendChild(drawer);
@@ -3007,8 +3008,9 @@
       const search = drawer.querySelector(".lora-search");
       const weight = drawer.querySelector(".lora-weight");
       const groupsHost = drawer.querySelector(".lora-groups");
+      const foldersHost = drawer.querySelector(".lora-folders");
       const grid = drawer.querySelector(".lora-grid");
-      const state = { group: "", query: "", expanded: false };
+      const state = { group: "", folder: "", query: "", expanded: false };
 
       function renderGroups() {
         groupsHost.innerHTML = "";
@@ -3019,10 +3021,44 @@
           btn.textContent = (group.title || group.name) + " " + ((group.items || []).length);
           btn.addEventListener("click", () => {
             state.group = group.name;
+            state.folder = "";
             renderGroups();
+            renderFolders();
             renderGrid();
           });
           groupsHost.appendChild(btn);
+        });
+      }
+
+      function itemFolder(item) {
+        const raw = String(item.basename || item.name || "").replace(/\//g, "\\");
+        const index = raw.lastIndexOf("\\");
+        return index > 0 ? raw.slice(0, index) : "@root";
+      }
+
+      function renderFolders() {
+        foldersHost.innerHTML = "";
+        const group = loraGroups.find((g) => g.name === state.group) || loraGroups[0];
+        const items = (group && group.items) || [];
+        const counts = new Map();
+        items.forEach((item) => {
+          const folder = itemFolder(item);
+          counts.set(folder, (counts.get(folder) || 0) + 1);
+        });
+        const folders = [...counts.keys()].sort((a, b) => a.localeCompare(b, "zh"));
+        const entries = [["", items.length], ...folders.map((folder) => [folder, counts.get(folder)])];
+        entries.forEach(([folder, count]) => {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "cat-tab" + (state.folder === folder ? " active" : "");
+          btn.textContent = (folder || "全部") + " " + count;
+          btn.title = folder || "全部目录";
+          btn.addEventListener("click", () => {
+            state.folder = folder;
+            renderFolders();
+            renderGrid();
+          });
+          foldersHost.appendChild(btn);
         });
       }
 
@@ -3035,6 +3071,7 @@
         }
         const q = state.query.trim().toLowerCase();
         const items = (group.items || []).filter((item) => {
+          if (state.folder && itemFolder(item) !== state.folder) return false;
           if (!q) return true;
           return [item.name, item.model_name, item.output_name, item.basename, item.description]
             .join(" ").toLowerCase().includes(q);
@@ -3102,6 +3139,7 @@
           if (!loraGroups.length) loadLoraNetworks();
           else {
             renderGroups();
+            renderFolders();
             renderGrid();
           }
         },
@@ -3116,6 +3154,7 @@
         render() {
           if (entry.expanded) {
             renderGroups();
+            renderFolders();
             renderGrid();
           }
         },

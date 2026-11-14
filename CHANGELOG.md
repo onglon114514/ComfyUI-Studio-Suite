@@ -6,7 +6,7 @@ This is the local development line intended for the next GitHub push after `v0.1
 
 ### Added
 
-- Added a LoRA / Extra Networks drawer to each WebUI prompt editor (`frontend/index.html`): reads ComfyUI's `loras` and `embeddings` through `/weilin/physton_prompt/get_extra_networks`, shows preview thumbnails (placeholder with the name when missing), supports search, signed weights (`+1.1` / `-1.1`) and inserts `<lora:...:weight>` or embedding names into the editor's own prompt at the cursor.
+- Added a LoRA / Extra Networks drawer to each WebUI prompt editor (`frontend/index.html`): reads ComfyUI's `loras` and `embeddings` through `/weilin/physton_prompt/get_extra_networks`, shows preview thumbnails (placeholder with the name when missing), groups entries by their model subfolder, supports search, signed weights (`+1.1` / `-1.1`) and inserts `<lora:...:weight>` or embedding names into the editor's own prompt at the cursor.
 - Added a backend-agnostic Prompt Studio translation core (`prompt_studio/translation_core.py`): prompt building, tag splitting, per-item retry and a shared LRU cache now serve every translation backend.
 - Added an in-process CPU translation backend (`prompt_studio/inprocess_translation_runtime.py`) for standard-quant HY-MT GGUFs (Q4_K_M / Q6_K / Q8_0), with idle unload and a new `inprocess` engine option. HY-MT STQ remains the faster optional path.
 - Added `scripts/test_translation_core.py` and `config/inprocess_translation.example.json`.
@@ -67,6 +67,7 @@ This is the local development line intended for the next GitHub push after `v0.1
 ### Changed
 
 - LoRA tags (`<lora:...>`, `<lyco:...>`, `<wlr:...>`) and full-width parentheses (`（）`) are now treated as atomic when splitting prompts into chips and translation units, so file names containing commas and parenthesised phrases survive editing and dragging.
+- The ComfyUI WeiLin prompt editor now has a `说明` button documenting the chip split rules and LoRA syntax, including signed weights and punctuation inside LoRA names.
 - WeiLin prompt chips now keep a per-token trailing separator, so sentence-ending punctuation survives the chip round trip and `中文自然语言.中文自然语言` becomes two draggable blocks instead of one. This is a local patch to the third-party plugin; see `docs/weilin-sentence-chips-patch.md`.
 - HY-MT and the new in-process backend now share the same `TagTranslator` flow, so tag splitting, per-item retry and caching behave identically regardless of engine.
 - Prompt Studio now pauses the ComfyUI canvas while its full-screen editor is open and destroys the iframe on close, preventing the hidden editor and graph renderer from accumulating work together.
