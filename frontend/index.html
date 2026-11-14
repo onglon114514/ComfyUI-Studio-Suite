@@ -2635,29 +2635,104 @@
       return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     }
 
-    function tokensOf(value) {
-      const source = String(value || "");
-      const parts = [];
-      let cur = "";
+    function isSentenceDot(source, index) {
+      if (source[index] !== ".") return false;
+      if (index > 0 && /[0-9.]/.test(source[index - 1])) return false;
+      const next = source[index + 1];
+      return next === undefined || /[\s\u3400-\u9fff]/.test(next);
+    }
+
+    function hasSentenceEnding(source) {
       let depth = 0;
-      let inAngle = false;
-      for (let i = 0; i < source.length; i += 1) {
-        const ch = source[i];
-        if (ch === "<") inAngle = true;
-        if (ch === ">") inAngle = false;
-        if (!inAngle && "([{（".includes(ch)) depth += 1;
-        if (!inAngle && ")]}）".includes(ch) && depth > 0) depth -= 1;
-        if (ch === "," && !inAngle && depth === 0) {
-          const item = cur.trim();
-          if (item) parts.push(item);
-          cur = "";
+      let escaped = false;
+      let index = 0;
+      while (index < source.length) {
+        const char = source[index];
+        if (escaped) { escaped = false; index += 1; continue; }
+        if (char === "\\") { escaped = true; index += 1; continue; }
+        if (char === "<" && /^<(lora|lyco|wlr):/i.test(source.slice(index))) {
+          const close = source.indexOf(">", index);
+          if (close !== -1) { index = close + 1; continue; }
+        }
+        if ("([{（".includes(char)) { depth += 1; index += 1; continue; }
+        if (")]}）".includes(char) && depth > 0) { depth -= 1; index += 1; continue; }
+        if (depth > 0) { index += 1; continue; }
+        if ("。！？!?；;".includes(char) || isSentenceDot(source, index)) return true;
+        index += 1;
+      }
+      return false;
+    }
+
+    // Token 记住自己后面的分隔符，拖动/删除时按原文拼回，句号不会被替换成逗号。
+    function promptTokens(value) {
+      const source = String(value || "");
+      const textMode = hasSentenceEnding(source);
+      const tokens = [];
+      let current = "";
+      let prefix = "";
+      let depth = 0;
+      let escaped = false;
+      const flush = (separator) => {
+        const text = current.trim();
+        current = "";
+        if (text) {
+          tokens.push({ text, separator, prefix });
+          prefix = "";
+          return;
+        }
+        if (!separator) return;
+        if (tokens.length) {
+          tokens[tokens.length - 1].separator += separator;
+        } else {
+          prefix += separator;
+        }
+      };
+      let index = 0;
+      while (index < source.length) {
+        const char = source[index];
+        if (escaped) { current += char; escaped = false; index += 1; continue; }
+        if (char === "\\") { current += char; escaped = true; index += 1; continue; }
+        if (char === "<" && /^<(lora|lyco|wlr):/i.test(source.slice(index))) {
+          const close = source.indexOf(">", index);
+          if (close !== -1) { current += source.slice(index, close + 1); index = close + 1; continue; }
+        }
+        if ("([{（".includes(char)) depth += 1;
+        else if (")]}）".includes(char) && depth > 0) depth -= 1;
+
+        let isSeparator = false;
+        if (depth === 0) {
+          if (char === "\n" || char === "\r") isSeparator = true;
+          else if (textMode) isSeparator = "。！？!?；;".includes(char) || isSentenceDot(source, index);
+          else isSeparator = ",，;；".includes(char);
+        }
+        if (isSeparator) {
+          let end = index + 1;
+          while (end < source.length && " \t\r\n".includes(source[end])) end += 1;
+          flush(source.slice(index, end));
+          index = end;
           continue;
         }
-        cur += ch;
+        current += char;
+        index += 1;
       }
-      const tail = cur.trim();
-      if (tail) parts.push(tail);
-      return parts;
+      flush("");
+      return tokens;
+    }
+
+    function tokensOf(value) {
+      return promptTokens(value).map((token) => token.text);
+    }
+
+    function joinPromptTokens(tokens) {
+      let out = "";
+      (tokens || []).forEach((token) => {
+        const piece = (token.prefix || "") + token.text + (token.separator || "");
+        if (out && !token.prefix && !/[\s,，;；.。!?！？]$/.test(out) && !/^[\s,，;；.。!?！？]/.test(token.text)) {
+          out += " ";
+        }
+        out += piece;
+      });
+      return out;
     }
 
     function parseGroupTags(text) {
@@ -2829,11 +2904,11 @@
       };
 
       unit.reorderChips = function (srcIdx, dstIdx) {
-        const toks = tokensOf(unit.box.value);
+        const toks = promptTokens(unit.box.value);
         if (srcIdx === dstIdx || srcIdx < 0 || dstIdx < 0 || srcIdx >= toks.length || dstIdx >= toks.length) return;
         const [moved] = toks.splice(srcIdx, 1);
         toks.splice(dstIdx, 0, moved);
-        unit.box.value = toks.join(", ");
+        unit.box.value = joinPromptTokens(toks);
         updateCounters();
         unit.renderChips();
       };
@@ -2841,7 +2916,7 @@
       unit.renderChips = function () {
         const chips = unit.chips;
         chips.innerHTML = "";
-        tokensOf(unit.box.value).forEach((tok, idx) => {
+        promptTokens(unit.box.value).forEach(({ text: tok }, idx) => {
           const color = findTagColor(tok);
           const chip = document.createElement("span");
           chip.className = "chip";
@@ -2870,9 +2945,9 @@
           del.className = "chip-del";
           del.textContent = "×";
           del.addEventListener("click", () => {
-            const toks = tokensOf(unit.box.value);
+            const toks = promptTokens(unit.box.value);
             toks.splice(idx, 1);
-            unit.box.value = toks.join(", ");
+            unit.box.value = joinPromptTokens(toks);
             updateCounters();
             unit.renderChips();
           });
