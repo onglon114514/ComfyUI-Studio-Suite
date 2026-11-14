@@ -2986,6 +2986,24 @@
       }
     }
 
+    function applyGraphPromptDefaults(nodes) {
+      const values = { positiveBox: "", negativeBox: "" };
+      const targets = { positiveBox: false, negativeBox: false };
+      for (const [nodeId, box] of Object.entries(wfPromptTargets || {})) {
+        const node = (nodes || {})[nodeId];
+        const value = String((node && node.inputs && node.inputs.default) || "");
+        targets[box] = true;
+        if (value && !values[box]) values[box] = value;
+      }
+      for (const box of ["positiveBox", "negativeBox"]) {
+        if (!targets[box]) continue;
+        const el = $(box);
+        if (!el) continue;
+        el.value = values[box];
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+    }
+
     async function loadGraphWorkflow(name) {
       wfMode = "graph";
       wfGraphName = name;
@@ -3007,6 +3025,7 @@
         const pv = await requestJson("/api/graph-workflow/" + encodeURIComponent(name) + "/param-view");
         wfCurrent = pv.nodes || {};
         await renderWfParams();
+        applyGraphPromptDefaults(wfCurrent);
       } catch (err) {
         wfCurrent = null;
       }
@@ -3443,6 +3462,13 @@
                   for (let i = 0; i < el.options.length; i++) {
                     if (String(el.options[i].value).indexOf(String(cur).split("\\").pop()) >= 0) { el.selectedIndex = i; matched = true; break; }
                   }
+                }
+                if (!matched) {
+                  const missing = document.createElement("option");
+                  missing.value = String(cur);
+                  missing.textContent = String(cur) + "  （缺失）";
+                  el.insertBefore(missing, el.firstChild);
+                  el.selectedIndex = 0;
                 }
               }
             } else {
