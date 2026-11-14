@@ -454,6 +454,8 @@ def _default_completer_factory(profile_key: str):
             prompt_studio_api._stop_prompt_studio_private_worker()
         if prompt_studio_api._HY_MT_RUNTIME.status()["alive"]:
             prompt_studio_api._HY_MT_RUNTIME.stop()
+        if prompt_studio_api._INPROCESS_TRANSLATION_RUNTIME.status()["alive"]:
+            prompt_studio_api._INPROCESS_TRANSLATION_RUNTIME.stop()
         backend = prompt_studio_api._get_llm_translate_backend()
         backend.ensure_loaded(backend_profile=profile_key)
         return backend._complete_messages(payload, stream_callback=stream_callback)

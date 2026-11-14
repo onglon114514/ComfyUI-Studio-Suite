@@ -39,6 +39,7 @@ from .local_dictionary import LocalDanbooruDictionary
 from .openai_server import register_openai_compat_routes
 from .tag_library import TagLibrary
 from .hy_mt_runtime import HyMtRuntime, normalize_tag_separators, translation_needed
+from .inprocess_translation_runtime import InProcessTranslationRuntime
 
 
 NODE_DIR = Path(__file__).resolve().parent
@@ -83,6 +84,7 @@ _LOCAL_DICTIONARY = LocalDanbooruDictionary(PACKAGE_DIR, STORAGE_DIR)
 _TAG_LIBRARY = TagLibrary(PACKAGE_DIR)
 _LIBRARY_GROUP_LOCK = threading.Lock()
 _HY_MT_RUNTIME = HyMtRuntime(PACKAGE_DIR)
+_INPROCESS_TRANSLATION_RUNTIME = InProcessTranslationRuntime(PACKAGE_DIR)
 
 
 def _ensure_dirs() -> None:
@@ -913,14 +915,24 @@ def _prompt_studio_worker_state() -> dict:
 
 def _select_prompt_studio_translation_engine(requested: str) -> tuple[str, dict]:
     value = str(requested or "auto").strip().lower()
-    if value not in {"auto", "hy_mt", "general_llm"}:
+    if value not in {"auto", "hy_mt", "inprocess", "general_llm"}:
         value = "auto"
-    hy_mt_state = _HY_MT_RUNTIME.status()
+    states = {
+        "hy_mt": _HY_MT_RUNTIME.status(),
+        "inprocess": _INPROCESS_TRANSLATION_RUNTIME.status(),
+    }
     if value == "hy_mt":
-        return ("hy_mt" if hy_mt_state["available"] else "hy_mt_unavailable"), hy_mt_state
-    if value == "auto" and hy_mt_state["available"]:
-        return "hy_mt", hy_mt_state
-    return "general_llm", hy_mt_state
+        return ("hy_mt" if states["hy_mt"]["available"] else "hy_mt_unavailable"), states
+    if value == "inprocess":
+        return (
+            "inprocess" if states["inprocess"]["available"] else "inprocess_unavailable"
+        ), states
+    if value == "auto":
+        if states["hy_mt"]["available"]:
+            return "hy_mt", states
+        if states["inprocess"]["available"]:
+            return "inprocess", states
+    return "general_llm", states
 
 
 def _prompt_studio_queue_guard_error() -> web.Response | None:
@@ -1514,6 +1526,8 @@ def register_prompt_studio_routes():
                 _stop_prompt_studio_private_worker()
             if _HY_MT_RUNTIME.status()["alive"]:
                 _HY_MT_RUNTIME.stop()
+            if _INPROCESS_TRANSLATION_RUNTIME.status()["alive"]:
+                _INPROCESS_TRANSLATION_RUNTIME.stop()
             _unload_llm_translate_backend_if_loaded()
             return json_data
 
@@ -1748,13 +1762,26 @@ def register_prompt_studio_routes():
         unload_after_run = False if keep_warm else bool(data.get("unload_after_run", False))
         keep_warm_seconds = int(data.get("keep_warm_seconds", 600) or 600)
         requested_engine = str(data.get("engine", "auto") or "auto").strip().lower()
-        selected_engine, hy_mt_state = _select_prompt_studio_translation_engine(requested_engine)
+        selected_engine, engine_states = _select_prompt_studio_translation_engine(requested_engine)
+        hy_mt_state = engine_states["hy_mt"]
+        inprocess_state = engine_states["inprocess"]
         if selected_engine == "hy_mt_unavailable":
             return web.json_response(
                 {
                     "success": False,
                     "error": "hy_mt_runtime_unavailable",
                     "hy_mt": hy_mt_state,
+                    "inprocess": inprocess_state,
+                },
+                status=503,
+            )
+        if selected_engine == "inprocess_unavailable":
+            return web.json_response(
+                {
+                    "success": False,
+                    "error": "inprocess_translation_unavailable",
+                    "hy_mt": hy_mt_state,
+                    "inprocess": inprocess_state,
                 },
                 status=503,
             )
@@ -1763,6 +1790,8 @@ def register_prompt_studio_routes():
                 if _prompt_studio_worker_state()["alive"]:
                     _stop_prompt_studio_private_worker()
                 _unload_llm_translate_backend()
+                if _INPROCESS_TRANSLATION_RUNTIME.status()["alive"]:
+                    _INPROCESS_TRANSLATION_RUNTIME.stop()
                 _HY_MT_RUNTIME.allow_start()
                 queue_error = _prompt_studio_queue_guard_error()
                 if queue_error is not None:
@@ -1822,10 +1851,84 @@ def register_prompt_studio_routes():
                         {"success": False, "error": str(error), "engine": "hy_mt", "hy_mt": _HY_MT_RUNTIME.status()},
                         status=500,
                     )
-                print(f"[Prompt Studio] HY-MT unavailable at runtime; falling back to general LLM: {error}")
+                print(f"[Prompt Studio] HY-MT unavailable at runtime; falling back: {error}")
+                selected_engine = "inprocess" if inprocess_state["available"] else "general_llm"
+        if selected_engine == "inprocess":
+            try:
+                if _HY_MT_RUNTIME.status()["alive"]:
+                    _HY_MT_RUNTIME.stop()
+                if _prompt_studio_worker_state()["alive"]:
+                    _stop_prompt_studio_private_worker()
+                _unload_llm_translate_backend()
+                queue_error = _prompt_studio_queue_guard_error()
+                if queue_error is not None:
+                    _INPROCESS_TRANSLATION_RUNTIME.stop()
+                    return queue_error
+                result = await asyncio.to_thread(
+                    _INPROCESS_TRANSLATION_RUNTIME.translate,
+                    protected_text,
+                    direction,
+                    max_tokens,
+                    min(0.15, temperature),
+                )
+                if keep_warm:
+                    _INPROCESS_TRANSLATION_RUNTIME.schedule_idle_shutdown(keep_warm_seconds)
+                else:
+                    _INPROCESS_TRANSLATION_RUNTIME.stop()
+                return web.json_response({
+                    "success": True,
+                    "translated_text": result["translated_text"],
+                    "source_text": text,
+                    "translation_pairs": dictionary_matches,
+                    "dictionary_matches": dictionary_matches,
+                    "raw_text": result["translated_text"],
+                    "json_result": {},
+                    "backend_mode": "inprocess_llama_cpp_cpu",
+                    "backend_profile": "hy_mt_1_8b_q4_k_m_cpu",
+                    "engine": "inprocess",
+                    "cache_hit": bool(result.get("cache_hit", False)),
+                    "skipped_already_target_language": bool(
+                        result.get("skipped_already_target_language", False)
+                    ),
+                    "runtime": {
+                        "dynamic_runtime": dynamic_runtime,
+                        "keep_warm": keep_warm,
+                        "keep_warm_seconds": keep_warm_seconds if keep_warm else 0,
+                        "context_size": context_size,
+                        "max_tokens": max_tokens,
+                        "temperature": min(0.15, temperature),
+                        "elapsed_seconds": result["elapsed_seconds"],
+                        "backend_timings": result.get("backend_timings", {}),
+                        "cache_hit": bool(result.get("cache_hit", False)),
+                        "skipped_already_target_language": bool(
+                            result.get("skipped_already_target_language", False)
+                        ),
+                        "inprocess": result["runtime"],
+                    },
+                })
+            except Exception as error:
+                _INPROCESS_TRANSLATION_RUNTIME.stop()
+                if _prompt_studio_queue_state()["busy"]:
+                    return web.json_response(
+                        {"success": False, "error": "comfy_queue_busy", "queue": _prompt_studio_queue_state()},
+                        status=409,
+                    )
+                if requested_engine == "inprocess":
+                    return web.json_response(
+                        {
+                            "success": False,
+                            "error": str(error),
+                            "engine": "inprocess",
+                            "inprocess": _INPROCESS_TRANSLATION_RUNTIME.status(),
+                        },
+                        status=500,
+                    )
+                print(f"[Prompt Studio] in-process translation unavailable at runtime; falling back: {error}")
                 selected_engine = "general_llm"
         if _HY_MT_RUNTIME.status()["alive"]:
             _HY_MT_RUNTIME.stop()
+        if _INPROCESS_TRANSLATION_RUNTIME.status()["alive"]:
+            _INPROCESS_TRANSLATION_RUNTIME.stop()
         custom_model_path = str(data.get("custom_model_path", "") or "").strip() or None
         use_private_worker = _prompt_studio_should_use_private_worker(data)
         if custom_model_path is None and (use_private_worker or _prompt_studio_config_uses_inprocess()):
@@ -1934,6 +2037,7 @@ def register_prompt_studio_routes():
             "queue": _prompt_studio_queue_state(),
             "worker": _prompt_studio_worker_state(),
             "hy_mt": _HY_MT_RUNTIME.status(),
+            "inprocess": _INPROCESS_TRANSLATION_RUNTIME.status(),
             "dictionary": _LOCAL_DICTIONARY.status(),
         })
 
@@ -2041,10 +2145,27 @@ def register_prompt_studio_routes():
             return queue_error
         data = await _request_json_dict(request)
         requested_engine = str(data.get("engine", "auto") or "auto").strip().lower()
-        selected_engine, hy_mt_state = _select_prompt_studio_translation_engine(requested_engine)
+        selected_engine, engine_states = _select_prompt_studio_translation_engine(requested_engine)
+        hy_mt_state = engine_states["hy_mt"]
+        inprocess_state = engine_states["inprocess"]
         if selected_engine == "hy_mt_unavailable":
             return web.json_response(
-                {"success": False, "error": "hy_mt_runtime_unavailable", "hy_mt": hy_mt_state},
+                {
+                    "success": False,
+                    "error": "hy_mt_runtime_unavailable",
+                    "hy_mt": hy_mt_state,
+                    "inprocess": inprocess_state,
+                },
+                status=503,
+            )
+        if selected_engine == "inprocess_unavailable":
+            return web.json_response(
+                {
+                    "success": False,
+                    "error": "inprocess_translation_unavailable",
+                    "hy_mt": hy_mt_state,
+                    "inprocess": inprocess_state,
+                },
                 status=503,
             )
         if selected_engine == "hy_mt":
@@ -2074,10 +2195,49 @@ def register_prompt_studio_routes():
                         {"success": False, "error": str(error), "engine": "hy_mt", "hy_mt": _HY_MT_RUNTIME.status()},
                         status=500,
                     )
-                print(f"[Prompt Studio] HY-MT preload failed; falling back to general LLM: {error}")
+                print(f"[Prompt Studio] HY-MT preload failed; falling back: {error}")
+                selected_engine = "inprocess" if inprocess_state["available"] else "general_llm"
+        if selected_engine == "inprocess":
+            started_at = time.monotonic()
+            try:
+                if _HY_MT_RUNTIME.status()["alive"]:
+                    _HY_MT_RUNTIME.stop()
+                if _prompt_studio_worker_state()["alive"]:
+                    _stop_prompt_studio_private_worker()
+                _unload_llm_translate_backend()
+                queue_error = _prompt_studio_queue_guard_error()
+                if queue_error is not None:
+                    _INPROCESS_TRANSLATION_RUNTIME.stop()
+                    return queue_error
+                result = await asyncio.to_thread(_INPROCESS_TRANSLATION_RUNTIME.ensure_started)
+                _INPROCESS_TRANSLATION_RUNTIME.schedule_idle_shutdown(
+                    int(data.get("keep_warm_seconds", 600) or 600)
+                )
+                return web.json_response({
+                    "success": True,
+                    "engine": "inprocess",
+                    "result": result,
+                    "inprocess": _INPROCESS_TRANSLATION_RUNTIME.status(),
+                    "elapsed_seconds": round(time.monotonic() - started_at, 3),
+                })
+            except Exception as error:
+                _INPROCESS_TRANSLATION_RUNTIME.stop()
+                if requested_engine == "inprocess":
+                    return web.json_response(
+                        {
+                            "success": False,
+                            "error": str(error),
+                            "engine": "inprocess",
+                            "inprocess": _INPROCESS_TRANSLATION_RUNTIME.status(),
+                        },
+                        status=500,
+                    )
+                print(f"[Prompt Studio] in-process preload failed; falling back to general LLM: {error}")
                 selected_engine = "general_llm"
         if _HY_MT_RUNTIME.status()["alive"]:
             _HY_MT_RUNTIME.stop()
+        if _INPROCESS_TRANSLATION_RUNTIME.status()["alive"]:
+            _INPROCESS_TRANSLATION_RUNTIME.stop()
         if not _private_llama_runtime_available():
             return web.json_response({"success": False, "error": "private_llama_runtime_missing"}, status=503)
         backend_profile = str(data.get("backend_profile", "") or "").strip() or _default_prompt_studio_translate_profile()
@@ -2123,11 +2283,13 @@ def register_prompt_studio_routes():
     @routes.post("/studio-suite/prompt-studio/llm_unload")
     async def prompt_studio_llm_unload(request):
         hy_mt_result = _HY_MT_RUNTIME.stop()
+        inprocess_result = _INPROCESS_TRANSLATION_RUNTIME.stop()
         private_result = _stop_prompt_studio_private_worker()
         result = _unload_llm_translate_backend()
         if isinstance(result, dict):
             result["private_worker"] = private_result
             result["hy_mt"] = hy_mt_result
+            result["inprocess"] = inprocess_result
         status = str(result.get("status", "") if isinstance(result, dict) else "").lower()
         ok = status not in {"failed", "error"}
         return web.json_response({"success": ok, "result": result}, status=200 if ok else 500)

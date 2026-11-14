@@ -27,6 +27,7 @@ import {
     let statusPollTimer = null;
     let dictionaryState = { ready: false, mode: "builtin_only", manual_aliases: 0, indexed_aliases: 0 };
     let hyMtState = { available: false, alive: false, reason: "not_checked" };
+    let inprocessState = { available: false, alive: false, reason: "not_checked" };
     const DIRECTION_KEY = "studio_suite_translate_direction";
     const CONTENT_TYPE_KEY = "studio_suite_translate_content_type";
     const ENGINE_KEY = "studio_suite_translate_engine";
@@ -129,6 +130,19 @@ import {
                 localStorage.setItem(ENGINE_KEY, "auto");
             }
         }
+        const inprocessOption = engineSelect && engineSelect.querySelector('option[value="inprocess"]');
+        if (inprocessOption && inprocessState.reason !== "not_checked") {
+            const disabled = !inprocessState.available;
+            const label = inprocessState.available
+                ? "进程内 Q4（CPU）"
+                : "进程内 Q4（未安装）";
+            if (inprocessOption.disabled !== disabled) inprocessOption.disabled = disabled;
+            if (inprocessOption.textContent !== label) inprocessOption.textContent = label;
+            if (!inprocessState.available && engineSelect.value === "inprocess") {
+                engineSelect.value = "auto";
+                localStorage.setItem(ENGINE_KEY, "auto");
+            }
+        }
         const dictionaryReady = Boolean(dictionaryState && dictionaryState.ready);
         const aliasCount = dictionaryReady
             ? Number(dictionaryState.indexed_aliases || 0).toLocaleString()
@@ -144,11 +158,15 @@ import {
                 ? "模型加载中"
                 : hyMtState.alive
                     ? "HY-MT 已预热"
-                    : workerWarm
-                        ? "模型已预热"
-                        : hyMtState.available
-                            ? "HY-MT 可用"
-                            : "通用 LLM",
+                    : inprocessState.alive
+                        ? "Q4 已预热"
+                        : workerWarm
+                            ? "模型已预热"
+                            : hyMtState.available
+                                ? "HY-MT 可用"
+                                : inprocessState.available
+                                    ? "Q4 可用"
+                                    : "通用 LLM",
             preloadBusy ? "busy" : workerWarm ? "ready" : "idle"
         );
         setStatusChip(
@@ -255,9 +273,11 @@ import {
                 const wasBusy = queueBusy;
                 queueBusy = Boolean(payload.queue && payload.queue.busy);
                 hyMtState = payload.hy_mt || hyMtState;
+                inprocessState = payload.inprocess || inprocessState;
                 workerWarm = Boolean(
                     (payload.worker && payload.worker.alive) ||
-                    (payload.hy_mt && payload.hy_mt.alive)
+                    (payload.hy_mt && payload.hy_mt.alive) ||
+                    (payload.inprocess && payload.inprocess.alive)
                 );
                 dictionaryState = payload.dictionary || dictionaryState;
                 if (queueBusy) {
@@ -306,36 +326,65 @@ import {
         return engine && engine.value ? engine.value : "auto";
     }
 
+    function isSentenceDot(source, index) {
+        if (source[index] !== ".") return false;
+        if (index > 0 && /[0-9.]/.test(source[index - 1])) return false;
+        const next = source[index + 1];
+        return next === undefined || /[\s㐀-鿿]/.test(next);
+    }
+
+    function hasSentenceEnding(source) {
+        let depth = 0;
+        let escaped = false;
+        let index = 0;
+        while (index < source.length) {
+            const char = source[index];
+            if (escaped) { escaped = false; index += 1; continue; }
+            if (char === "\\") { escaped = true; index += 1; continue; }
+            if (char === "<" && /^<(lora|lyco|wlr):/i.test(source.slice(index))) {
+                const close = source.indexOf(">", index);
+                if (close !== -1) { index = close + 1; continue; }
+            }
+            if ("([{（".includes(char)) { depth += 1; index += 1; continue; }
+            if (")]}）".includes(char) && depth > 0) { depth -= 1; index += 1; continue; }
+            if (depth > 0) { index += 1; continue; }
+            if ("。！？!?；;".includes(char) || isSentenceDot(source, index)) return true;
+            index += 1;
+        }
+        return false;
+    }
+
     function splitPromptParts(text) {
         const source = String(text || "").trim();
         if (!source) return [];
+        const textMode = hasSentenceEnding(source);
         const parts = [];
         let current = "";
         let depth = 0;
         let escaped = false;
-        for (const char of source) {
-            if (escaped) {
-                current += char;
-                escaped = false;
-                continue;
+        const push = () => {
+            let item = current.trim();
+            if (textMode) item = item.replace(/[。！？!?；;.]+$/u, "").trim();
+            if (item) parts.push(item);
+            current = "";
+        };
+        for (let index = 0; index < source.length; index += 1) {
+            const char = source[index];
+            if (escaped) { current += char; escaped = false; continue; }
+            if (char === "\\") { current += char; escaped = true; continue; }
+            if (char === "<" && /^<(lora|lyco|wlr):/i.test(source.slice(index))) {
+                const close = source.indexOf(">", index);
+                if (close !== -1) { current += source.slice(index, close + 1); index = close; continue; }
             }
-            if (char === "\\") {
-                current += char;
-                escaped = true;
-                continue;
-            }
-            if (char === "(" || char === "[" || char === "{") depth += 1;
-            if ((char === ")" || char === "]" || char === "}") && depth > 0) depth -= 1;
-            if ((char === "," || char === "\n") && depth === 0) {
-                const item = current.trim();
-                if (item) parts.push(item);
-                current = "";
-                continue;
+            if ("([{（".includes(char)) depth += 1;
+            if (")]}）".includes(char) && depth > 0) depth -= 1;
+            if (depth === 0) {
+                if (textMode && ("。！？!?；;".includes(char) || isSentenceDot(source, index))) { push(); continue; }
+                if (!textMode && (char === "," || char === "，" || char === ";" || char === "；" || char === String.fromCharCode(10) || char === String.fromCharCode(13))) { push(); continue; }
             }
             current += char;
         }
-        const tail = current.trim();
-        if (tail) parts.push(tail);
+        push();
         return parts.length ? parts : [source];
     }
 
@@ -379,6 +428,24 @@ import {
         scheduleAnnotationRefresh();
     }
 
+    // A chip is comma-delimited by the third-party editor, while annotations may be
+    // stored per sentence. Join sentence annotations so a period-separated chip
+    // never silently loses its bilingual text.
+    function annotationForChip(kind, text) {
+        const direct = annotations[kind].get(annotationKey(text));
+        if (direct) return direct;
+        const parts = splitPromptParts(text);
+        if (parts.length < 2) return null;
+        const entries = parts.map(part => annotations[kind].get(annotationKey(part)));
+        if (entries.some(entry => !entry)) return null;
+        const language = entries[0].lang;
+        return {
+            text,
+            local: entries.map(entry => entry.local).join(language === "zh" ? "，" : " "),
+            lang: language,
+        };
+    }
+
     function scheduleAnnotationRefresh() {
         if (annotationFrame != null) return;
         annotationFrame = requestAnimationFrame(() => {
@@ -386,7 +453,7 @@ import {
             for (const kind of ["positive", "negative"]) {
                 for (const root of weilinPromptTagRoots(kind)) {
                     for (const tag of root.querySelectorAll(".prompt-tags-list .prompt-tag")) {
-                        const entry = annotations[kind].get(annotationKey(weilinReadPromptTagText(tag)));
+                        const entry = annotationForChip(kind, weilinReadPromptTagText(tag));
                         if (!entry) continue;
                         const local = weilinEnsureLocalLanguage(tag);
                         if (local.textContent !== entry.local) local.textContent = entry.local;
@@ -542,7 +609,9 @@ import {
             const runtime = payload.runtime || {};
             workerWarm = Boolean(
                 payload.engine === "general_llm" ||
-                (runtime.hy_mt && runtime.hy_mt.alive)
+                payload.engine === "inprocess" ||
+                (runtime.hy_mt && runtime.hy_mt.alive) ||
+                (runtime.inprocess && runtime.inprocess.alive)
             );
             const translatedText = payload.translated_text || "";
             if (!translatedText || textarea.value.trim() !== text) {
@@ -634,6 +703,7 @@ import {
         engineSelect.innerHTML = [
             '<option value="auto">自动（优先 HY-MT）</option>',
             '<option value="hy_mt">HY-MT CPU（实验）</option>',
+            '<option value="inprocess">进程内 Q4（CPU）</option>',
             '<option value="general_llm">通用 LLM</option>',
         ].join("");
         const directionSelect = document.createElement("select");
@@ -653,7 +723,7 @@ import {
         const savedDirection = localStorage.getItem(DIRECTION_KEY);
         const savedContentType = localStorage.getItem(CONTENT_TYPE_KEY);
         const savedEngine = localStorage.getItem(ENGINE_KEY);
-        engineSelect.value = ["auto", "hy_mt", "general_llm"].includes(savedEngine) ? savedEngine : "auto";
+        engineSelect.value = ["auto", "hy_mt", "inprocess", "general_llm"].includes(savedEngine) ? savedEngine : "auto";
         directionSelect.value = ["zh_to_en", "en_to_zh"].includes(savedDirection) ? savedDirection : "zh_to_en";
         contentTypeSelect.value = ["text", "tags"].includes(savedContentType) ? savedContentType : "text";
         engineSelect.addEventListener("change", async () => {
