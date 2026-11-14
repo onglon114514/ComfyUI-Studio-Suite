@@ -193,6 +193,36 @@
     .tag-cell .zh { display: block; font-size: 10px; color: var(--muted); margin-top: 1px; }
     .tag-cell:hover .zh { color: rgba(255,255,255,.7); }
     .tag-empty { grid-column: 1/-1; text-align: center; color: var(--muted); padding: 20px; font-size: 11px; }
+    /* LoRA / Extra Networks */
+    .lora-toolbar {
+      display: flex; gap: 6px; padding: 6px 10px; align-items: center; flex-wrap: wrap;
+      border-bottom: 1px solid var(--border);
+    }
+    .lora-toolbar input#loraSearch { flex: 1 1 180px; min-width: 120px; font-size: 11px; padding: 5px 8px; }
+    .lora-toolbar select { font-size: 11px; padding: 4px 6px; }
+    .lora-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(108px, 1fr));
+      gap: 6px; padding: 8px 10px; max-height: 380px; overflow-y: auto;
+    }
+    .lora-card {
+      border: 1px solid var(--border); border-radius: 5px; background: var(--panel2);
+      padding: 0; overflow: hidden; cursor: pointer; text-align: left; color: var(--text);
+      display: flex; flex-direction: column;
+    }
+    .lora-card:hover { border-color: var(--accent); }
+    .lora-thumb {
+      width: 100%; aspect-ratio: 3 / 4; object-fit: cover; display: block; background: #1b1b20;
+    }
+    .lora-thumb.placeholder {
+      display: flex; align-items: center; justify-content: center; padding: 6px;
+      font-size: 10px; color: var(--muted); text-align: center; word-break: break-all;
+      background: #1b1b20;
+    }
+    .lora-name { font-size: 10px; line-height: 1.3; padding: 4px 5px; word-break: break-all; max-height: 3.9em; overflow: hidden; }
+    .lora-toggle { margin-left: 6px; }
+    .lora-toggle.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .lora-drawer { border-top: 1px solid var(--border); }
+    .lora-drawer .lora-grid { max-height: 300px; }
     /* Prompt Studio 风格的拖拽态（范本：newbieXmlWizard.js） */
     .chip.is-dragging { opacity: .45; }
     .chip.is-drop-target { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -314,7 +344,7 @@
         <button class="icon-btn" title="读取提示词/风格" id="btnLoadStyle">📂</button>
         <button class="icon-btn" title="提示词矩阵 / X/Y/Z" id="btnMatrix">▦</button>
         <button class="icon-btn" title="提示词预设 / LoRA" id="btnPresets">🏷</button>
-        <button class="icon-btn" title="LoRA 语法教程" id="btnLoraHelp">❓</button>
+        <button class="icon-btn" title="切分规则 / LoRA 语法" id="btnLoraHelp">❓</button>
         <div style="flex:1"></div>
         <button class="small ghost" id="btnRefreshModels">↻</button>
       </div>
@@ -2547,6 +2577,8 @@
       "基础",
       "  <lora:名字>                  权重 1.0",
       "  <lora:名字:0.8>              统一权重 0.8",
+      "  <lora:名字:+1.1>             带符号权重",
+      "  <lora:名字:-1.1>             负权重",
       "",
       "双权重（te : unet）",
       "  <lora:名字:0.8:1.0>          文本编码器 0.8 / UNet 1.0",
@@ -2557,6 +2589,18 @@
       "",
       "别名",
       "  <lyco:名字:0.5>              LyCORIS",
+      "",
+      "名字与标点",
+      "  · LoRA 名字内部可以包含逗号、句号、空格，例如 A Qu, the Lightless Shadow",
+      "  · <> 内的内容不会被逗号/句号切开，整个标签算一张卡片",
+      "  · () [] （） 内的逗号/句号同样不会切开，保持括号完整",
+      "",
+      "卡片切分规则",
+      "  · 顶层逗号总是分隔卡片",
+      "  · 英文句号只有在后面是空格、中文或行尾时才当作句子结束；",
+      "    1girl.solo 这种没有空格的写法会留在一张卡片里（符合英文书写习惯）",
+      "  · 想强制分成两张卡片，请写成 “. ”（句号+空格）或使用逗号",
+      "  · 每个提示词编辑器右上角的 LoRA 按钮只把选中的标签写入当前框",
       "",
       "说明",
       "  · 可写多个，按出现顺序叠加",
@@ -2576,7 +2620,12 @@
     $("btnRefreshModels").addEventListener("click", refreshProfiles);
     $("btnLoadStyle").addEventListener("click", () => { $("positiveBox").focus(); });
     $("btnMatrix").addEventListener("click", () => { $("outputBox").textContent = "X/Y/Z 矩阵：待接入 workflow json"; });
-    $("btnPresets").addEventListener("click", () => { $("outputBox").textContent = "提示词预设：待接入 tag 库"; });
+    $("btnPresets").addEventListener("click", () => {
+      const entry = loraUnits.find((item) => item.unit.id === "pos");
+      if (!entry) return;
+      if (!entry.expanded) entry.open();
+      entry.unit.grid.closest(".tag-editor").scrollIntoView({ behavior: "smooth", block: "center" });
+    });
 
     // ── Tag Editor：每框一编辑器（Prompt Studio / newbieXmlWizard 范本拖拽）──
     let tagData = [];
@@ -2587,7 +2636,28 @@
     }
 
     function tokensOf(value) {
-      return value.split(",").map((s) => s.trim()).filter(Boolean);
+      const source = String(value || "");
+      const parts = [];
+      let cur = "";
+      let depth = 0;
+      let inAngle = false;
+      for (let i = 0; i < source.length; i += 1) {
+        const ch = source[i];
+        if (ch === "<") inAngle = true;
+        if (ch === ">") inAngle = false;
+        if (!inAngle && "([{（".includes(ch)) depth += 1;
+        if (!inAngle && ")]}）".includes(ch) && depth > 0) depth -= 1;
+        if (ch === "," && !inAngle && depth === 0) {
+          const item = cur.trim();
+          if (item) parts.push(item);
+          cur = "";
+          continue;
+        }
+        cur += ch;
+      }
+      const tail = cur.trim();
+      if (tail) parts.push(tail);
+      return parts;
     }
 
     function parseGroupTags(text) {
@@ -2865,12 +2935,223 @@
         }
       });
 
+      if (config.lora) attachLoraDrawer(unit);
       tagUnits.push(unit);
       return unit;
     }
 
     function renderAllChips() {
       tagUnits.forEach((u) => u.renderChips());
+    }
+
+    // ── LoRA / Extra Networks：每个提示词编辑器各自收纳，点击写入本框 ──
+    const loraUnits = [];
+    let loraGroups = [];
+    let loraLoadPromise = null;
+
+    function loraShortName(item) {
+      const raw = String(item.output_name || item.model_name || item.basename || "");
+      return raw.split(/[\\/]/).pop() || raw;
+    }
+
+    function loraWeightText(input) {
+      const raw = String((input && input.value) || "").trim();
+      return /^[+-]?\d+(\.\d+)?$/.test(raw) ? raw : "1";
+    }
+
+    function insertPromptSnippet(el, snippet) {
+      if (!el) return;
+      const start = typeof el.selectionStart === "number" ? el.selectionStart : el.value.length;
+      const end = typeof el.selectionEnd === "number" ? el.selectionEnd : start;
+      let before = el.value.slice(0, start);
+      let after = el.value.slice(end);
+      if (before.trim() && !/[,，]\s*$/.test(before)) before += ", ";
+      if (after.trim() && !/^\s*[,，]/.test(after)) after = ", " + after;
+      el.value = before + snippet + after;
+      const caret = before.length + snippet.length;
+      el.focus();
+      if (el.setSelectionRange) el.setSelectionRange(caret, caret);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      updateCounters();
+      renderAllChips();
+    }
+
+    function attachLoraDrawer(unit) {
+      const editor = unit.grid.closest(".tag-editor");
+      const header = editor && editor.querySelector(".tag-editor-header");
+      if (!editor || !header) return;
+
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "small ghost lora-toggle";
+      toggle.textContent = "LoRA";
+      toggle.title = "展开/收起 LoRA / Embedding；展开后点击卡片写入本框";
+      header.appendChild(toggle);
+
+      const drawer = document.createElement("div");
+      drawer.className = "lora-drawer";
+      drawer.style.display = "none";
+      drawer.innerHTML = [
+        '<div class="lora-toolbar">',
+        '<input class="lora-search" placeholder="搜索 LoRA / Embedding…">',
+        '<label class="inline" style="white-space:nowrap">权重 ',
+        '<input class="lora-weight" type="text" inputmode="decimal" value="1" ',
+        'style="width:64px;margin-left:4px" title="支持 1、0.8、+1.1、-1.1"></label>',
+        '<button type="button" class="small ghost lora-help" title="切分规则 / LoRA 语法">?</button>',
+        '</div>',
+        '<div class="cat-tabs lora-groups"></div>',
+        '<div class="lora-grid"><div class="tag-empty">展开后加载…</div></div>',
+      ].join("");
+      editor.appendChild(drawer);
+
+      const search = drawer.querySelector(".lora-search");
+      const weight = drawer.querySelector(".lora-weight");
+      const groupsHost = drawer.querySelector(".lora-groups");
+      const grid = drawer.querySelector(".lora-grid");
+      const state = { group: "", query: "", expanded: false };
+
+      function renderGroups() {
+        groupsHost.innerHTML = "";
+        loraGroups.forEach((group) => {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "cat-tab" + (group.name === state.group ? " active" : "");
+          btn.textContent = (group.title || group.name) + " " + ((group.items || []).length);
+          btn.addEventListener("click", () => {
+            state.group = group.name;
+            renderGroups();
+            renderGrid();
+          });
+          groupsHost.appendChild(btn);
+        });
+      }
+
+      function renderGrid() {
+        grid.innerHTML = "";
+        const group = loraGroups.find((g) => g.name === state.group) || loraGroups[0];
+        if (!group) {
+          grid.innerHTML = "<div class='tag-empty'>没有读到 LoRA / Embedding</div>";
+          return;
+        }
+        const q = state.query.trim().toLowerCase();
+        const items = (group.items || []).filter((item) => {
+          if (!q) return true;
+          return [item.name, item.model_name, item.output_name, item.basename, item.description]
+            .join(" ").toLowerCase().includes(q);
+        });
+        if (!items.length) {
+          grid.innerHTML = "<div class='tag-empty'>没有匹配项</div>";
+          return;
+        }
+        const frag = document.createDocumentFragment();
+        items.forEach((item) => {
+          const card = document.createElement("button");
+          card.type = "button";
+          card.className = "lora-card";
+          card.title = String(item.basename || item.name || "");
+          const label = loraShortName(item);
+          if (item.preview) {
+            const img = new Image();
+            img.className = "lora-thumb";
+            img.loading = "lazy";
+            img.decoding = "async";
+            img.alt = label;
+            img.src = item.preview;
+            img.addEventListener("error", () => {
+              const ph = document.createElement("div");
+              ph.className = "lora-thumb placeholder";
+              ph.textContent = label;
+              img.replaceWith(ph);
+            });
+            card.appendChild(img);
+          } else {
+            const ph = document.createElement("div");
+            ph.className = "lora-thumb placeholder";
+            ph.textContent = label;
+            card.appendChild(ph);
+          }
+          const name = document.createElement("div");
+          name.className = "lora-name";
+          name.textContent = label;
+          card.appendChild(name);
+          card.addEventListener("click", () => {
+            const w = loraWeightText(weight);
+            const isEmbedding = item.model_type === "embeddings";
+            const tagName = String(isEmbedding
+              ? (item.output_name || item.model_name || item.basename || "")
+              : (item.basename || item.model_name || ""));
+            if (!tagName) return;
+            const snippet = isEmbedding
+              ? (w === "1" ? tagName : "(embedding:" + tagName + ":" + w + ")")
+              : "<lora:" + tagName + ":" + w + ">";
+            insertPromptSnippet(unit.box, snippet);
+          });
+          frag.appendChild(card);
+        });
+        grid.appendChild(frag);
+      }
+
+      const entry = {
+        unit,
+        expanded: false,
+        open() {
+          drawer.style.display = "";
+          entry.expanded = true;
+          toggle.classList.add("active");
+          if (!state.group && loraGroups[0]) state.group = loraGroups[0].name;
+          if (!loraGroups.length) loadLoraNetworks();
+          else {
+            renderGroups();
+            renderGrid();
+          }
+        },
+        close() {
+          drawer.style.display = "none";
+          entry.expanded = false;
+          toggle.classList.remove("active");
+        },
+        toggleDrawer() {
+          if (entry.expanded) entry.close(); else entry.open();
+        },
+        render() {
+          if (entry.expanded) {
+            renderGroups();
+            renderGrid();
+          }
+        },
+      };
+
+      toggle.addEventListener("click", () => entry.toggleDrawer());
+      search.addEventListener("input", () => {
+        state.query = search.value;
+        renderGrid();
+      });
+      const help = drawer.querySelector(".lora-help");
+      if (help) help.addEventListener("click", () => {
+        const btn = $("btnLoraHelp");
+        if (btn) btn.click();
+        const card = $("loraHelpCard");
+        if (card) card.scrollIntoView({ behavior: "smooth", block: "center" });
+      });
+      loraUnits.push(entry);
+    }
+
+    async function loadLoraNetworks(force) {
+      if (loraLoadPromise && !force) return loraLoadPromise;
+      loraLoadPromise = (async () => {
+        try {
+          const resp = await fetch("/weilin/physton_prompt/get_extra_networks", { cache: "no-store" });
+          const data = await resp.json();
+          loraGroups = (data.extra_networks || []).filter((g) => g && g.items && g.items.length);
+          loraUnits.forEach((entry) => entry.render());
+        } catch (err) {
+          loraUnits.forEach((entry) => {
+            const grid = entry.unit.grid.closest(".tag-editor").querySelector(".lora-grid");
+            if (grid) grid.innerHTML = "<div class='tag-empty'>加载失败: " + escapeHtml(String(err).slice(0, 120)) + "</div>";
+          });
+        }
+      })();
+      return loraLoadPromise;
     }
 
     // 初始化：正/负各一个独立编辑器（未来 Parameter 注入更多文本框 → createPromptUnit 再来一个）
@@ -2884,6 +3165,7 @@
       searchId: "posSearch",
       customId: "posCustom",
       addId: "posAdd",
+      lora: true,
     });
     createPromptUnit({
       id: "neg",
@@ -2895,6 +3177,7 @@
       searchId: "negSearch",
       customId: "negCustom",
       addId: "negAdd",
+      lora: true,
     });
 
     // ── 工作流参数：自动扫描 ETN_Parameter（统一逻辑）──
