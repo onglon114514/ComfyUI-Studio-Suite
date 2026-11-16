@@ -1293,5 +1293,58 @@
 
 </script>
 <script src="./js/newbieXmlWizard.js"></script>
-<script src="/sd-webui-prompt-all-in-one-js?v=studio-suite-20261021-tooltipfix"></script>
+<script src="/sd-webui-prompt-all-in-one-js?v=studio-suite-20261116-splitmode"></script>
+
+<div id="ssSplitBar" style="position:fixed;right:14px;bottom:14px;z-index:99999;display:flex;gap:8px;align-items:center;padding:6px 10px;border-radius:8px;background:rgba(30,30,36,.92);border:1px solid rgba(255,255,255,.14);font-size:12px;color:#ddd;">
+  <span id="ssSplitLabel">切分：Tag</span>
+  <button id="ssSplitToggle" type="button" style="font-size:11px;padding:3px 8px;border-radius:4px;border:1px solid rgba(255,255,255,.2);background:transparent;color:#ddd;cursor:pointer;">切换</button>
+  <button id="ssSplitHelp" type="button" style="font-size:11px;padding:3px 8px;border-radius:4px;border:1px solid rgba(255,255,255,.2);background:transparent;color:#ddd;cursor:pointer;">说明</button>
+</div>
+<div id="ssSplitHelpMask" style="display:none;position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.55);align-items:center;justify-content:center;padding:24px;">
+  <div style="width:min(620px,92vw);max-height:80vh;overflow:auto;border-radius:8px;background:#1f1f24;color:#e6e6e6;border:1px solid rgba(255,255,255,.14);padding:16px 18px;font-size:12px;line-height:1.65;white-space:pre-wrap;">
+    <div style="font-size:14px;font-weight:600;margin-bottom:8px;">卡片切分规则</div>
+    <div>Tag 模式</div>
+    <div>  · 逗号、换行切卡片</div>
+    <div>  · 括号 () [] {} （） 内不切</div>
+    <div>  · &lt;lora:...&gt; 整体保护，名字里的逗号/句号不切</div>
+    <div style="margin-top:8px;">自然语言模式</div>
+    <div>  · 逗号后接空格才切（dark,ornate 不会切）</div>
+    <div>  · 句号 . 问号 ? 感叹号 ! 分号 ; 直接切，不需要空格</div>
+    <div>  · 顿号 、 不切</div>
+    <div>  · 1.5、.safetensors、...、&lt;lora:...&gt;、括号内 不切</div>
+    <div>  · 标点保留在 prompt 里，不会变成逗号</div>
+    <div style="margin-top:8px;color:#aaa;">切换后会对当前 prompt 重新解析；不确定时先切到自然语言模式再粘贴整段描述。</div>
+    <div style="margin-top:12px;text-align:right;"><button id="ssSplitHelpClose" type="button" style="font-size:12px;padding:4px 12px;border-radius:4px;border:1px solid rgba(255,255,255,.2);background:transparent;color:#ddd;cursor:pointer;">关闭</button></div>
+  </div>
+</div>
+<script>
+(function () {
+  var KEY = "studio_suite_prompt_split_mode";
+  var bar = document.getElementById("ssSplitBar");
+  var label = document.getElementById("ssSplitLabel");
+  var toggle = document.getElementById("ssSplitToggle");
+  var help = document.getElementById("ssSplitHelp");
+  var mask = document.getElementById("ssSplitHelpMask");
+  if (!bar || !label || !toggle) return;
+  function mode() { try { return localStorage.getItem(KEY) === "nl" ? "nl" : "tag"; } catch (e) { return "tag"; } }
+  function render() { label.textContent = mode() === "nl" ? "切分：自然语言" : "切分：Tag"; }
+  function reparse() {
+    render();
+    document.querySelectorAll("textarea").forEach(function (el) {
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+  toggle.addEventListener("click", function () {
+    try { localStorage.setItem(KEY, mode() === "nl" ? "tag" : "nl"); } catch (e) {}
+    reparse();
+  });
+  if (help && mask) {
+    help.addEventListener("click", function () { mask.style.display = "flex"; });
+    mask.addEventListener("click", function (e) { if (e.target === mask) mask.style.display = "none"; });
+    var close = document.getElementById("ssSplitHelpClose");
+    if (close) close.addEventListener("click", function () { mask.style.display = "none"; });
+  }
+  render();
+})();
+</script>
 </html>

@@ -64,6 +64,10 @@ This is the local development line intended for the next GitHub push after `v0.1
 - WebUI NTR graph mode now sends `image_inputs` (image/mask base64 for `WNT_ImageInput`, uploaded name for `LoadImage`); the gateway injects them into the prompt and reports `injected.images`. Masks are only sent after the user actually paints, so a blank canvas no longer overwrites the workflow default.
 - Restored `workflows_graph/webui_ntr_img2img_wnt.json` and wired `WNT_ImageOutput.mask` to `WNT_ImageInput.mask` (link 112), so graph runs return the mask file as well.
 
+### Added
+
+- Prompt Studio now has a Tag / 自然语言 split-mode switch. Tag mode keeps the comma-based chip rules with LoRA and bracket protection; natural-language mode splits on sentence punctuation without requiring a trailing space, keeps `dark,ornate` intact, and preserves the original punctuation in the prompt. The rules are also shown in the in-page help panel; see `docs/prompt-studio-split-mode.md`.
+
 ### Changed
 
 - WebUI prompt chips now use the same separator-aware tokenizer as the ComfyUI WeiLin editor: sentence punctuation splits natural-language input, commas stay inside sentences, and dragging/deleting chips re-joins with the original separators instead of replacing them with `, `.
