@@ -72,8 +72,6 @@ This is the local development line intended for the next GitHub push after `v0.1
 
 - WebUI prompt chips now use the same separator-aware tokenizer as the ComfyUI WeiLin editor: sentence punctuation splits natural-language input, commas stay inside sentences, and dragging/deleting chips re-joins with the original separators instead of replacing them with `, `.
 - LoRA tags (`<lora:...>`, `<lyco:...>`, `<wlr:...>`) and full-width parentheses (`（）`) are now treated as atomic when splitting prompts into chips and translation units, so file names containing commas and parenthesised phrases survive editing and dragging.
-- The ComfyUI WeiLin prompt editor now has a `说明` button documenting the chip split rules and LoRA syntax, including signed weights and punctuation inside LoRA names.
-- WeiLin prompt chips now keep a per-token trailing separator, so sentence-ending punctuation survives the chip round trip and `中文自然语言.中文自然语言` becomes two draggable blocks instead of one. This is a local patch to the third-party plugin; see `docs/weilin-sentence-chips-patch.md`.
 - HY-MT and the new in-process backend now share the same `TagTranslator` flow, so tag splitting, per-item retry and caching behave identically regardless of engine.
 - Prompt Studio now pauses the ComfyUI canvas while its full-screen editor is open and destroys the iframe on close, preventing the hidden editor and graph renderer from accumulating work together.
 - Prompt Studio accepts legacy editor messages only from its own same-origin iframe and caps prompt payload size before updating ComfyUI widgets.
