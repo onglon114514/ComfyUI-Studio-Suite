@@ -131,7 +131,8 @@ class LegacyPromptStudioController {
         this.randomId = (Math.random() + Date.now()).toString(32).slice(0, 10);
         localStorage.setItem(WINDOW_KEYS.randomId, this.randomId);
         const theme = localStorage.getItem(WINDOW_KEYS.theme) || "dark";
-        const src = `${PROMPT_STUDIO_UI_URL}?type=prompt&refid=${encodeURIComponent(this.randomId)}&__theme=${encodeURIComponent(theme)}`;
+        const boxKey = this.node && this.node.id != null ? `node-${this.node.id}` : "region";
+        const src = `${PROMPT_STUDIO_UI_URL}?type=prompt&refid=${encodeURIComponent(this.randomId)}&box=${encodeURIComponent(boxKey)}&__theme=${encodeURIComponent(theme)}`;
         const shouldReload = !this.iframeReady || !this.iframe.src || this.loadedTheme !== theme;
         if (shouldReload) {
             this.iframeReady = false;

@@ -1293,7 +1293,7 @@
 
 </script>
 <script src="./js/newbieXmlWizard.js"></script>
-<script src="/sd-webui-prompt-all-in-one-js?v=studio-suite-20261119-persplit"></script>
+<script src="/sd-webui-prompt-all-in-one-js?v=studio-suite-20261119-persplit3"></script>
 
 <div id="ssSplitBar" style="position:fixed;right:14px;bottom:14px;z-index:99999;display:flex;gap:8px;align-items:center;padding:6px 10px;border-radius:8px;background:rgba(30,30,36,.92);border:1px solid rgba(255,255,255,.14);font-size:12px;color:#ddd;">
   <span id="ssSplitLabel">切分：Tag</span>
@@ -1320,6 +1320,12 @@
 <script>
 (function () {
   var KEY_PREFIX = "studio_suite_prompt_split_mode:";
+  var REFID = (function () {
+    try {
+      var params = new URLSearchParams(location.search);
+      return params.get("box") || params.get("refid") || "default";
+    } catch (e) { return "default"; }
+  })();
   var bar = document.getElementById("ssSplitBar");
   var label = document.getElementById("ssSplitLabel");
   var toggle = document.getElementById("ssSplitToggle");
@@ -1338,7 +1344,7 @@
     var attr = el.getAttribute("data-ss-split-mode");
     if (attr === "nl" || attr === "tag") return attr;
     try {
-      var v = localStorage.getItem(KEY_PREFIX + el.id);
+      var v = localStorage.getItem(KEY_PREFIX + REFID + ":" + el.id);
       if (v === "nl" || v === "tag") return v;
     } catch (e) {}
     return "tag";
@@ -1346,7 +1352,7 @@
   function applyMode(el, mode) {
     if (!el) return;
     el.setAttribute("data-ss-split-mode", mode);
-    try { localStorage.setItem(KEY_PREFIX + el.id, mode); } catch (e) {}
+    try { localStorage.setItem(KEY_PREFIX + REFID + ":" + el.id, mode); } catch (e) {}
   }
   function pickBox() {
     var el = document.activeElement;
@@ -1379,6 +1385,7 @@
   }, true);
   function initBoxes() {
     boxes().forEach(function (el) {
+      if (el.getAttribute("data-ss-split-mode")) return;
       var mode = modeOf(el);
       applyMode(el, mode);
       if (mode === "nl") reparse(el);
@@ -1386,6 +1393,10 @@
     render();
   }
   setTimeout(initBoxes, 900);
+  setTimeout(initBoxes, 2500);
+  try {
+    new MutationObserver(function () { initBoxes(); }).observe(document.body, { childList: true, subtree: true });
+  } catch (e) {}
   render();
   if (help && mask) {
     help.addEventListener("click", function () { mask.style.display = "flex"; });
