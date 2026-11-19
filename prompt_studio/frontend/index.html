@@ -1293,7 +1293,7 @@
 
 </script>
 <script src="./js/newbieXmlWizard.js"></script>
-<script src="/sd-webui-prompt-all-in-one-js?v=studio-suite-20261116-splitmode"></script>
+<script src="/sd-webui-prompt-all-in-one-js?v=studio-suite-20261119-persplit"></script>
 
 <div id="ssSplitBar" style="position:fixed;right:14px;bottom:14px;z-index:99999;display:flex;gap:8px;align-items:center;padding:6px 10px;border-radius:8px;background:rgba(30,30,36,.92);border:1px solid rgba(255,255,255,.14);font-size:12px;color:#ddd;">
   <span id="ssSplitLabel">切分：Tag</span>
@@ -1313,38 +1313,86 @@
     <div>  · 顿号 、 不切</div>
     <div>  · 1.5、.safetensors、...、&lt;lora:...&gt;、括号内 不切</div>
     <div>  · 标点保留在 prompt 里，不会变成逗号</div>
-    <div style="margin-top:8px;color:#aaa;">切换后会对当前 prompt 重新解析；不确定时先切到自然语言模式再粘贴整段描述。</div>
+    <div style="margin-top:8px;color:#aaa;">每个提示词框独立记忆模式，正向/负向互不影响；切换后只重新解析当前框。不确定时先切到自然语言模式再粘贴整段描述。</div>
     <div style="margin-top:12px;text-align:right;"><button id="ssSplitHelpClose" type="button" style="font-size:12px;padding:4px 12px;border-radius:4px;border:1px solid rgba(255,255,255,.2);background:transparent;color:#ddd;cursor:pointer;">关闭</button></div>
   </div>
 </div>
 <script>
 (function () {
-  var KEY = "studio_suite_prompt_split_mode";
+  var KEY_PREFIX = "studio_suite_prompt_split_mode:";
   var bar = document.getElementById("ssSplitBar");
   var label = document.getElementById("ssSplitLabel");
   var toggle = document.getElementById("ssSplitToggle");
   var help = document.getElementById("ssSplitHelp");
   var mask = document.getElementById("ssSplitHelpMask");
   if (!bar || !label || !toggle) return;
-  function mode() { try { return localStorage.getItem(KEY) === "nl" ? "nl" : "tag"; } catch (e) { return "tag"; } }
-  function render() { label.textContent = mode() === "nl" ? "切分：自然语言" : "切分：Tag"; }
-  function reparse() {
-    render();
-    document.querySelectorAll("textarea").forEach(function (el) {
-      el.dispatchEvent(new Event("input", { bubbles: true }));
+  var activeBox = null;
+
+  function boxes() {
+    return Array.prototype.slice.call(document.querySelectorAll("textarea")).filter(function (el) {
+      return el.id && el.id.indexOf("weilin_prompt_text") === 0;
     });
   }
+  function modeOf(el) {
+    if (!el) return "tag";
+    var attr = el.getAttribute("data-ss-split-mode");
+    if (attr === "nl" || attr === "tag") return attr;
+    try {
+      var v = localStorage.getItem(KEY_PREFIX + el.id);
+      if (v === "nl" || v === "tag") return v;
+    } catch (e) {}
+    return "tag";
+  }
+  function applyMode(el, mode) {
+    if (!el) return;
+    el.setAttribute("data-ss-split-mode", mode);
+    try { localStorage.setItem(KEY_PREFIX + el.id, mode); } catch (e) {}
+  }
+  function pickBox() {
+    var el = document.activeElement;
+    if (el && el.tagName === "TEXTAREA" && el.id && el.id.indexOf("weilin_prompt_text") === 0) return el;
+    if (activeBox && document.contains(activeBox)) return activeBox;
+    return boxes()[0] || null;
+  }
+  function render() {
+    var el = pickBox();
+    var suffix = el && el.id.indexOf("neg") >= 0 ? "（负向）" : "";
+    label.textContent = "切分：" + (modeOf(el) === "nl" ? "自然语言" : "Tag") + suffix;
+  }
+  function reparse(el) {
+    if (el) el.dispatchEvent(new Event("input", { bubbles: true }));
+  }
   toggle.addEventListener("click", function () {
-    try { localStorage.setItem(KEY, mode() === "nl" ? "tag" : "nl"); } catch (e) {}
-    reparse();
+    var el = pickBox();
+    if (!el) return;
+    var next = modeOf(el) === "nl" ? "tag" : "nl";
+    applyMode(el, next);
+    reparse(el);
+    render();
   });
+  document.addEventListener("focusin", function (e) {
+    var el = e.target;
+    if (el && el.tagName === "TEXTAREA" && el.id && el.id.indexOf("weilin_prompt_text") === 0) {
+      activeBox = el;
+      render();
+    }
+  }, true);
+  function initBoxes() {
+    boxes().forEach(function (el) {
+      var mode = modeOf(el);
+      applyMode(el, mode);
+      if (mode === "nl") reparse(el);
+    });
+    render();
+  }
+  setTimeout(initBoxes, 900);
+  render();
   if (help && mask) {
     help.addEventListener("click", function () { mask.style.display = "flex"; });
     mask.addEventListener("click", function (e) { if (e.target === mask) mask.style.display = "none"; });
     var close = document.getElementById("ssSplitHelpClose");
     if (close) close.addEventListener("click", function () { mask.style.display = "none"; });
   }
-  render();
 })();
 </script>
 </html>

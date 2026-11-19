@@ -66,7 +66,7 @@ This is the local development line intended for the next GitHub push after `v0.1
 
 ### Added
 
-- Prompt Studio now has a Tag / 自然语言 split-mode switch. Tag mode keeps the comma-based chip rules with LoRA and bracket protection; natural-language mode splits on sentence punctuation without requiring a trailing space, keeps `dark,ornate` intact, and preserves the original punctuation in the prompt. The rules are also shown in the in-page help panel; see `docs/prompt-studio-split-mode.md`.
+- Prompt Studio now has a per-prompt-box Tag / 自然语言 split-mode switch. Tag mode keeps the comma-based chip rules with LoRA and bracket protection; natural-language mode splits on sentence punctuation without requiring a trailing space, keeps `dark,ornate` intact, and preserves the original punctuation in the prompt. The rules are also shown in the in-page help panel; see `docs/prompt-studio-split-mode.md`.
 
 ### Changed
 

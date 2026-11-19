@@ -23,7 +23,7 @@ Prompt Studio 的内嵌编辑器使用 `prompt_studio/bundle/main.entry.js`（ph
 `prompt_studio/frontend/index.html`：
 
 - 右下角新增「切分：Tag / 自然语言」切换条和「说明」弹窗；
-- 切换后对页内 `textarea` 派发 `input`，触发重新解析；
+- 模式按提示词框独立保存：写在该 textarea 的 `data-ss-split-mode` 属性和 `localStorage["studio_suite_prompt_split_mode:<id>"]` 上；切换只重新解析当前框，正向/负向互不影响；
 - bundle 缓存键改为 `?v=studio-suite-20261116-splitmode`。
 
 ## 两套规则
