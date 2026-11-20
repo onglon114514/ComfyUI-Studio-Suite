@@ -279,6 +279,7 @@
             <input id="posSearch" placeholder="搜索当前分类 tag…">
             <input id="posCustom" placeholder="在此新增 Tag">
             <button class="small" id="posAdd">+</button>
+            <button class="small" id="posTranslate" title="用本地翻译把英文 tag 译成中文（结果只作对照）">译中</button>
           </div>
           <div class="tag-grid" id="posGrid"></div>
         </div>
@@ -300,6 +301,7 @@
             <input id="negSearch" placeholder="搜索当前分类 tag…">
             <input id="negCustom" placeholder="在此新增 Tag">
             <button class="small" id="negAdd">+</button>
+            <button class="small" id="negTranslate" title="用本地翻译把英文 tag 译成中文（结果只作对照）">译中</button>
           </div>
           <div class="tag-grid" id="negGrid"></div>
         </div>
@@ -2629,6 +2631,7 @@
 
     // ── Tag Editor：每框一编辑器（Prompt Studio / newbieXmlWizard 范本拖拽）──
     let tagData = [];
+    const llmTranslations = new Map();
     const tagUnits = [];
 
     function escapeHtml(s) {
@@ -2800,7 +2803,35 @@
           if (g.tags[en] !== undefined) return g.tags[en];
         }
       }
-      return "";
+      return llmTranslations.get("en_to_zh_tags|" + en) || "";
+    }
+
+    async function llmTranslateTag(text) {
+      const key = "en_to_zh_tags|" + text;
+      if (llmTranslations.has(key)) return llmTranslations.get(key);
+      try {
+        const resp = await fetch("/studio-suite/prompt-studio/llm_translate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            text: text,
+            direction: "en_to_zh_tags",
+            engine: "auto",
+            translation_mode: "tags",
+            target_profile: "prompt_studio_bilingual",
+            dynamic_runtime: true,
+            keep_warm: true,
+            keep_warm_seconds: 600,
+          }),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok || !data.success) return "";
+        const value = String(data.translated_text || "").trim();
+        if (value) llmTranslations.set(key, value);
+        return value;
+      } catch (e) {
+        return "";
+      }
     }
 
     // 每框一编辑器工厂：任何需要 tag 输入的文本框调用 createPromptUnit 即获得贴装编辑器
@@ -3010,6 +3041,27 @@
         }
       });
 
+      unit.translateAll = async function () {
+        const btn = config.translateId ? $(config.translateId) : null;
+        const toks = [...new Set(promptTokens(unit.box.value).map((token) => token.text))];
+        const targets = toks.filter((text) => text && /[A-Za-z]/.test(text) && !/^<.*>$/.test(text) && !/[㐀-鿿]/.test(text) && !findTagZh(text));
+        if (!targets.length) {
+          if (btn) { btn.disabled = false; btn.textContent = "译中"; btn.title = "没有需要翻译的英文 tag"; }
+          return;
+        }
+        if (btn) { btn.disabled = true; btn.textContent = "翻译中…"; }
+        let done = 0;
+        for (const text of targets) {
+          await llmTranslateTag(text);
+          done += 1;
+          if (btn) btn.textContent = "翻译中… " + done + "/" + targets.length;
+        }
+        if (btn) { btn.disabled = false; btn.textContent = "译中"; btn.title = "用本地翻译把英文 tag 译成中文（结果只作对照）"; }
+        unit.renderChips();
+      };
+      if (config.translateId && $(config.translateId)) {
+        $(config.translateId).addEventListener("click", () => unit.translateAll());
+      }
       if (config.lora) attachLoraDrawer(unit);
       tagUnits.push(unit);
       return unit;
@@ -3279,6 +3331,7 @@
       searchId: "posSearch",
       customId: "posCustom",
       addId: "posAdd",
+      translateId: "posTranslate",
       lora: true,
     });
     createPromptUnit({
@@ -3291,6 +3344,7 @@
       searchId: "negSearch",
       customId: "negCustom",
       addId: "negAdd",
+      translateId: "negTranslate",
       lora: true,
     });
 
