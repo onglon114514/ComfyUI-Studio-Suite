@@ -6,6 +6,7 @@ This is the local development line intended for the next GitHub push after `v0.1
 
 ### Added
 
+- WebUI prompt editors now have a `译中` button that translates English tags through the shared Studio Suite LLM endpoint and shows the Chinese under each chip. The ComfyUI Prompt Studio translation methods now call the same endpoint, so both editors use the same engine and dictionary protection.
 - Added a LoRA / Extra Networks drawer to each WebUI prompt editor (`frontend/index.html`): reads ComfyUI's `loras` and `embeddings` through `/weilin/physton_prompt/get_extra_networks`, shows preview thumbnails (placeholder with the name when missing), groups entries by their model subfolder, supports search, signed weights (`+1.1` / `-1.1`) and inserts `<lora:...:weight>` or embedding names into the editor's own prompt at the cursor.
 - Added a backend-agnostic Prompt Studio translation core (`prompt_studio/translation_core.py`): prompt building, tag splitting, per-item retry and a shared LRU cache now serve every translation backend.
 - Added an in-process CPU translation backend (`prompt_studio/inprocess_translation_runtime.py`) for standard-quant HY-MT GGUFs (Q4_K_M / Q6_K / Q8_0), with idle unload and a new `inprocess` engine option. HY-MT STQ remains the faster optional path.
