@@ -91,6 +91,10 @@ This is the local development line intended for the next GitHub push after `v0.1
 
 ### Fixed
 
+- Prompt Studio group tags no longer disappear when `custom.yaml` contains duplicate mapping keys: the bundle now loads group tags with js-yaml's duplicate-key tolerance instead of clearing every group on a parse error.
+
+### Fixed
+
 - Prompt Studio tag translation no longer returns the translated instruction text when the input is a single tag (for example `长发`), and weight spacing such as `(Smile: 1.1)` is normalized back to `(Smile:1.1)`.
 - Natural-language translation now splits on sentence endings (`.。！？!?；;` and newlines) instead of sending the whole paragraph, keeps punctuation outside each unit, and preserves pure-English units such as `1girl` instead of rewriting them. Tag lists without sentence endings keep comma splitting.
 - Bilingual annotation blocks use the same sentence-aware splitter, so `中文自然语言.中文自然语言` becomes two units instead of one block ending in a period.
